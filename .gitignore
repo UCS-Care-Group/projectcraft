@@ -1,0 +1,8 @@
+*~
+plan/
+/target
+/dist
+.DS_Store
+/.claude/
+/target-*/
+*.plancraft

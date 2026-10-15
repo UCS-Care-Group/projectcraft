@@ -1,0 +1,15 @@
+# Text is kept with LF line ends in the repository. What a shell or a packaging tool reads keeps
+# them in every checkout too (a script with CRLF line ends doesn't run).
+* text=auto
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.desktop text eol=lf
+*.xml text eol=lf
+*.in text eol=lf
+*.py text eol=lf
+*.plist text eol=lf
+*.png binary
+*.ico binary
+*.icns binary
+*.ttf binary

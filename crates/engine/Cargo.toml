@@ -1,0 +1,16 @@
+[package]
+name = "plancraft-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PlanCraft engine: session, undo, the command registry (every action is a command), the sample project, file I/O"
+
+[lints]
+workspace = true
+
+[dependencies]
+plancraft-time = { workspace = true }
+plancraft-model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

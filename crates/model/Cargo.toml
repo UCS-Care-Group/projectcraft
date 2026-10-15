@@ -1,0 +1,17 @@
+[package]
+name = "plancraft-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PlanCraft project model: tasks, links, working calendars and the critical-path scheduler"
+
+[lints]
+workspace = true
+
+[dependencies]
+plancraft-time = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

@@ -1,0 +1,14 @@
+[package]
+name = "plancraft-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "PlanCraft command line: run commands on a project file, print its schedule"
+
+[lints]
+workspace = true
+
+[dependencies]
+plancraft-engine = { workspace = true }
+serde_json = { workspace = true }

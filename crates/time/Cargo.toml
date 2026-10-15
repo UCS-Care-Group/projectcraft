@@ -1,0 +1,12 @@
+[package]
+name = "plancraft-time"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PlanCraft dates: civil calendar maths and ISO date text, no time zones"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
