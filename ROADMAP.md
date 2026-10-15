@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Status:** current · **Written:** 2026-10-15 · **Change:** major (first version)
+> **Status:** current · **Written:** 2026-10-15 · **Change:** minor (M1 grilled)
 
 Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -11,12 +11,14 @@ Each roadmap milestone has a pass/fail checklist; it is reached when every item 
 - [x] Command registry, undo/redo, failed commands change nothing, hostile-params test
 - [x] Gantt Chart view (task sheet + bars), `.projectcraft` JSON, CLI
 
-## M1 — A plan you can run a real project on (draft: [spec](docs/specs/m1-usable-plan.md), [plan](docs/plans/m1-usable-plan.md))
-- [ ] Summary tasks (outline levels, indent/outdent, rolled-up dates)
-- [ ] Insert and move rows; task sheet selection and keyboard
-- [ ] Calendar editing (working days, holidays) and the timescale (weeks/months)
-- [ ] Constraints (Start No Earlier Than, Must Finish On…) and deadlines
-- [ ] Open/Save dialogs, autosave, recent files
+## M1 — A plan you can run a real project on (agreed: [spec](docs/specs/m1-usable-plan.md), [plan](docs/plans/m1-usable-plan.md))
+- [ ] Command param schemas and effects; `format_version` ([ADR 0003](docs/adr/0003-native-json-format.md), [ADR 0004](docs/adr/0004-ai-access-model.md))
+- [ ] Summary tasks (outline levels, indent/outdent, rolled-up dates, summary links)
+- [ ] ID as row number, Unique ID stable; insert, move and delete rows; selection and keyboard
+- [ ] Calendar exceptions and the timescale (weeks/months, zoom)
+- [ ] Constraints (Start No Earlier Than, Must Finish On…) and deadlines; negative slack warning
+- [ ] Atomic save, Open/Save dialogs, autosave (on by default), recovery copy, recent files
+- [ ] About 15 worked examples citing Project's documentation; 200 tasks under 10 ms
 - [ ] Theme tokens (light/dark), `tl!` translation, look checked in screenshots
 
 ## Later
@@ -30,3 +32,4 @@ Each roadmap milestone has a pass/fail checklist; it is reached when every item 
 | Date | What landed |
 |---|---|
 | 2026-10-15 | M0: repository set up; scheduler, engine, Gantt view, CLI |
+| 2026-10-15 | M1 spec and plan grilled and agreed; ADRs 0003 (native JSON) and 0004 (agent access) |
