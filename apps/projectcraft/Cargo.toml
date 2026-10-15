@@ -1,15 +1,15 @@
 [package]
-name = "plancraft"
+name = "projectcraft"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "PlanCraft desktop app"
+description = "ProjectCraft desktop app"
 
 [lints]
 workspace = true
 
 [dependencies]
-plancraft-engine = { workspace = true }
-plancraft-ui-egui = { workspace = true }
+projectcraft-engine = { workspace = true }
+projectcraft-ui-egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }

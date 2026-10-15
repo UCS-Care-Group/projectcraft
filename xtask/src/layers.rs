@@ -30,7 +30,7 @@ impl Class {
     }
 }
 
-/// The layering table. Names are package names without the `plancraft-`
+/// The layering table. Names are package names without the `projectcraft-`
 /// prefix.
 pub const TABLE: &[(&str, Class)] = &[
     ("time", Class::Layer(0)),
@@ -43,7 +43,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("ui-egui", Class::Layer(6)),
     ("testkit", Class::Testkit),
     // apps and tooling
-    ("plancraft", Class::Exempt),
+    ("projectcraft", Class::Exempt),
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
     ("xtask", Class::Exempt),
@@ -68,7 +68,7 @@ pub const UI_CRATES: &[&str] = &["egui", "eframe", "winit", "egui_kittest", "rfd
 pub const UI_MIN_LAYER: u8 = 6;
 
 pub fn short_name(pkg: &str) -> &str {
-    pkg.strip_prefix("plancraft-").unwrap_or(pkg)
+    pkg.strip_prefix("projectcraft-").unwrap_or(pkg)
 }
 
 pub fn classify(pkg: &str) -> Option<Class> {
@@ -126,7 +126,7 @@ impl std::fmt::Display for Violation {
                 write!(f, "{krate}: standalone crate must not depend on workspace crate {dep}")
             }
             Violation::TestkitAsNormalDep { krate } => {
-                write!(f, "{krate}: plancraft-testkit may only be a dev-dependency")
+                write!(f, "{krate}: projectcraft-testkit may only be a dev-dependency")
             }
             Violation::UiBelowL6 { krate, dep, layer } => {
                 write!(f, "{krate} (L{layer}) depends on UI crate `{dep}`; UI toolkits are only allowed in L6+")
@@ -234,76 +234,76 @@ mod tests {
     #[test]
     fn clean_downward_graph_passes() {
         let g = [
-            c("plancraft-time", &[("kurbo", Normal, false)]),
-            c("plancraft-model", &[("plancraft-time", Normal, true)]),
-            c("plancraft-engine", &[("plancraft-model", Normal, true), ("plancraft-testkit", Dev, true)]),
-            c("plancraft-ui-egui", &[("plancraft-engine", Normal, true), ("egui", Normal, false)]),
-            c("plancraft-cli", &[("plancraft-ui-egui", Normal, true)]),
+            c("projectcraft-time", &[("kurbo", Normal, false)]),
+            c("projectcraft-model", &[("projectcraft-time", Normal, true)]),
+            c("projectcraft-engine", &[("projectcraft-model", Normal, true), ("projectcraft-testkit", Dev, true)]),
+            c("projectcraft-ui-egui", &[("projectcraft-engine", Normal, true), ("egui", Normal, false)]),
+            c("projectcraft-cli", &[("projectcraft-ui-egui", Normal, true)]),
         ];
         assert!(check(&g).is_empty(), "{:?}", check(&g));
     }
 
     #[test]
     fn upward_dependency_flagged() {
-        let v = check(&[c("plancraft-model", &[("plancraft-engine", Normal, true)])]);
+        let v = check(&[c("projectcraft-model", &[("projectcraft-engine", Normal, true)])]);
         assert!(matches!(v[..], [Violation::Upward { from: 1, to: 4, .. }]));
     }
 
     #[test]
     fn sideways_dependency_flagged() {
-        let v = check(&[c("plancraft-mspdi", &[("plancraft-xer", Normal, true)])]);
+        let v = check(&[c("projectcraft-mspdi", &[("projectcraft-xer", Normal, true)])]);
         assert!(matches!(v[..], [Violation::Upward { from: 2, to: 2, .. }]));
     }
 
     #[test]
     fn l0_foundation_chain_allowed_one_way() {
-        assert!(check(&[c("plancraft-model", &[("plancraft-time", Normal, true)])]).is_empty());
-        let v = check(&[c("plancraft-time", &[("plancraft-model", Normal, true)])]);
+        assert!(check(&[c("projectcraft-model", &[("projectcraft-time", Normal, true)])]).is_empty());
+        let v = check(&[c("projectcraft-time", &[("projectcraft-model", Normal, true)])]);
         assert!(matches!(v[..], [Violation::Upward { from: 0, to: 1, .. }]));
     }
 
     #[test]
     fn self_dev_dependency_ignored() {
-        assert!(check(&[c("plancraft-model", &[("plancraft-model", Dev, true)])]).is_empty());
+        assert!(check(&[c("projectcraft-model", &[("projectcraft-model", Dev, true)])]).is_empty());
     }
 
     #[test]
     fn upward_dev_dependency_flagged() {
-        let v = check(&[c("plancraft-time", &[("plancraft-model", Dev, true)])]);
+        let v = check(&[c("projectcraft-time", &[("projectcraft-model", Dev, true)])]);
         assert!(matches!(v[..], [Violation::Upward { kind: Dev, .. }]));
     }
 
     #[test]
     fn ui_crates_below_l6_flagged() {
         for dep in ["egui", "eframe", "winit", "egui_kittest", "rfd", "bevy_ecs", "bevy"] {
-            let v = check(&[c("plancraft-engine", &[(dep, Normal, false)])]);
+            let v = check(&[c("projectcraft-engine", &[(dep, Normal, false)])]);
             assert!(matches!(v[..], [Violation::UiBelowL6 { layer: 4, .. }]), "{dep}");
         }
-        assert!(check(&[c("plancraft-engine", &[("egui_extras_not", Normal, false)])]).is_empty());
-        assert!(!check(&[c("plancraft-mcp", &[("winit", Normal, false)])]).is_empty());
+        assert!(check(&[c("projectcraft-engine", &[("egui_extras_not", Normal, false)])]).is_empty());
+        assert!(!check(&[c("projectcraft-mcp", &[("winit", Normal, false)])]).is_empty());
     }
 
     #[test]
     fn unregistered_crate_is_error() {
-        let v = check(&[c("plancraft-mystery", &[])]);
-        assert!(matches!(&v[..], [Violation::Unregistered { krate }] if krate == "plancraft-mystery"));
+        let v = check(&[c("projectcraft-mystery", &[])]);
+        assert!(matches!(&v[..], [Violation::Unregistered { krate }] if krate == "projectcraft-mystery"));
         assert!(v[0].to_string().contains("register"));
     }
 
     #[test]
     fn testkit_only_as_dev_dependency() {
-        let v = check(&[c("plancraft-model", &[("plancraft-testkit", Normal, true)])]);
+        let v = check(&[c("projectcraft-model", &[("projectcraft-testkit", Normal, true)])]);
         assert!(matches!(v[..], [Violation::TestkitAsNormalDep { .. }]));
-        assert!(check(&[c("plancraft-model", &[("plancraft-testkit", Dev, true)])]).is_empty());
+        assert!(check(&[c("projectcraft-model", &[("projectcraft-testkit", Dev, true)])]).is_empty());
         // testkit itself may use anything up to L5 but not L6 crates.
-        assert!(check(&[c("plancraft-testkit", &[("plancraft-engine", Normal, true)])]).is_empty());
-        assert!(!check(&[c("plancraft-testkit", &[("plancraft-ui-egui", Normal, true)])]).is_empty());
+        assert!(check(&[c("projectcraft-testkit", &[("projectcraft-engine", Normal, true)])]).is_empty());
+        assert!(!check(&[c("projectcraft-testkit", &[("projectcraft-ui-egui", Normal, true)])]).is_empty());
     }
 
     #[test]
     fn apps_and_xtask_exempt() {
-        for app in ["plancraft", "plancraft-cli", "plancraft-web", "xtask"] {
-            assert!(check(&[c(app, &[("egui", Normal, false), ("plancraft-ui-egui", Normal, true)])]).is_empty());
+        for app in ["projectcraft", "projectcraft-cli", "projectcraft-web", "xtask"] {
+            assert!(check(&[c(app, &[("egui", Normal, false), ("projectcraft-ui-egui", Normal, true)])]).is_empty());
         }
     }
 
@@ -311,17 +311,17 @@ mod tests {
     fn metadata_parsing() {
         let meta: Value = serde_json::from_str(
             r#"{"packages":[
-                {"name":"plancraft-model","dependencies":[
-                    {"name":"plancraft-time","kind":null,"path":"/x/crates/time"},
+                {"name":"projectcraft-model","dependencies":[
+                    {"name":"projectcraft-time","kind":null,"path":"/x/crates/time"},
                     {"name":"serde","kind":null},
                     {"name":"proptest","kind":"dev"}]},
-                {"name":"plancraft-time","dependencies":[]}
+                {"name":"projectcraft-time","dependencies":[]}
             ]}"#,
         )
         .unwrap();
         let g = from_metadata(&meta).unwrap();
         assert_eq!(g.len(), 2);
-        let doc = g.iter().find(|c| c.name == "plancraft-model").unwrap();
+        let doc = g.iter().find(|c| c.name == "projectcraft-model").unwrap();
         assert!(doc.deps[0].workspace && !doc.deps[1].workspace);
         assert_eq!(doc.deps[2].kind, Dev);
         assert!(check(&g).is_empty());

@@ -1,4 +1,4 @@
-//! PlanCraft engine: the session and its commands.
+//! ProjectCraft engine: the session and its commands.
 //!
 //! **Everything is a command.** Each user-visible action is a [`CommandSpec`] with a stable id
 //! (`task.add`, `task.setPredecessors`), a label, a params description and a `run` function. The
@@ -10,8 +10,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use serde_json::{Value, json};
 
-pub use plancraft_model as model;
-pub use plancraft_time as time;
+pub use projectcraft_model as model;
+pub use projectcraft_time as time;
 
 use model::{Date, ModelError, Project, Schedule, TaskId};
 
@@ -103,7 +103,7 @@ impl Session {
     }
 
     pub fn load_json(text: &str) -> Result<Session, CmdError> {
-        let p: Project = serde_json::from_str(text).map_err(|e| CmdError::Io(format!("not a PlanCraft project: {e}")))?;
+        let p: Project = serde_json::from_str(text).map_err(|e| CmdError::Io(format!("not a ProjectCraft project: {e}")))?;
         if p.tasks.len() > model::MAX_TASKS {
             return Err(CmdError::Io(format!("more than {} tasks", model::MAX_TASKS)));
         }

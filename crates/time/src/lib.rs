@@ -1,4 +1,4 @@
-//! PlanCraft dates: a civil date as a day number, its weekday and its ISO text.
+//! ProjectCraft dates: a civil date as a day number, its weekday and its ISO text.
 //!
 //! Plans are scheduled in whole working days, so there is no time of day and no time zone here.
 //! ponytail: day granularity only; add hours (and `jiff`, as MailCraft does) when tasks need

@@ -2,17 +2,17 @@
 
 > **Status:** current · **Written:** 2026-10-15 · **Change:** major (first version)
 
-PlanCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCS-Care-Group/mailcraft/blob/main/docs/architecture.md) (see [ADR 0001](adr/0001-follow-the-craft-architecture.md)).
+ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCS-Care-Group/mailcraft/blob/main/docs/architecture.md) (see [ADR 0001](adr/0001-follow-the-craft-architecture.md)).
 
 | Layer | Crate | Depends on | Job |
 |---|---|---|---|
-| L0 | `plancraft-time` | — | `Date` (days since 1970-01-01), weekday, ISO text |
-| L1 | `plancraft-model` | time | `Project`, `Task`, `Link`, `Calendar`; `schedule()` (critical path) |
+| L0 | `projectcraft-time` | — | `Date` (days since 1970-01-01), weekday, ISO text |
+| L1 | `projectcraft-model` | time | `Project`, `Task`, `Link`, `Calendar`; `schedule()` (critical path) |
 | L2 | *(planned)* `mspdi`, `xer` | model | Microsoft Project XML and Primavera XER import/export |
-| L4 | `plancraft-engine` | model, time | `Session` (project, schedule, undo), `COMMANDS`, sample, JSON file |
+| L4 | `projectcraft-engine` | model, time | `Session` (project, schedule, undo), `COMMANDS`, sample, JSON file |
 | L5 | *(planned)* `mcp` | engine | MCP server |
-| L6 | `plancraft-ui-egui` | engine | Gantt Chart view |
-| apps | `plancraft`, `plancraft-cli` | any | desktop shell (eframe), command line |
+| L6 | `projectcraft-ui-egui` | engine | Gantt Chart view |
+| apps | `projectcraft`, `projectcraft-cli` | any | desktop shell (eframe), command line |
 
 `cargo xtask layers` enforces that a crate depends only on lower layers and that nothing below L6 uses a UI toolkit. `cargo xtask wasm` checks that every crate up to L5 and `ui-egui` builds for `wasm32-unknown-unknown`.
 

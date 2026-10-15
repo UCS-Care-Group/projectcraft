@@ -1,14 +1,14 @@
 [package]
-name = "plancraft-ui-egui"
+name = "projectcraft-ui-egui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "PlanCraft front end on egui: the Gantt Chart view (task sheet and bars)"
+description = "ProjectCraft front end on egui: the Gantt Chart view (task sheet and bars)"
 
 [lints]
 workspace = true
 
 [dependencies]
-plancraft-engine = { workspace = true }
+projectcraft-engine = { workspace = true }
 egui = { workspace = true }
 serde_json = { workspace = true }

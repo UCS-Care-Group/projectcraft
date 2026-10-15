@@ -7,14 +7,14 @@ version = "0.0.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
-repository = "https://github.com/UCS-Care-Group/plancraft"
+repository = "https://github.com/UCS-Care-Group/projectcraft"
 
 [workspace.dependencies]
 # internal
-plancraft-time = { path = "crates/time" }
-plancraft-model = { path = "crates/model" }
-plancraft-engine = { path = "crates/engine" }
-plancraft-ui-egui = { path = "crates/ui-egui" }
+projectcraft-time = { path = "crates/time" }
+projectcraft-model = { path = "crates/model" }
+projectcraft-engine = { path = "crates/engine" }
+projectcraft-ui-egui = { path = "crates/ui-egui" }
 
 # foundation
 thiserror = "2"

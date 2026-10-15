@@ -22,7 +22,7 @@ Resources, baselines, tracking, MSPDI import (later milestones); part-day durati
 ## Acceptance (pass/fail)
 - [ ] Five reference plans (worked examples with expected dates written by hand from Project's documented rules) schedule to the expected dates in tests.
 - [ ] A 200-task sample plan reschedules in under 10 ms in release.
-- [ ] Every new action is a command, listed by `plancraft-cli commands`, covered by `hostile_params_never_panic`.
+- [ ] Every new action is a command, listed by `projectcraft-cli commands`, covered by `hostile_params_never_panic`.
 - [ ] `cargo xtask ci` green; light and dark screenshots of the Gantt Chart reviewed.
 
 ## Open questions

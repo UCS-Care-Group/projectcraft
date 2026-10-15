@@ -1,13 +1,13 @@
-# PlanCraft — instructions for agents
+# ProjectCraft — instructions for agents
 
-PlanCraft is a clean-room, open-source, Rust-native project scheduling program targeting Microsoft Project parity: tasks, links, working calendars, the critical path, the Gantt Chart, resources, baselines and tracking. It runs natively on macOS, Windows, Linux and BSD, and on the web via WASM. It follows the conventions of its siblings: `../mailcraft` (Outlook), `../wordcraft` (Word), `gridcraft` (Excel) and the rest. Shared rules and learnings: [`storytold/craftrules`](https://github.com/storytold/craftrules) — read its `AGENTS.md`.
+ProjectCraft is a clean-room, open-source, Rust-native project scheduling program targeting Microsoft Project parity: tasks, links, working calendars, the critical path, the Gantt Chart, resources, baselines and tracking. It runs natively on macOS, Windows, Linux and BSD, and on the web via WASM. It follows the conventions of its siblings: `../mailcraft` (Outlook), `../wordcraft` (Word), `gridcraft` (Excel) and the rest. Shared rules and learnings: [`storytold/craftrules`](https://github.com/storytold/craftrules) — read its `AGENTS.md`.
 
 ## Start every session here
 1. Read `plan/STATUS.md` (current milestone, next task) if it exists. `plan/` is gitignored (local only); if it's missing, start from `ROADMAP.md` and the newest spec and plan in `docs/specs/` and `docs/plans/`.
 2. Don't stop to ask unless a decision is genuinely the owner's (licensing, publishing, pushing to new remotes, secrets, a new dependency or crate, anything in an ADR).
 
 ## Never crash
-People trust PlanCraft with plans that run for years; a crash loses their work and their trust. **This outranks feature work.** Standard: [`craftrules/standards/never-crash.md`](https://github.com/storytold/craftrules/blob/main/standards/never-crash.md).
+People trust ProjectCraft with plans that run for years; a crash loses their work and their trust. **This outranks feature work.** Standard: [`craftrules/standards/never-crash.md`](https://github.com/storytold/craftrules/blob/main/standards/never-crash.md).
 - **No panics in non-test code:** no `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!`; no `unsafe` (`unsafe_code = "forbid"`).
 - **Errors are `Result<T, E>`** through the crate's error type and `?`. An unfinished feature returns an error or is disabled; it never panics.
 - **Everything from outside is hostile:** project files, imported MSPDI/XER/CSV, command and CLI params. `get()` instead of `[i]`, checked/saturating arithmetic, clamp durations and lags (`model::MAX_DAYS`), cap task counts (`model::MAX_TASKS`), bound loops. A loaded file can hold a loop of links: the scheduler reports it, never spins.
@@ -36,9 +36,9 @@ People trust PlanCraft with plans that run for years; a crash loses their work a
 Before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, assets, layers, wasm). Commit after every arc of work that builds, with a task id in the message (`M1.2: task calendars`). Work follows a spec and an implementation plan in `docs/specs/` and `docs/plans/`; decisions that constrain later work get an ADR in `docs/adr/`.
 
 ## Running it
-- `cargo run --release -p plancraft -- --sample` (the sample project; keeps nothing).
-- `cargo run --release -p plancraft -- plan.plancraft` (opens or creates; Ctrl+S saves).
-- `cargo run -p plancraft-cli -- schedule --sample`, `… run --sample --cmd 'task.add={"name":"Snag list","duration":3}' --save out.plancraft`, `… commands`.
+- `cargo run --release -p projectcraft -- --sample` (the sample project; keeps nothing).
+- `cargo run --release -p projectcraft -- plan.projectcraft` (opens or creates; Ctrl+S saves).
+- `cargo run -p projectcraft-cli -- schedule --sample`, `… run --sample --cmd 'task.add={"name":"Snag list","duration":3}' --save out.projectcraft`, `… commands`.
 - **For UI work, look at the result** (screenshot, read the PNG), in light and dark.
 - Parallel agents: separate `CARGO_TARGET_DIR` per agent; edit only the crates you own.
 

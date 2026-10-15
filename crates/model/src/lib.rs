@@ -1,4 +1,4 @@
-//! PlanCraft project model: a project's tasks, the links between them, its working calendar, and
+//! ProjectCraft project model: a project's tasks, the links between them, its working calendar, and
 //! the critical-path scheduler ([`schedule`]).
 //!
 //! Everything here is plain data with edit primitives; undo and commands live in the engine.
@@ -11,7 +11,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-pub use plancraft_time::Date;
+pub use projectcraft_time::Date;
 pub use schedule::{Schedule, TaskDates, schedule};
 
 /// Longest duration or lag accepted, in working days (about 400 years): keeps all arithmetic in range.

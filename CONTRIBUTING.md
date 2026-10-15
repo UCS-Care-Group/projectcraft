@@ -1,4 +1,4 @@
-# Contributing to PlanCraft
+# Contributing to ProjectCraft
 
 > **Status:** current · **Written:** 2026-10-15 · **Change:** major (first version)
 

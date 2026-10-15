@@ -2279,60 +2279,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
-name = "plancraft"
-version = "0.0.1"
-dependencies = [
- "eframe",
- "plancraft-engine",
- "plancraft-ui-egui",
-]
-
-[[package]]
-name = "plancraft-cli"
-version = "0.0.1"
-dependencies = [
- "plancraft-engine",
- "serde_json",
-]
-
-[[package]]
-name = "plancraft-engine"
-version = "0.0.1"
-dependencies = [
- "plancraft-model",
- "plancraft-time",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "plancraft-model"
-version = "0.0.1"
-dependencies = [
- "plancraft-time",
- "proptest",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "plancraft-time"
-version = "0.0.1"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "plancraft-ui-egui"
-version = "0.0.1"
-dependencies = [
- "egui",
- "plancraft-engine",
- "serde_json",
-]
-
-[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2418,6 +2364,60 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
+
+[[package]]
+name = "projectcraft"
+version = "0.0.1"
+dependencies = [
+ "eframe",
+ "projectcraft-engine",
+ "projectcraft-ui-egui",
+]
+
+[[package]]
+name = "projectcraft-cli"
+version = "0.0.1"
+dependencies = [
+ "projectcraft-engine",
+ "serde_json",
+]
+
+[[package]]
+name = "projectcraft-engine"
+version = "0.0.1"
+dependencies = [
+ "projectcraft-model",
+ "projectcraft-time",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "projectcraft-model"
+version = "0.0.1"
+dependencies = [
+ "projectcraft-time",
+ "proptest",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "projectcraft-time"
+version = "0.0.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "projectcraft-ui-egui"
+version = "0.0.1"
+dependencies = [
+ "egui",
+ "projectcraft-engine",
+ "serde_json",
+]
 
 [[package]]
 name = "proptest"

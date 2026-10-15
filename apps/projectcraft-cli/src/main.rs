@@ -1,14 +1,14 @@
-//! PlanCraft command line.
+//! ProjectCraft command line.
 
 use std::process::ExitCode;
 
-use plancraft_engine::{Session, model::preds_text};
+use projectcraft_engine::{Session, model::preds_text};
 
 const USAGE: &str = "\
 usage:
-  plancraft-cli commands                                  list every command
-  plancraft-cli run (--sample | FILE) [--cmd ID[=JSON]]... [--save OUT]
-  plancraft-cli schedule (--sample | FILE)                print the task sheet with its dates
+  projectcraft-cli commands                                  list every command
+  projectcraft-cli run (--sample | FILE) [--cmd ID[=JSON]]... [--save OUT]
+  projectcraft-cli schedule (--sample | FILE)                print the task sheet with its dates
 ";
 
 fn main() -> ExitCode {
@@ -23,7 +23,7 @@ fn main() -> ExitCode {
 
 fn open(source: Option<&String>) -> Result<Session, String> {
     match source.map(String::as_str) {
-        Some("--sample") => Ok(plancraft_engine::sample()),
+        Some("--sample") => Ok(projectcraft_engine::sample()),
         Some(f) => Session::load_json(&std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?).map_err(|e| e.to_string()),
         None => Err(USAGE.into()),
     }
@@ -32,7 +32,7 @@ fn open(source: Option<&String>) -> Result<Session, String> {
 fn run(args: Vec<String>) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("commands") => {
-            for c in plancraft_engine::describe().as_array().into_iter().flatten() {
+            for c in projectcraft_engine::describe().as_array().into_iter().flatten() {
                 println!("{:<24} {:<20} {}", c["id"].as_str().unwrap_or(""), c["label"].as_str().unwrap_or(""), c["params"].as_str().unwrap_or(""));
             }
             Ok(())

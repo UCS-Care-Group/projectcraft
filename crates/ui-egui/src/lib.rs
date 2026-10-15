@@ -1,12 +1,12 @@
-//! PlanCraft front end: the Gantt Chart view, a task sheet with its bars on the right.
+//! ProjectCraft front end: the Gantt Chart view, a task sheet with its bars on the right.
 //!
 //! The UI is thin: it reads [`Session`] and changes it only through [`Session::run`].
 //! ponytail: one view, no ribbon, theme tokens or translation yet (see ROADMAP.md, M1).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use egui::{Color32, Key, RichText, Sense, Stroke, Vec2};
-use plancraft_engine::model::{TaskId, preds_text};
-use plancraft_engine::{Session, time::Date};
+use projectcraft_engine::model::{TaskId, preds_text};
+use projectcraft_engine::{Session, time::Date};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -42,7 +42,7 @@ impl App {
 
     fn save(&mut self) {
         let Some(path) = self.path.clone() else {
-            self.status = "Start PlanCraft with a file name to save (plancraft plan.plancraft)".into();
+            self.status = "Start ProjectCraft with a file name to save (projectcraft plan.projectcraft)".into();
             return;
         };
         self.status = match self.session.save_json().map(|t| std::fs::write(&path, t)) {
@@ -156,7 +156,7 @@ impl App {
     }
 }
 
-fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<plancraft_engine::model::TaskDates>, milestone: bool) {
+fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::model::TaskDates>, milestone: bool) {
     let Some(d) = dates else {
         ui.label("");
         return;

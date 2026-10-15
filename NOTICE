@@ -1,15 +1,15 @@
-PlanCraft
-Copyright (c) 2026 the PlanCraft contributors.
+ProjectCraft
+Copyright (c) 2026 the ProjectCraft contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option
 (LICENSE-MIT, LICENSE-APACHE).
 
-PlanCraft is a clean-room project scheduling program. It is not affiliated with, endorsed by or
+ProjectCraft is a clean-room project scheduling program. It is not affiliated with, endorsed by or
 derived from Microsoft Project or any other scheduling product. Product names mentioned in the
 documentation (to say what a feature corresponds to) are trademarks of their owners.
 
 Portions adapted from MailCraft and WordCraft
 
-PlanCraft follows the architecture and conventions of MailCraft
+ProjectCraft follows the architecture and conventions of MailCraft
 (https://github.com/UCS-Care-Group/mailcraft) and WordCraft (https://github.com/storytold/wordcraft).
 These parts started from their source, licensed under the MIT License or the Apache License,
 Version 2.0:
