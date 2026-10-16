@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M1.1 summary tasks; M1.3 hard constraints; M1.5 Open/Save dialogs; M1.5 autosave and recovery copy; planning docs made private; roadmap format as MailCraft; security hardening) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M1.1 summary tasks and summary links; M1.3 hard constraints; M1.5 Open/Save dialogs; M1.5 autosave and recovery copy; planning docs made private; roadmap format as MailCraft; security hardening) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -8,9 +8,9 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 
 | Number | Value | Kind |
 |---|---|---|
-| M1 tickets done | **8 / 16** | measured (GitHub issues) |
+| M1 tickets done | **12 / 16** | measured (GitHub issues) |
 | Commands / crates | 12 commands · 4 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
-| Tests | 85 `#[test]`s; property tests on the file reader, the duration and predecessor parsers and outline changes | measured (source) |
+| Tests | 115 `#[test]`s; property tests on the file reader, the duration and predecessor parsers, outline changes and the scheduler (summaries with any links and constraints) | measured (source) |
 | Builds verified | Windows, macOS and Linux (CI on each), the browser build (wasm) | measured |
 | Releases | none yet | measured |
 
@@ -23,7 +23,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 
 ## M1 — A plan you can run a real project on
 - [x] Command param schemas and effects; `format_version`
-- [ ] Summary tasks (outline levels, indent/outdent, rolled-up dates ✓; summary links and the hold on subtasks, #8)
+- [x] Summary tasks (outline levels, indent/outdent, rolled-up dates; summary links and constraints hold their subtasks; circular outline changes refused)
 - [ ] ID as row number, Unique ID stable; insert, move and delete rows; selection and keyboard
 - [ ] Calendar exceptions and the timescale (weeks/months, zoom)
 - [ ] Constraints (Start No Earlier Than, Must Finish On…) and deadlines; negative slack warning
@@ -56,6 +56,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | M1.1: summary tasks: `outline_level`, `task.indent`/`task.outdent` (one undo step, subtree moves), roll-up of start, finish and duration, summary bar, Alt+Shift+→/←; worked example 13; links and constraints on summaries wait for #8 (#7) |
 | 2026-10-16 | M1.5: autosave on by default (every 2 minutes while dirty, File > Autosave to turn off; saving never clears undo); recovery copy `<name>.projectcraft.recovery` (untitled: in the settings folder) at most every 30 s while dirty, deleted on clean save or close, offered back with Restore / Discard when newer than the file; `--sample` keeps nothing (#18) |
 | 2026-10-16 | M1.4: calendar exceptions (non-working and working days); `calendar.setWorking`, `calendar.addException`, `calendar.removeException`; a week with no working weekday refused; old `holidays` load as exceptions; Project ▸ Change Working Time dialog; worked example 7 (#14) |
+| 2026-10-16 | M1.1: summaries take links (as predecessor and successor) and every constraint type; a summary's link or constraint holds all its subtasks, through nesting; `ParentSummary` start driver; a link between a summary and its own subtask, or an indent or outdent that would make one, is refused as a circular relationship; worked examples 1, 2, 9, 10 (#8) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -66,3 +67,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | M1.1 summary tasks |
 | 2026-10-16 | minor | M1.5 autosave and recovery copy |
 | 2026-10-16 | minor | M1.4 calendar exceptions |
+| 2026-10-16 | minor | M1.1 summary links |

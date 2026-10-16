@@ -79,11 +79,6 @@ fn legal_levels(stored: impl Iterator<Item = u32>) -> Vec<u32> {
         .collect()
 }
 
-/// Why a task with links or a constraint can't become a summary yet.
-fn summary_hold_not_yet(name: &str) -> ModelError {
-    ModelError::Invalid(format!("{name} has predecessors or a constraint, which summary tasks don't support yet; remove them first (coming with #8)"))
-}
-
 impl Project {
     /// Rewrites every stored level to what [`Outline::of`] reads, so the file holds a legal outline.
     pub fn normalize_outline(&mut self) {
@@ -143,15 +138,8 @@ impl Project {
             }
             prev = l;
         }
-        let after = Outline { levels };
-        // ponytail: a summary's own links and constraint (the hold on its subtasks) come with #8.
-        for (row, t) in self.tasks.iter().enumerate() {
-            if after.is_summary(row) && !before.is_summary(row) && (!t.preds.is_empty() || !t.constraint.is_asap()) {
-                return Err(summary_hold_not_yet(&t.name));
-            }
-        }
         let old: Vec<u32> = self.tasks.iter().map(|t| t.outline_level).collect();
-        for (t, l) in self.tasks.iter_mut().zip(&after.levels) {
+        for (t, l) in self.tasks.iter_mut().zip(&levels) {
             t.outline_level = *l;
         }
         // A link between a summary and one of its own subtasks is a loop through the outline.
@@ -164,18 +152,19 @@ impl Project {
         Ok(())
     }
 
-    /// Refuses predecessors on a summary task until summaries hold their subtasks (#8).
-    pub(crate) fn check_summary_links(&self, id: TaskId, adding: bool) -> Result<(), ModelError> {
-        if adding && self.is_summary(id) {
-            return Err(ModelError::Invalid("Predecessors on summary tasks aren't supported yet (coming with #8)".into()));
-        }
-        Ok(())
-    }
-
-    /// Refuses a constraint on a summary task until summaries hold their subtasks (#8).
-    pub fn check_summary_constraint(&self, id: TaskId, constraint: crate::Constraint) -> Result<(), ModelError> {
-        if !constraint.is_asap() && self.is_summary(id) {
-            return Err(ModelError::Invalid("Constraints on summary tasks aren't supported yet (coming with #8)".into()));
+    /// Refuses a link between a summary and one of its own subtasks, at any depth and either way
+    /// round: the summary's link would hold the subtask that rolls it up, a loop through the outline.
+    pub(crate) fn check_outline_links(&self, id: TaskId, preds: &[crate::Link]) -> Result<(), ModelError> {
+        let o = Outline::of(self);
+        let row = |id: TaskId| self.tasks.iter().position(|t| t.id == id);
+        let within = |inner: usize, outer: usize| inner > outer && inner < o.subtree_end(outer);
+        let Some(me) = row(id) else { return Ok(()) };
+        for l in preds {
+            if let Some(other) = row(l.pred)
+                && (within(me, other) || within(other, me))
+            {
+                return Err(ModelError::Invalid(CIRCULAR_OUTLINE.into()));
+            }
         }
         Ok(())
     }
@@ -264,21 +253,31 @@ mod tests {
     }
 
     #[test]
-    fn a_task_with_links_or_a_constraint_cannot_become_a_summary_yet() {
+    fn an_outdent_that_adopts_a_linked_successor_is_circular() {
+        // T4 follows T2. Outdenting T2 makes T4, below it, its subtask: a summary linked to its own subtask.
+        let (mut p, ids) = project(&[1, 2, 3, 2]);
+        p.set_preds(ids[3], parse_preds("2").unwrap()).unwrap();
+        assert_eq!(p.outdent(&[ids[1]]).unwrap_err().to_string(), CIRCULAR_OUTLINE);
+        assert_eq!(levels(&p), [1, 2, 3, 2]);
+    }
+
+    #[test]
+    fn a_linked_task_may_become_a_summary_but_never_link_to_its_own_subtask() {
         let (mut p, ids) = project(&[1, 1, 1]);
         p.set_preds(ids[1], parse_preds("1").unwrap()).unwrap();
-        let e = p.indent(&[ids[2]]).unwrap_err().to_string();
-        assert!(e.contains("T2 has predecessors"), "{e}");
-        // A summary's subtasks may link anywhere outside it; a summary may be a predecessor.
-        let (mut p, ids) = project(&[1, 2, 1]);
-        p.set_preds(ids[2], parse_preds("1").unwrap()).unwrap();
-        assert!(p.set_preds(ids[0], parse_preds("3").unwrap()).unwrap_err().to_string().contains("aren't supported yet"));
+        p.indent(&[ids[2]]).unwrap();
+        assert!(p.is_summary(ids[1]));
+        // Either way round, at any depth; links outside the summary are fine.
+        let (mut p, ids) = project(&[1, 2, 3, 1]);
+        for (succ, pred) in [(0, "2"), (0, "3"), (1, "1"), (2, "1"), (2, "2"), (1, "3")] {
+            let e = p.set_preds(ids[succ], parse_preds(pred).unwrap()).unwrap_err();
+            assert_eq!(e.to_string(), CIRCULAR_OUTLINE, "row {} after {pred}", succ + 1);
+        }
+        p.set_preds(ids[3], parse_preds("1, 3").unwrap()).unwrap();
         p.set_preds(ids[0], vec![]).unwrap();
-        // A subtask linked to its own summary is a loop.
-        assert!(p.set_preds(ids[1], parse_preds("1").unwrap()).is_err());
-        assert!(p.check_summary_constraint(ids[0], crate::Constraint::StartNoEarlierThan(p.start)).is_err());
-        assert!(p.check_summary_constraint(ids[0], crate::Constraint::Asap).is_ok());
-        assert!(p.check_summary_constraint(ids[1], crate::Constraint::StartNoEarlierThan(p.start)).is_ok());
+        let (mut p, ids) = project(&[1, 2, 1]);
+        p.set_preds(ids[0], parse_preds("3").unwrap()).unwrap();
+        p.set_preds(ids[1], parse_preds("3").unwrap()).unwrap();
     }
 
     proptest::proptest! {
