@@ -1,4 +1,4 @@
-//! Worked example 3 of the M1 spec (`docs/specs/m1-usable-plan.md`) and the hard constraint types:
+//! Worked examples for the hard constraint types:
 //! Start/Finish No Later Than and Must Start/Finish On win over links, a link that can't be
 //! honoured gives negative slack and a warning from every schedule run, and the scheduler records
 //! what drove each start. Worked out by hand from Microsoft's definitions, before the code:

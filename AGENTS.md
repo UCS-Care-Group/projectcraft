@@ -3,7 +3,7 @@
 ProjectCraft is a clean-room, open-source, Rust-native project scheduling program targeting Microsoft Project parity: tasks, links, working calendars, the critical path, the Gantt Chart, resources, baselines and tracking. It runs natively on macOS, Windows, Linux and BSD, and on the web via WASM. It follows the conventions of its siblings: `../mailcraft` (Outlook), `../wordcraft` (Word), `gridcraft` (Excel) and the rest. Shared rules and learnings: [`storytold/craftrules`](https://github.com/storytold/craftrules) — read its `AGENTS.md`.
 
 ## Start every session here
-1. Read `plan/STATUS.md` (current milestone, next task) if it exists. `plan/` is gitignored (local only); if it's missing, start from `ROADMAP.md` and the newest spec and plan in `docs/specs/` and `docs/plans/`.
+1. Read `plan/STATUS.md` (current milestone, next task) if it exists. `plan/` is gitignored (local only); if it's missing, start from `ROADMAP.md` and the open issues.
 2. Don't stop to ask unless a decision is genuinely the owner's (licensing, publishing, pushing to new remotes, secrets, a new dependency or crate, anything in an ADR).
 
 ## Never crash
@@ -33,7 +33,7 @@ People trust ProjectCraft with plans that run for years; a crash loses their wor
 - **Rust only** (no handwritten JS/TS). **Never break wasm** (`cargo xtask wasm`).
 
 ## Quality gates
-Before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, assets, layers, wasm). Commit after every arc of work that builds, with a task id in the message (`M1.2: task calendars`). Work follows a spec and an implementation plan in `docs/specs/` and `docs/plans/`; decisions that constrain later work get an ADR in `docs/adr/`.
+Before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, assets, layers, wasm). Commit after every arc of work that builds, with a task id in the message (`M1.2: task calendars`). Work follows a spec and an implementation plan; decisions that constrain later work get an architecture decision record (all private, in `plan/`). No AI attribution anywhere: no `Co-Authored-By` trailer and no "Generated with" line in commits, pull requests, issues or comments. Use a `CARGO_TARGET_DIR` under `~/.cache`, not `/tmp`.
 
 ## Running it
 - `cargo run --release -p projectcraft -- --sample` (the sample project; keeps nothing).
@@ -44,3 +44,5 @@ Before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, assets, l
 
 ## Roadmap
 `ROADMAP.md` holds the milestones and the progress log. When work lands, update it and bump each touched doc's status line and revision history.
+
+Specs, plans, ADRs and the glossary are private: they live in plan/ (gitignored) and are never committed, nor quoted in commit messages, PR bodies, issues or release notes beyond a task id. ROADMAP.md shows the overall direction; each contributor keeps their own specs privately for clean-room work. Public docs say what the program does, not how the next step will be built.

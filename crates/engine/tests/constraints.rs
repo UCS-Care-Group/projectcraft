@@ -1,4 +1,4 @@
-//! Worked examples 5, 11, 14 and 15 of the M1 spec (`docs/specs/m1-usable-plan.md`): soft
+//! Worked examples for soft
 //! constraints (Start No Earlier Than, Finish No Earlier Than) and typed dates. Each is worked out
 //! by hand from the Microsoft documentation it cites, before the code. The hard types are in
 //! `hard_constraints.rs`.

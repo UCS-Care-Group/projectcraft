@@ -1,10 +1,8 @@
-//! The `.projectcraft` file: versioned JSON of the [`Project`], saved atomically ([ADR 0003]).
+//! The `.projectcraft` file: versioned JSON of the [`Project`], saved atomically.
 //!
 //! The file is the project's fields plus `format_version`, a whole number that goes up only
 //! when old readers can't read new files. A newer version is refused; an older one is migrated
 //! on load ([`migrate`]). M0 files have no `format_version` and count as version 0.
-//!
-//! [ADR 0003]: ../../../docs/adr/0003-native-json-format.md
 
 use std::collections::HashSet;
 use std::fs::{self, File};
