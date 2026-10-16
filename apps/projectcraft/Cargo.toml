@@ -16,3 +16,10 @@ eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "
 # Open / Save As dialogs (xdg-desktop-portal on Linux and the BSDs). Waited for on a thread
 # with a small std-only `block_on` (src/dialogs.rs), so no async runtime is added.
 rfd = { workspace = true }
+# Quit through `-[NSApplication terminate:]` on macOS, after the unsaved-changes prompt; does
+# nothing elsewhere. `menu`: a macOS app menu whose Quit (Cmd+Q) asks first, like the close button.
+craft-quit = { workspace = true, features = ["egui", "menu"] }
+
+[dev-dependencies]
+egui_kittest = { workspace = true }
+serde_json = { workspace = true }

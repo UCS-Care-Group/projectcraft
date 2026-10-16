@@ -262,13 +262,18 @@ impl App {
         self.status.clear();
     }
 
+    /// Each frame before [`App::ui`], and also while the window is minimized or hidden, when `ui`
+    /// does not run: the window's close request, held back while there are unsaved changes.
+    pub fn logic(&mut self, ctx: &egui::Context) {
+        self.intercept_close(ctx);
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         if self.themed != Some(self.appearance) {
             theme::apply(&ctx, self.appearance);
             self.themed = Some(self.appearance);
         }
-        self.intercept_close(&ctx);
         self.file_keys(&ctx);
         let (undo, redo) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::COMMAND, Key::Z), i.consume_key(egui::Modifiers::COMMAND, Key::Y)));
         let (zoom_in, zoom_out) = ctx.input_mut(|i| {

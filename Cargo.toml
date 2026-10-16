@@ -34,6 +34,8 @@ rfd = "0.17"
 # `rev`; deny.toml allows that one repository.
 # Crash-safe atomic file replacement; the engine's saves, native only.
 craft-atomic = { git = "https://github.com/storytold/craft-libs", rev = "8f5a2831614e632f91ad367f7af2a6e5b61b9529" }
+# Quit the platform's own way (macOS: `-[NSApplication terminate:]`); the desktop app only.
+craft-quit = { git = "https://github.com/storytold/craft-libs", rev = "8f5a2831614e632f91ad367f7af2a6e5b61b9529" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
