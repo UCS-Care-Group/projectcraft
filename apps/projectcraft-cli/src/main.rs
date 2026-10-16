@@ -68,7 +68,18 @@ fn run(args: Vec<String>) -> Result<(), String> {
             for t in &s.project.tasks {
                 let Some(d) = sched.tasks.get(&t.id) else { continue };
                 let crit = if d.critical { "*" } else { " " };
-                println!("{:>4}{crit} {:<28} {:>4}d  {}  {}  {:>5}  {}", t.id, t.name, t.duration, d.start, d.finish, d.slack, preds_text(&t.preds));
+                // `!`: a constraint overrides a link (constraint conflict).
+                let warn = if d.constraint_conflict { "!" } else { " " };
+                println!(
+                    "{:>4}{crit} {:<28} {:>4}d  {}  {}  {:>5}{warn} {}",
+                    t.id,
+                    t.name,
+                    t.duration,
+                    d.start,
+                    d.finish,
+                    d.slack,
+                    preds_text(&t.preds)
+                );
             }
             Ok(())
         }

@@ -72,6 +72,8 @@ pub struct App {
 
 const ROW_H: f32 = 22.0;
 const DAY_W: f32 = 18.0;
+/// The ID column: room for five digits.
+const ID_W: f32 = 40.0;
 
 impl App {
     pub fn new(session: Session, path: Option<std::path::PathBuf>) -> Self {
@@ -161,8 +163,12 @@ impl App {
     fn sheet(&mut self, ui: &mut egui::Ui) {
         let start = self.session.project.start;
         let mut commands: Vec<(&'static str, Value)> = Vec::new();
-        egui::Grid::new("sheet").striped(true).min_row_height(ROW_H).show(ui, |ui| {
-            for h in ["ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", ""] {
+        egui::Grid::new("sheet").striped(true).min_row_height(ROW_H).min_col_width(0.0).show(ui, |ui| {
+            // The unnamed column after ID holds indicators, as Project's Indicators column.
+            // ID and the indicators are narrow, fixed-width columns.
+            ui.add_sized([ID_W, ROW_H], egui::Label::new(RichText::new(tl!("ID")).strong()));
+            ui.add_sized([ROW_H, ROW_H], egui::Label::new(""));
+            for h in ["Task Name", "Duration", "Start", "Finish", "Predecessors", ""] {
                 ui.label(RichText::new(tl!(h)).strong());
             }
             ui.end_row();
@@ -171,7 +177,8 @@ impl App {
             // The ID column is the row number; commands get Unique IDs.
             for (row, (id, name, duration, preds)) in (1..).zip(rows) {
                 let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
-                ui.label(row.to_string());
+                ui.add_sized([ID_W, ROW_H], egui::Label::new(row.to_string()));
+                indicator(ui, dates);
                 if let Some(c) = self.cell(ui, id, Field::Name, &name, 220.0) {
                     commands.push(("task.rename", json!({"id": id.0, "name": c})));
                 }
@@ -219,6 +226,21 @@ impl App {
         }
         None
     }
+}
+
+/// The indicator cell: a warning triangle, drawn in code, when a constraint overrides one of the
+/// task's links.
+fn indicator(ui: &mut egui::Ui, dates: Option<projectcraft_engine::model::TaskDates>) {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ROW_H, ROW_H), Sense::hover());
+    if !dates.is_some_and(|d| d.constraint_conflict) {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let (c, r) = (rect.center(), ROW_H * 0.36);
+    let p = ui.painter();
+    p.add(egui::Shape::convex_polygon(vec![c + Vec2::new(0.0, -r), c + Vec2::new(r, r * 0.8), c + Vec2::new(-r, r * 0.8)], t.warning, Stroke::NONE));
+    p.text(c + Vec2::new(0.0, r * 0.2), egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(ROW_H * 0.45), t.surface);
+    response.on_hover_text(tl!("Constraint conflict: a link can't be honoured, so this task keeps its constraint date and has negative slack."));
 }
 
 fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::model::TaskDates>, milestone: bool) {

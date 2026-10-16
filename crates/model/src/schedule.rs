@@ -6,8 +6,19 @@
 //! the early finish (ES = max(ES, CD), EF = max(EF, CD)). A constraint date on a non-working day
 //! counts as the next working day for a start type and the previous one for a finish type.
 //!
-//! ponytail: schedules forward from the project start, with no hard constraints (#12), no actual
-//! progress and no resource levelling; each is its own step on the roadmap.
+//! Hard constraints win over links, Project's default "Tasks will always honor their constraint
+//! dates". Per Microsoft's definitions
+//! (https://learn.microsoft.com/en-us/office/troubleshoot/project/definition-of-project-constraints):
+//! Start No Later Than sets LS = CD if CD < LS, Finish No Later Than LF = CD if CD < LF; Must Start
+//! On sets ES, LS and the scheduled start to CD, Must Finish On EF, LF and the scheduled finish.
+//! A task whose links would take it past an SNLT or FNLT date is held at the date; its early start
+//! stays where the links put it, so its slack (LS − ES) goes negative. The late dates carry the cap
+//! back to its predecessors, so their slack goes negative too. Either way the task is flagged
+//! ([`TaskDates::constraint_conflict`]) on every run.
+//!
+//! ponytail: schedules forward from the project start, with no actual progress and no resource
+//! levelling; each is its own step on the roadmap. A Must Start On before the project start is
+//! held at the project start.
 
 use std::collections::HashMap;
 
@@ -23,6 +34,22 @@ pub struct TaskDates {
     /// Total slack in working days.
     pub slack: i64,
     pub critical: bool,
+    /// A link can't be honoured because a hard constraint holds the task earlier: show a warning.
+    pub constraint_conflict: bool,
+    /// What set the start.
+    pub driver: Driver,
+}
+
+/// What drove a task's start: the scheduler's answer to "why this date?".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Driver {
+    /// Nothing later: it starts at the project start.
+    ProjectStart,
+    /// The link from this predecessor (by Unique ID); the first in the list when several tie.
+    Link(TaskId),
+    /// Its constraint: a Start/Finish No Earlier Than date later than the links, a No Later Than
+    /// date holding it earlier, or a Must Start/Finish On date.
+    Constraint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,9 +116,14 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
 
     // Forward pass. Offsets stay small: at most MAX_TASKS chains of MAX_DAYS-bounded steps fit in i64.
     let (mut es, mut ef) = (vec![0i64; n], vec![0i64; n]);
+    // Early start for slack: where the links put the task before a hard constraint held it.
+    let mut early = vec![0i64; n];
+    let mut conflict = vec![false; n];
+    let mut driver = vec![Driver::ProjectStart; n];
     for &i in &order {
         let Some(t) = p.tasks.get(i) else { continue };
         let mut start = 0i64;
+        let mut why = Driver::ProjectStart;
         for l in &t.preds {
             let Some(&j) = index.get(&l.pred) else { continue };
             let (pes, pef) = (es.get(j).copied().unwrap_or(0), ef.get(j).copied().unwrap_or(0));
@@ -102,17 +134,37 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
                 LinkKind::FF => pef + lag - d(i),
                 LinkKind::SF => pes + lag - d(i),
             };
-            start = start.max(s);
+            if s > start || (s == start && why == Driver::ProjectStart) {
+                (start, why) = (s, Driver::Link(l.pred));
+            }
         }
-        match t.constraint {
-            Constraint::StartNoEarlierThan(cd) => start = start.max(start_offset(p, cd)),
-            Constraint::FinishNoEarlierThan(cd) => start = start.max(finish_offset(p, cd) - d(i)),
-            // Hard types are honoured from #12; ASAP has nothing to add.
-            _ => {}
+        // Where the links (and a No Earlier Than date) put it; then what a hard constraint makes of it.
+        let natural = match t.constraint {
+            Constraint::StartNoEarlierThan(cd) => start.max(start_offset(p, cd)),
+            Constraint::FinishNoEarlierThan(cd) => start.max(finish_offset(p, cd) - d(i)),
+            _ => start,
+        };
+        let held = match t.constraint {
+            Constraint::StartNoLaterThan(cd) => natural.min(start_offset(p, cd)),
+            Constraint::FinishNoLaterThan(cd) => natural.min(finish_offset(p, cd) - d(i)),
+            Constraint::MustStartOn(cd) => start_offset(p, cd),
+            Constraint::MustFinishOn(cd) => finish_offset(p, cd) - d(i),
+            _ => natural,
         }
-        if let (Some(a), Some(b)) = (es.get_mut(i), ef.get_mut(i)) {
-            *a = start;
-            *b = start + d(i);
+        .max(0);
+        if natural > start || held != natural || matches!(t.constraint, Constraint::MustStartOn(_) | Constraint::MustFinishOn(_)) {
+            why = Driver::Constraint;
+        }
+        // Must Start/Finish On set the early dates too (ES = CD); the No Later Than types leave them.
+        let soft_early = if matches!(t.constraint, Constraint::MustStartOn(_) | Constraint::MustFinishOn(_)) { held } else { natural };
+        if let (Some(a), Some(b), Some(e), Some(c), Some(w)) =
+            (es.get_mut(i), ef.get_mut(i), early.get_mut(i), conflict.get_mut(i), driver.get_mut(i))
+        {
+            *a = held;
+            *b = held + d(i);
+            *e = soft_early;
+            *c = start > held;
+            *w = why;
         }
     }
     let end = ef.iter().copied().max().unwrap_or(0);
@@ -121,7 +173,17 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     let mut lf = vec![end; n];
     for &i in order.iter().rev() {
         let Some(t) = p.tasks.get(i) else { continue };
-        let my_lf = lf.get(i).copied().unwrap_or(end);
+        // A hard constraint caps the late finish: LS = CD (SNLT, MSO), LF = CD (FNLT, MFO).
+        let cap = match t.constraint {
+            Constraint::StartNoLaterThan(cd) => start_offset(p, cd) + d(i),
+            Constraint::FinishNoLaterThan(cd) => finish_offset(p, cd),
+            Constraint::MustStartOn(_) | Constraint::MustFinishOn(_) => ef.get(i).copied().unwrap_or(end),
+            _ => end,
+        };
+        let my_lf = lf.get(i).copied().unwrap_or(end).min(cap);
+        if let Some(x) = lf.get_mut(i) {
+            *x = my_lf;
+        }
         let my_ls = my_lf - d(i);
         for l in &t.preds {
             let Some(&j) = index.get(&l.pred) else { continue };
@@ -150,11 +212,20 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     for (i, t) in p.tasks.iter().enumerate() {
         let (s, f, lfi) = (es.get(i).copied().unwrap_or(0), ef.get(i).copied().unwrap_or(0), lf.get(i).copied().unwrap_or(end));
         let ls = lfi - d(i);
-        let slack = ls - s;
+        let slack = ls - early.get(i).copied().unwrap_or(s);
         let first = |o: i64| if d(i) == 0 { day(o - 1) } else { day(o) };
         tasks.insert(
             t.id,
-            TaskDates { start: first(s)?, finish: last(s, f)?, late_start: first(ls)?, late_finish: last(ls, lfi)?, slack, critical: slack <= 0 },
+            TaskDates {
+                start: first(s)?,
+                finish: last(s, f)?,
+                late_start: first(ls)?,
+                late_finish: last(ls, lfi)?,
+                slack,
+                critical: slack <= 0,
+                constraint_conflict: conflict.get(i).copied().unwrap_or(false),
+                driver: driver.get(i).copied().unwrap_or(Driver::ProjectStart),
+            },
         );
     }
     Ok(Schedule { tasks, finish: last(0, end)? })
