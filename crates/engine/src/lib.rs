@@ -1,9 +1,9 @@
 //! ProjectCraft engine: the session and its commands.
 //!
 //! **Everything is a command.** Each user-visible action is a [`CommandSpec`] with a stable id
-//! (`task.add`, `task.setPredecessors`), a label, a params description and a `run` function. The
-//! toolbar, the task sheet, the CLI (and later the control channel and MCP server) all call
-//! [`Session::run`].
+//! (`task.add`, `task.setPredecessors`), a label, a JSON Schema for its params, an [`Effect`] and a
+//! `run` function. The toolbar, the task sheet, the CLI (and later the control channel and MCP
+//! server) all call [`Session::run`], which checks params against the schema first (ADR 0004).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -27,11 +27,37 @@ pub enum CmdError {
     Io(String),
 }
 
+/// What a command does to the world, so callers (MCP, `--read-only`, confirmations) can gate it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    /// Looks only.
+    Read,
+    /// Changes the open project; undoable.
+    Edit,
+    /// Removes the owner's work (deleting tasks); undoable, but needs confirmation from agents.
+    Destructive,
+    /// Touches files outside the open project.
+    File,
+}
+
+impl Effect {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effect::Read => "read",
+            Effect::Edit => "edit",
+            Effect::Destructive => "destructive",
+            Effect::File => "file",
+        }
+    }
+}
+
 pub struct CommandSpec {
     pub id: &'static str,
     pub label: &'static str,
-    /// Human-readable params, for `commands` listings and agents.
-    pub params: &'static str,
+    pub effect: Effect,
+    /// JSON Schema for the params: an object with `properties`, `required` and
+    /// `additionalProperties: false`. Only what [`check_params`] understands.
+    pub schema: fn() -> Value,
     pub run: fn(&mut Project, &Value) -> Result<(), CmdError>,
 }
 
@@ -62,12 +88,13 @@ impl Session {
 
     /// Runs a command. On error, or if it panics, the project is left exactly as it was.
     pub fn run(&mut self, id: &str, params: &Value) -> Result<(), CmdError> {
+        let spec = COMMANDS.iter().find(|c| c.id == id).ok_or_else(|| CmdError::Unknown(id.chars().take(60).collect()))?;
+        check_params(&(spec.schema)(), params)?;
         match id {
             "edit.undo" => return self.step(true),
             "edit.redo" => return self.step(false),
             _ => {}
         }
-        let spec = COMMANDS.iter().find(|c| c.id == id).ok_or_else(|| CmdError::Unknown(id.chars().take(60).collect()))?;
         let before = self.project.clone();
         let result = catch_unwind(AssertUnwindSafe(|| (spec.run)(&mut self.project, params)))
             .unwrap_or_else(|_| Err(CmdError::Params(format!("{id} failed unexpectedly; nothing was changed"))));
@@ -116,11 +143,85 @@ pub fn commands() -> &'static [CommandSpec] {
 }
 
 pub fn describe() -> Value {
-    COMMANDS
-        .iter()
-        .map(|c| json!({"id": c.id, "label": c.label, "params": c.params}))
-        .chain([json!({"id": "edit.undo", "label": "Undo", "params": ""}), json!({"id": "edit.redo", "label": "Redo", "params": ""})])
-        .collect()
+    COMMANDS.iter().map(|c| json!({"id": c.id, "label": c.label, "effect": c.effect.as_str(), "params": (c.schema)()})).collect()
+}
+
+/// A params schema: an object with these properties, these required, and nothing else.
+fn object(properties: Value, required: &[&str]) -> Value {
+    json!({"type": "object", "properties": properties, "required": required, "additionalProperties": false})
+}
+
+fn no_params() -> Value {
+    object(json!({}), &[])
+}
+
+fn task_id() -> Value {
+    json!({"type": "integer", "minimum": 1, "maximum": u32::MAX, "description": "task"})
+}
+
+fn days() -> Value {
+    json!({"type": "integer", "minimum": 0, "maximum": model::MAX_DAYS, "description": "working days"})
+}
+
+/// Checks params against a command schema. Supports the subset our schemas use: an object with
+/// `properties`, `required` and `additionalProperties: false`; property `type` integer, number,
+/// string, boolean, array or object; `minimum`/`maximum`. `null` params count as `{}`.
+pub fn check_params(schema: &Value, params: &Value) -> Result<(), CmdError> {
+    let empty = serde_json::Map::new();
+    let given = match params {
+        Value::Null => &empty,
+        Value::Object(m) => m,
+        _ => return Err(CmdError::Params("params must be a JSON object".into())),
+    };
+    let props = schema.get("properties").and_then(Value::as_object).unwrap_or(&empty);
+    for (k, v) in given {
+        let p = props.get(k).ok_or_else(|| {
+            let known: Vec<&str> = props.keys().map(String::as_str).collect();
+            let k: String = k.chars().take(60).collect();
+            CmdError::Params(if known.is_empty() {
+                format!("unknown param `{k}`; this command takes none")
+            } else {
+                format!("unknown param `{k}`; expected {}", known.join(", "))
+            })
+        })?;
+        check_value(k, p, v)?;
+    }
+    for r in schema.get("required").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        if !given.contains_key(r) {
+            return Err(CmdError::Params(format!("`{r}` is required")));
+        }
+    }
+    Ok(())
+}
+
+fn check_value(k: &str, p: &Value, v: &Value) -> Result<(), CmdError> {
+    let ty = p.get("type").and_then(Value::as_str).unwrap_or("");
+    let ok = match ty {
+        "integer" => v.as_i64().is_some(),
+        "number" => v.is_number(),
+        "string" => v.is_string(),
+        "boolean" => v.is_boolean(),
+        "array" => v.is_array(),
+        "object" => v.is_object(),
+        _ => true,
+    };
+    if !ok {
+        let what = match ty {
+            "integer" => "a whole number",
+            "string" => "text",
+            _ => ty,
+        };
+        return Err(CmdError::Params(format!("`{k}` must be {what}")));
+    }
+    if let Some(n) = v.as_f64() {
+        let min = p.get("minimum").and_then(Value::as_f64);
+        let max = p.get("maximum").and_then(Value::as_f64);
+        if min.is_some_and(|m| n < m) || max.is_some_and(|m| n > m) {
+            let range = |o: Option<f64>| o.map_or_else(String::new, |m| m.to_string());
+            return Err(CmdError::Params(format!("`{k}` must be between {} and {}", range(min), range(max))));
+        }
+    }
+    Ok(())
 }
 
 fn str_param<'a>(v: &'a Value, k: &str) -> Result<&'a str, CmdError> {
@@ -145,7 +246,8 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "project.rename",
         label: "Rename Project",
-        params: r#"{"name": text}"#,
+        effect: Effect::Edit,
+        schema: || object(json!({"name": {"type": "string"}}), &["name"]),
         run: |p, v| {
             p.name = name(str_param(v, "name")?);
             Ok(())
@@ -154,7 +256,8 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "project.setStart",
         label: "Project Start Date",
-        params: r#"{"date": "YYYY-MM-DD"}"#,
+        effect: Effect::Edit,
+        schema: || object(json!({"date": {"type": "string", "format": "date", "description": "YYYY-MM-DD"}}), &["date"]),
         run: |p, v| {
             p.start = str_param(v, "date")?.parse::<Date>().map_err(|e| CmdError::Params(e.to_string()))?;
             Ok(())
@@ -163,7 +266,8 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "task.add",
         label: "New Task",
-        params: r#"{"name"?: text, "duration"?: working days}"#,
+        effect: Effect::Edit,
+        schema: || object(json!({"name": {"type": "string"}, "duration": days()}), &[]),
         run: |p, v| {
             let n = v.get("name").and_then(Value::as_str).map_or_else(|| "New task".to_owned(), name);
             p.add_task(n, v.get("duration").and_then(Value::as_i64).unwrap_or(1))?;
@@ -173,7 +277,8 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "task.rename",
         label: "Task Name",
-        params: r#"{"id": task, "name": text}"#,
+        effect: Effect::Edit,
+        schema: || object(json!({"id": task_id(), "name": {"type": "string"}}), &["id", "name"]),
         run: |p, v| {
             p.task_mut(id_param(v)?)?.name = name(str_param(v, "name")?);
             Ok(())
@@ -182,7 +287,8 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "task.setDuration",
         label: "Duration",
-        params: r#"{"id": task, "duration": working days}"#,
+        effect: Effect::Edit,
+        schema: || object(json!({"id": task_id(), "duration": days()}), &["id", "duration"]),
         run: |p, v| {
             p.task_mut(id_param(v)?)?.duration = model::check_days(int_param(v, "duration")?)?;
             Ok(())
@@ -191,7 +297,8 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "task.setPredecessors",
         label: "Predecessors",
-        params: r#"{"id": task, "text": "3, 5SS+2"}"#,
+        effect: Effect::Edit,
+        schema: || object(json!({"id": task_id(), "text": {"type": "string", "description": "predecessors, e.g. 3, 5SS+2"}}), &["id", "text"]),
         run: |p, v| {
             let links = model::parse_preds(str_param(v, "text")?)?;
             p.set_preds(id_param(v)?, links)?;
@@ -201,12 +308,16 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "task.delete",
         label: "Delete Task",
-        params: r#"{"id": task}"#,
+        effect: Effect::Destructive,
+        schema: || object(json!({"id": task_id()}), &["id"]),
         run: |p, v| {
             p.delete_task(id_param(v)?)?;
             Ok(())
         },
     },
+    // Undo and redo are handled by `Session::run`; they're here for their metadata.
+    CommandSpec { id: "edit.undo", label: "Undo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
+    CommandSpec { id: "edit.redo", label: "Redo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
 ];
 
 /// A small invented project to try things on.
@@ -254,20 +365,89 @@ mod tests {
     }
 
     #[test]
-    fn hostile_params_never_panic() {
-        let junk = [
-            json!(null),
-            json!({}),
-            json!({"id": -1, "name": 3}),
-            json!({"id": u64::MAX, "duration": i64::MIN, "text": "1,,x"}),
-            json!({"date": "0000-00-00"}),
-        ];
+    fn every_command_has_a_closed_schema_and_unknown_params_are_refused() {
         for c in commands() {
-            for j in &junk {
+            let schema = (c.schema)();
+            assert_eq!(schema["type"], "object", "{}", c.id);
+            assert_eq!(schema["additionalProperties"], false, "{}", c.id);
+            assert!(schema["properties"].is_object(), "{}", c.id);
+        }
+        let listed = describe();
+        let ids: Vec<&str> = listed.as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"edit.undo") && ids.contains(&"task.delete"));
+        assert_eq!(describe()[0]["effect"], "edit");
+        assert_eq!(commands().iter().find(|c| c.id == "task.delete").unwrap().effect, Effect::Destructive);
+
+        let mut s = sample();
+        let before = s.project.clone();
+        let e = s.run("task.add", &json!({"name": "x", "durration": 3})).unwrap_err().to_string();
+        assert!(e.contains("durration"), "{e}");
+        assert!(s.run("edit.undo", &json!({"steps": 2})).is_err());
+        assert!(s.run("task.setDuration", &json!({"id": 1})).unwrap_err().to_string().contains("`duration` is required"));
+        assert!(s.run("task.setDuration", &json!({"id": 1, "duration": "5"})).is_err());
+        assert!(s.run("task.setDuration", &json!({"id": 1, "duration": model::MAX_DAYS + 1})).is_err());
+        assert_eq!(s.project, before);
+        s.run("task.add", &json!(null)).unwrap();
+        s.run("task.add", &json!({"name": "Snag list", "duration": 3})).unwrap();
+    }
+
+    /// Valid params from a schema, then junk built from it: each property wrong-typed, out of
+    /// range or huge, each required one missing, an unknown one added, and non-object params.
+    fn junk_from(schema: &Value) -> Vec<Value> {
+        let props = schema["properties"].as_object().cloned().unwrap_or_default();
+        let good = |p: &Value| match p["type"].as_str() {
+            Some("integer") | Some("number") => p["minimum"].clone(),
+            Some("string") if p["format"] == "date" => json!("2026-11-02"),
+            _ => json!("1"),
+        };
+        let valid: serde_json::Map<String, Value> = props.iter().map(|(k, p)| (k.clone(), good(p))).collect();
+        let mut out = vec![json!(null), json!([]), json!("x"), json!(7), Value::Object(valid.clone())];
+        let wrong = [
+            json!(null),
+            json!("x"),
+            json!(1.5),
+            json!(true),
+            json!([1]),
+            json!({}),
+            json!(-1),
+            json!(i64::MIN),
+            json!(i64::MAX),
+            json!(u64::MAX),
+            json!(1e308),
+            json!("0000-00-00"),
+            json!("1,,x"),
+            json!("9999SS+999999"),
+        ];
+        for (k, p) in &props {
+            let mut edge = wrong.to_vec();
+            for b in ["minimum", "maximum"] {
+                if let Some(n) = p[b].as_i64() {
+                    edge.extend([json!(n.saturating_sub(1)), json!(n), json!(n.saturating_add(1))]);
+                }
+            }
+            for w in edge {
+                let mut m = valid.clone();
+                m.insert(k.clone(), w);
+                out.push(Value::Object(m));
+            }
+            let mut m = valid.clone();
+            m.remove(k);
+            out.push(Value::Object(m));
+        }
+        let mut m = valid;
+        m.insert("durration".into(), json!(3));
+        out.push(Value::Object(m));
+        out
+    }
+
+    #[test]
+    fn hostile_params_never_panic() {
+        for c in commands() {
+            for j in junk_from(&(c.schema)()) {
                 let mut s = sample();
                 let before = s.project.clone();
-                if s.run(c.id, j).is_err() {
-                    assert_eq!(s.project, before, "{} changed the project on error", c.id);
+                if s.run(c.id, &j).is_err() {
+                    assert_eq!(s.project, before, "{} changed the project on error with {j}", c.id);
                 }
             }
         }
