@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (M1.3 soft constraints)
+> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (M1.6 theme, `tl!`, screenshots)
 
 Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -19,7 +19,7 @@ Each roadmap milestone has a pass/fail checklist; it is reached when every item 
 - [ ] Constraints (Start No Earlier Than, Must Finish On…) and deadlines; negative slack warning
 - [ ] Atomic save, Open/Save dialogs, autosave (on by default), recovery copy, recent files
 - [ ] About 15 worked examples citing Project's documentation; 200 tasks under 10 ms
-- [ ] Theme tokens (light/dark), `tl!` translation, look checked in screenshots
+- [x] Theme tokens (light/dark), `tl!` translation, look checked in screenshots (`ui_shot`)
 
 ## Later
 - M2 — Resources and assignments (work, units, effort-driven), resource sheet, overallocation
@@ -38,3 +38,4 @@ Each roadmap milestone has a pass/fail checklist; it is reached when every item 
 | 2026-10-16 | M1.4: duration entry takes `d`, `w` (×5) and `mo` (×20), clamped to `MAX_DAYS`; `h`, `m` and elapsed units refused with a clear message (#16) |
 | 2026-10-16 | M1.2: the ID column is the row number; Predecessors shows and reads row IDs, links stay by Unique ID; commands documented as taking Unique IDs (#9) |
 | 2026-10-16 | M1.3: Start/Finish No Earlier Than constraints (`task.setConstraint`); typing a Start or Finish sets SNET or FNET; worked examples 5, 11, 14, 15 (#11) |
+| 2026-10-16 | M1.6: theme tokens (light/dark), `tl!` for UI text, `ui_shot` headless screenshots (#5) |
