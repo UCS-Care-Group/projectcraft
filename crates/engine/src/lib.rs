@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 pub use projectcraft_model as model;
 pub use projectcraft_time as time;
 
-pub use file::{FORMAT_VERSION, create_private_dir_all, write_private};
+pub use file::{FORMAT_VERSION, TempSweep, create_private_dir_all, sweep_stale_temps, write_private};
 
 use model::{Date, ModelError, Project, ResourceField, ResourceId, Schedule, TaskId};
 

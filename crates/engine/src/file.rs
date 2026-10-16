@@ -218,6 +218,110 @@ fn owner_only(path: &Path) {
     let _ = path;
 }
 
+/// A save's staging file older than this is left over from a save that never finished: a save
+/// takes seconds, so no save still running staged its file an hour ago. Age, not "is its
+/// process running", because std can't ask that on every platform and process ids are reused.
+#[cfg(not(target_arch = "wasm32"))]
+const STALE_TEMP_SECS: u64 = 60 * 60;
+/// Most folder entries looked at in one sweep, so a huge folder can't stall an open or a save.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_SWEEP_ENTRIES: usize = 10_000;
+/// craft-atomic names a staging file `.<first 64 chars of the name>.<pid>-<n>.craft_tmp`.
+#[cfg(not(target_arch = "wasm32"))]
+const TEMP_STEM_CHARS: usize = 64;
+
+/// What a [`sweep_stale_temps`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TempSweep {
+    /// Staging files removed.
+    pub removed: usize,
+    /// Something couldn't be looked at or removed; whatever it was is left where it is.
+    pub failed: bool,
+}
+
+/// Removes the staging files that saves of `path` (and of its `.bak`) left beside it when the
+/// program was killed mid-save and that are older than an hour. Only regular files named exactly
+/// as craft-atomic names that file's staging files are touched; a symbolic link is never followed
+/// or removed. Best effort, never an error: a failure leaves the file where it is and is reported
+/// in [`TempSweep::failed`]. Call it after opening or saving `path`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn sweep_stale_temps(path: &Path) -> TempSweep {
+    sweep_stale_temps_older_than(path, std::time::Duration::from_secs(STALE_TEMP_SECS))
+}
+
+/// The web build has no files to sweep.
+#[cfg(target_arch = "wasm32")]
+pub fn sweep_stale_temps(_: &Path) -> TempSweep {
+    TempSweep::default()
+}
+
+/// [`sweep_stale_temps`] with the age a staging file must reach to be removed.
+#[cfg(not(target_arch = "wasm32"))]
+fn sweep_stale_temps_older_than(path: &Path, age: std::time::Duration) -> TempSweep {
+    let mut out = TempSweep::default();
+    // craft-atomic stages beside the file a symbolic link points to, so look there.
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let Some(name) = target.file_name().and_then(|n| n.to_str()) else { return out };
+    let bak = format!("{name}.bak");
+    // A longer name is cut short in the staging name, where another file's could match it.
+    if bak.chars().count() > TEMP_STEM_CHARS {
+        return out;
+    }
+    let dir = match target.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            out.failed = e.kind() != io::ErrorKind::NotFound;
+            return out;
+        }
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.take(MAX_SWEEP_ENTRIES) {
+        let Ok(entry) = entry else {
+            out.failed = true;
+            continue;
+        };
+        let file_name = entry.file_name();
+        let Some(entry_name) = file_name.to_str() else { continue };
+        if !is_temp_of(entry_name, name) && !is_temp_of(entry_name, &bak) {
+            continue;
+        }
+        // `file_type` and `symlink_metadata` describe the entry itself, never a link's target.
+        let Ok(meta) = fs::symlink_metadata(entry.path()) else { continue };
+        if !entry.file_type().is_ok_and(|t| t.is_file()) || !meta.is_file() {
+            continue;
+        }
+        // A modified time in the future (the clock moved back) counts as fresh.
+        let stale = meta.modified().ok().and_then(|m| now.duration_since(m).ok()).is_some_and(|d| d >= age);
+        if !stale {
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => out.removed = out.removed.saturating_add(1),
+            // Another sweep got there first.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => out.failed = true,
+        }
+    }
+    out
+}
+
+/// Whether `entry` is a craft-atomic staging file for a file named `name`: `.<name>.<pid>-<n>.craft_tmp`.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_temp_of(entry: &str, name: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.len() <= 20 && s.bytes().all(|b| b.is_ascii_digit());
+    entry
+        .strip_prefix('.')
+        .and_then(|e| e.strip_prefix(name))
+        .and_then(|e| e.strip_prefix('.'))
+        .and_then(|e| e.strip_suffix(".craft_tmp"))
+        .and_then(|e| e.split_once('-'))
+        .is_some_and(|(pid, n)| digits(pid) && digits(n))
+}
+
 #[cfg(target_arch = "wasm32")]
 fn no_files() -> io::Error {
     io::Error::new(io::ErrorKind::Unsupported, "the web build saves no files")
@@ -716,6 +820,87 @@ mod tests {
         assert!(Session::open(&dir.join("missing.projectcraft")).is_err());
         fs::write(dir.join("bin.projectcraft"), [0xff, 0xfe, 0x00]).unwrap();
         assert!(Session::open(&dir.join("bin.projectcraft")).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Writes `dir/name`, last modified `secs_ago` seconds ago.
+    fn aged(dir: &Path, name: &str, secs_ago: u64) -> PathBuf {
+        let p = dir.join(name);
+        let f = File::create(&p).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago)).unwrap();
+        p
+    }
+
+    #[test]
+    fn stale_save_temps_are_swept_and_nothing_else() {
+        let dir = tmp_dir("sweep");
+        let path = dir.join("plan.projectcraft");
+        Session::new(full()).save_to(&path).unwrap();
+        let old = 2 * STALE_TEMP_SECS;
+        let stale = aged(&dir, ".plan.projectcraft.4242-0.craft_tmp", old);
+        let stale_bak = aged(&dir, ".plan.projectcraft.bak.4242-1.craft_tmp", old);
+        let kept = [
+            aged(&dir, &format!(".plan.projectcraft.{}-7.craft_tmp", std::process::id()), 5), // a save in progress
+            aged(&dir, ".plan.projectcraft.4243-0.craft_tmp", 60),                            // recent
+            aged(&dir, ".other.projectcraft.4242-0.craft_tmp", old),                          // another file's
+            aged(&dir, ".plan.projectcraft.recovery.4242-0.craft_tmp", old),                  // another file's
+            aged(&dir, ".plan.projectcraft.x-0.craft_tmp", old),                              // not our pattern
+            aged(&dir, ".plan.projectcraft.4242-0.craft_tmp.keep", old),
+            aged(&dir, "plan.projectcraft.4242-0.craft_tmp", old),
+            aged(&dir, "notes.txt", old),
+        ];
+        fs::create_dir(dir.join(".plan.projectcraft.4244-0.craft_tmp")).unwrap(); // a folder, not a file
+        assert_eq!(sweep_stale_temps(&path), TempSweep { removed: 2, failed: false });
+        assert!(!stale.exists() && !stale_bak.exists());
+        for k in &kept {
+            assert!(k.exists(), "{} kept", k.display());
+        }
+        assert!(dir.join(".plan.projectcraft.4244-0.craft_tmp").is_dir());
+        // A missing folder or file is no failure.
+        assert_eq!(sweep_stale_temps(&dir.join("nope").join("plan.projectcraft")), TempSweep::default());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_long_name_is_never_swept() {
+        let dir = tmp_dir("sweep-long");
+        let name = format!("{}.projectcraft", "a".repeat(60));
+        let stem: String = name.chars().take(TEMP_STEM_CHARS).collect();
+        let t = aged(&dir, &format!(".{stem}.4242-0.craft_tmp"), 2 * STALE_TEMP_SECS);
+        assert_eq!(sweep_stale_temps(&dir.join(&name)), TempSweep::default());
+        assert!(t.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_named_like_a_temp_is_not_followed_or_removed() {
+        let dir = tmp_dir("sweep-link");
+        let path = dir.join("plan.projectcraft");
+        Session::new(full()).save_to(&path).unwrap();
+        let target = aged(&dir, "precious.txt", 2 * STALE_TEMP_SECS);
+        let link = dir.join(".plan.projectcraft.4242-0.craft_tmp");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(sweep_stale_temps_older_than(&path, std::time::Duration::ZERO), TempSweep::default());
+        assert!(fs::symlink_metadata(&link).is_ok() && target.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_temp_that_cannot_be_removed_is_reported_and_left() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp_dir("sweep-locked");
+        let path = dir.join("plan.projectcraft");
+        Session::new(full()).save_to(&path).unwrap();
+        let stale = aged(&dir, ".plan.projectcraft.4242-0.craft_tmp", 2 * STALE_TEMP_SECS);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+        // Root can remove from a read-only folder; there is nothing to check then.
+        if File::create(dir.join("probe")).is_err() {
+            assert_eq!(sweep_stale_temps(&path), TempSweep { removed: 0, failed: true });
+            assert!(stale.exists());
+        }
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
         let _ = fs::remove_dir_all(dir);
     }
 

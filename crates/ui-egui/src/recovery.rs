@@ -143,6 +143,7 @@ impl App {
             match self.write_file(&path) {
                 Ok(()) => {
                     self.status = i18n::fmt(tl!("Autosaved {path}"), &[("path", &path.display().to_string())]);
+                    self.sweep_temps(&path);
                     return;
                 }
                 Err(e) => {
@@ -173,6 +174,8 @@ impl App {
         k.recovery_at = Some(now);
         match result {
             Ok(()) => {
+                // Best effort and silent: the recovery copy is ProjectCraft's own file.
+                let _ = projectcraft_engine::sweep_stale_temps(&target);
                 k.recovery_of = Some(self.session.project.clone());
                 if let Some(old) = k.written.replace(target.clone()).filter(|old| *old != target) {
                     let _ = std::fs::remove_file(old);
