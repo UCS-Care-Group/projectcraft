@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::resource::{check_money, fixed_text, parse_fixed};
+use crate::task_type::Crew;
 use crate::{
     Currency, DurationUnit, FULL_TIME, MAX_MINUTES, MAX_UNITS, MAX_WORK, ModelError, Options, Outline, Project, ResourceId, ResourceType, TaskId,
     check_name, parse_units, units_text,
@@ -235,13 +236,6 @@ impl Project {
         self.assignments.iter().any(|a| a.resource == resource)
     }
 
-    fn assignment_mut(&mut self, task: TaskId, resource: ResourceId) -> Result<&mut Assignment, ModelError> {
-        self.assignments
-            .iter_mut()
-            .find(|a| a.task == task && a.resource == resource)
-            .ok_or_else(|| ModelError::Invalid(format!("resource {resource} is not assigned to task {task}")))
-    }
-
     /// An assignment's units as the brackets show them, without the brackets: `50%`, `5 tons`,
     /// `2 tons/d`, `£200.00`; empty when Project leaves the brackets off (100% of a work
     /// resource, no cost).
@@ -278,16 +272,6 @@ impl Project {
         self.assignments_of(task).map(one).collect::<Vec<_>>().join(", ")
     }
 
-    fn check_room(&self, task: TaskId, adding: usize) -> Result<(), ModelError> {
-        if self.assignments.len().saturating_add(adding) > MAX_ASSIGNMENTS {
-            return Err(ModelError::Invalid(format!("a project holds at most {MAX_ASSIGNMENTS} assignments")));
-        }
-        if self.assignments_of(task).count().saturating_add(adding) > MAX_TASK_ASSIGNMENTS {
-            return Err(ModelError::Invalid(format!("a task takes at most {MAX_TASK_ASSIGNMENTS} resources")));
-        }
-        Ok(())
-    }
-
     /// Units for this resource, refused when they belong to another type.
     fn units_for(&self, resource: ResourceId, units: Units) -> Result<Units, ModelError> {
         let r = self.resource(resource)?;
@@ -300,53 +284,70 @@ impl Project {
     /// Assigns a resource to a task with `units`, or the default ([`default_units`]). Refused when
     /// it is already assigned there.
     pub fn assign(&mut self, task: TaskId, resource: ResourceId, units: Option<Units>) -> Result<(), ModelError> {
-        self.assign_with(task, resource, units, true)
+        let mut crew = self.crew(task)?;
+        self.assign_to(&mut crew, resource, units, true)?;
+        self.put_crew(crew);
+        Ok(())
     }
 
-    /// [`Project::assign`]; `share` false keeps an effort-driven task's work from being shared
+    /// [`Project::assign`] on a task's [`Crew`], which the project's resources and assignment count
+    /// are checked against; `share` false keeps an effort-driven task's work from being shared
     /// again (the resource is one of the first, assigned with others).
-    fn assign_with(&mut self, task: TaskId, resource: ResourceId, units: Option<Units>, share: bool) -> Result<(), ModelError> {
-        self.task(task)?;
+    fn assign_to(&self, crew: &mut Crew, resource: ResourceId, units: Option<Units>, share: bool) -> Result<(), ModelError> {
         let r = self.resource(resource)?;
         let units = self.units_for(resource, units.unwrap_or_else(|| default_units(r.kind, r.max_units)))?;
-        if self.assignments_of(task).any(|a| a.resource == resource) {
+        if crew.list.iter().any(|a| a.resource == resource) {
             return Err(ModelError::Invalid(format!("{} is already assigned to this task", r.name)));
         }
-        self.check_room(task, 1)?;
-        let before = self.task_work(task);
-        let mut p = self.clone();
-        p.assignments.push(Assignment { task, resource, units, work: 0, duration: 0 });
-        p.fill_new_work(p.assignments.len().saturating_sub(1), if share { before } else { 0 })?;
-        *self = p;
-        Ok(())
+        // The project's count as it will be: its own, less the task's as it was, plus the crew's.
+        let others = self.assignments.len().saturating_sub(crew.taken());
+        if others.saturating_add(crew.list.len()).saturating_add(1) > MAX_ASSIGNMENTS {
+            return Err(ModelError::Invalid(format!("a project holds at most {MAX_ASSIGNMENTS} assignments")));
+        }
+        if crew.list.len() >= MAX_TASK_ASSIGNMENTS {
+            return Err(ModelError::Invalid(format!("a task takes at most {MAX_TASK_ASSIGNMENTS} resources")));
+        }
+        crew.add(Assignment { task: crew.task, resource, units, work: 0, duration: 0 }, share)
+    }
+
+    /// Where a resource's assignment is in a crew; refused when it isn't assigned there.
+    fn position_in(crew: &Crew, resource: ResourceId) -> Result<usize, ModelError> {
+        crew.list
+            .iter()
+            .position(|a| a.resource == resource)
+            .ok_or_else(|| ModelError::Invalid(format!("resource {resource} is not assigned to task {}", crew.task)))
     }
 
     /// Changes an assignment's units. A work resource's work or duration follows as the task
     /// type says ([`crate::TaskType`]).
     pub fn set_assignment_units(&mut self, task: TaskId, resource: ResourceId, units: Units) -> Result<(), ModelError> {
         let units = self.units_for(resource, units)?;
-        self.assignment_mut(task, resource)?;
-        let i = self.assignments.iter().position(|a| a.task == task && a.resource == resource).unwrap_or(usize::MAX);
-        match units {
-            Units::Work(u) => {
-                let mut p = self.clone();
-                p.set_work_units(i, u)?;
-                *self = p;
-            }
-            _ => self.assignment_mut(task, resource)?.units = units,
-        }
+        let mut crew = self.crew(task)?;
+        self.set_units_in(&mut crew, resource, units)?;
+        self.put_crew(crew);
         Ok(())
+    }
+
+    /// [`Project::set_assignment_units`] on a task's [`Crew`], the units already checked.
+    fn set_units_in(&self, crew: &mut Crew, resource: ResourceId, units: Units) -> Result<(), ModelError> {
+        let i = Project::position_in(crew, resource)?;
+        match units {
+            Units::Work(u) => crew.set_units(i, u),
+            _ => {
+                if let Some(a) = crew.list.get_mut(i) {
+                    a.units = units;
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Takes a resource off a task. An effort-driven task keeps its work, shared among the work
     /// resources left ([`crate::TaskType`]).
     pub fn unassign(&mut self, task: TaskId, resource: ResourceId) -> Result<(), ModelError> {
-        self.assignment_mut(task, resource)?;
-        let before = self.task_work(task);
-        let mut p = self.clone();
-        p.assignments.retain(|a| !(a.task == task && a.resource == resource));
-        p.after_work_removed(task, before)?;
-        *self = p;
+        let mut crew = self.crew(task)?;
+        crew.remove(Project::position_in(&crew, resource)?)?;
+        self.put_crew(crew);
         Ok(())
     }
 
@@ -388,31 +389,27 @@ impl Project {
             };
             wanted.push((id, units.check()?));
         }
-        let gone: Vec<ResourceId> = p.assignments_of(task).map(|a| a.resource).filter(|r| !seen.contains(r)).collect();
-        for r in gone {
-            p.unassign(task, r)?;
+        // One copy of the task's assignments for every step, written back once.
+        let mut crew = p.crew(task)?;
+        while let Some(i) = crew.list.iter().position(|a| !seen.contains(&a.resource)) {
+            crew.remove(i)?;
         }
         // Resources assigned together to a task with no work are its first: none shares another's.
-        let first = p.task_work(task) == 0;
+        let first = crew.work_total() == 0;
         for &(id, units) in &wanted {
-            if p.assignments_of(task).any(|a| a.resource == id && a.units != units) {
-                p.set_assignment_units(task, id, units)?;
+            if crew.list.iter().any(|a| a.resource == id && a.units != units) {
+                let units = p.units_for(id, units)?;
+                p.set_units_in(&mut crew, id, units)?;
             }
         }
         for &(id, units) in &wanted {
-            if !p.assignments_of(task).any(|a| a.resource == id) {
-                p.assign_with(task, id, Some(units), !first)?;
+            if !crew.list.iter().any(|a| a.resource == id) {
+                p.assign_to(&mut crew, id, Some(units), !first)?;
             }
         }
-        // The order typed: this task's assignments sorted into their own places in the list.
-        let slots: Vec<usize> = p.assignments.iter().enumerate().filter(|(_, a)| a.task == task).map(|(i, _)| i).collect();
-        let mut mine: Vec<Assignment> = slots.iter().filter_map(|&i| p.assignments.get(i).copied()).collect();
-        mine.sort_by_key(|a| wanted.iter().position(|(id, _)| *id == a.resource));
-        for (&i, a) in slots.iter().zip(mine) {
-            if let Some(x) = p.assignments.get_mut(i) {
-                *x = a;
-            }
-        }
+        // The order typed.
+        crew.list.sort_by_key(|a| wanted.iter().position(|(id, _)| *id == a.resource));
+        p.put_crew(crew);
         *self = p;
         Ok(made)
     }
@@ -490,23 +487,14 @@ impl Project {
                 return Err(ModelError::Invalid(format!("task {} has more than {MAX_TASK_ASSIGNMENTS} resources", a.task)));
             }
         }
-        // A task's duration is its longest work assignment's: summaries aside, whose is rolled up.
-        let mut longest: BTreeMap<TaskId, i64> = BTreeMap::new();
-        for a in self.assignments.iter().filter(|a| matches!(a.units, Units::Work(_))) {
-            let d = longest.entry(a.task).or_insert(0);
-            *d = (*d).max(a.duration);
-        }
-        for (id, d) in longest {
-            if !self.is_summary(id) && self.task(id)?.duration != d {
-                return Err(ModelError::Invalid(format!("task {id}'s duration is not its longest assignment's")));
-            }
-        }
         Ok(())
     }
 
     /// Works out each assignment's work and duration where a file has none (from before task
     /// types): a work resource works the task's duration at its units; a material or cost has
-    /// none. Run on load, before [`Project::check_assignments`].
+    /// none. Then repairs each task's duration to its longest work assignment's (those with
+    /// work), as every edit keeps it, so a file that disagrees still opens. Summaries' are rolled
+    /// up when scheduled. Run on load, before [`Project::check_assignments`].
     pub fn fill_assignment_work(&mut self) {
         let durations: BTreeMap<TaskId, i64> = self.tasks.iter().map(|t| (t.id, t.duration.clamp(0, MAX_MINUTES))).collect();
         for a in &mut self.assignments {
@@ -520,6 +508,21 @@ impl Project {
             }
             if a.duration == UNSET {
                 a.duration = duration;
+            }
+        }
+        // Only durations in range: one that isn't is refused by the check that follows.
+        let mut longest: BTreeMap<TaskId, i64> = BTreeMap::new();
+        for a in self.assignments.iter().filter(|a| matches!(a.units, Units::Work(_)) && a.work > 0 && (0..=MAX_MINUTES).contains(&a.duration)) {
+            let d = longest.entry(a.task).or_insert(0);
+            *d = (*d).max(a.duration);
+        }
+        if longest.is_empty() {
+            return;
+        }
+        let outline = Outline::of(self);
+        for (row, t) in self.tasks.iter_mut().enumerate() {
+            if let Some(d) = longest.get(&t.id).filter(|_| !outline.is_summary(row)) {
+                t.duration = *d;
             }
         }
     }

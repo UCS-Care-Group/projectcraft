@@ -4,12 +4,13 @@
 //!
 //! The gate (`reschedule_200_tasks_under_10_ms`) is `#[ignore]`d because timings mean nothing in
 //! a debug build; `cargo xtask ci` runs it in release (`cargo xtask perf`). A 2,000-task plan is
-//! timed and reported, not gated.
+//! timed and reported, not gated. Typing a long Resource Names text into a large plan is gated too
+//! (`resource_names_on_a_large_plan_stay_fast`).
 
 use std::time::{Duration, Instant};
 
 use projectcraft_engine::Session;
-use projectcraft_engine::model::{Constraint, Date, Link, LinkKind, Project, TaskId};
+use projectcraft_engine::model::{Assignment, Constraint, Date, Link, LinkKind, Project, ResourceId, ResourceType, TaskId, Units};
 use serde_json::json;
 
 /// The gate: the median reschedule of the 200-task plan, in release.
@@ -259,5 +260,59 @@ fn hostile_finish_holds_stay_bounded() {
     println!("perf ({build}, median of 3): hostile finish holds, {} tasks {t:.2?} (gate: under {HOSTILE_GATE:?})", p.tasks.len());
     if !cfg!(debug_assertions) {
         assert!(t < HOSTILE_GATE, "hostile schedule took {t:.2?}, over the {HOSTILE_GATE:?} gate");
+    }
+}
+
+/// The most typing 1,000 names into Resource Names on the large plan may take, in release,
+/// undo snapshot and reschedule included: it was about half a second when each step copied the
+/// whole project.
+const NAMES_GATE: Duration = Duration::from_millis(100);
+
+/// A plan of 5,000 one-day tasks and 1,000 work resources, each task with 4 of them at 100%:
+/// 20,000 assignments.
+fn crowded() -> Project {
+    let mut p = Project::new("Crowded", date("2026-01-05"));
+    for k in 0..5_000 {
+        p.add_task(format!("Task {k}"), DAY).unwrap();
+    }
+    let people: Vec<ResourceId> = (0..1_000).map(|k| p.add_resource(Some(&format!("R{k}")), ResourceType::Work, None).unwrap()).collect();
+    let tasks: Vec<TaskId> = p.tasks.iter().map(|t| t.id).collect();
+    for (k, t) in tasks.iter().enumerate() {
+        for j in 0..4 {
+            let resource = people[(k * 4 + j) % people.len()];
+            p.assignments.push(Assignment { task: *t, resource, units: Units::Work(10_000), work: DAY, duration: DAY });
+        }
+    }
+    p
+}
+
+/// Resource Names with 1,000 names (the most a task takes), typed into a 5,000-task plan with
+/// 20,000 assignments, then replaced by 1,000 others: each a single command, under
+/// [`NAMES_GATE`] in release (median of 5).
+#[test]
+#[ignore = "timing; run in release by `cargo xtask perf`"]
+fn resource_names_on_a_large_plan_stay_fast() {
+    let names = |from: usize| (from..from + 1_000).map(|k| format!("R{}", k % 1_000)).collect::<Vec<_>>().join(", ");
+    let (first, second) = (names(0), names(500));
+    let mut times = Vec::new();
+    for _ in 0..5 {
+        let mut s = Session::new(crowded());
+        let id = s.project.tasks[2_500].id.0;
+        for text in [&first, &second] {
+            let t0 = Instant::now();
+            s.run("task.setResourceNames", &json!({"id": id, "text": text})).unwrap();
+            times.push(t0.elapsed());
+        }
+        assert_eq!(s.project.assignments_of(TaskId(id)).count(), 1_000);
+    }
+    times.sort();
+    let t = times[times.len() / 2];
+    let build = if cfg!(debug_assertions) { "debug" } else { "release" };
+    println!(
+        "perf ({build}, median of {}): Resource Names with 1,000 names on 5,000 tasks and 20,000 assignments {t:.2?} (gate: under {NAMES_GATE:?})",
+        times.len()
+    );
+    if !cfg!(debug_assertions) {
+        assert!(t < NAMES_GATE, "Resource Names took {t:.2?}, over the {NAMES_GATE:?} gate");
     }
 }

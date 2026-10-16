@@ -30,7 +30,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{FULL_TIME, MAX_MINUTES, MAX_UNITS, ModelError, Project, TaskId, Units, check_minutes, resource::pick};
+use crate::{Assignment, FULL_TIME, MAX_MINUTES, MAX_UNITS, ModelError, Project, TaskId, Units, check_minutes, resource::pick};
 
 /// Most work one assignment holds, in working minutes: the longest duration at the highest units.
 pub const MAX_WORK: i64 = MAX_MINUTES * (MAX_UNITS / FULL_TIME) as i64;
@@ -79,15 +79,15 @@ impl TaskType {
     }
 }
 
-/// `amount × num ÷ den`, rounded to the nearest (a half away from zero), in i128 so nothing
-/// overflows; `None` past `i64` or when `den` is 0.
+/// `amount × num ÷ den`, rounded to the nearest (a half away from zero), in checked i128
+/// arithmetic; `None` past `i64` (or i128) or when `den` is 0.
 fn ratio(amount: i64, num: i64, den: i64) -> Option<i64> {
     if den == 0 {
         return None;
     }
-    let (n, d) = (i128::from(amount) * i128::from(num), i128::from(den));
-    let q = (2 * n.abs() + d.abs()) / (2 * d.abs());
-    let q = if (n < 0) != (d < 0) { -q } else { q };
+    let (n, d) = (i128::from(amount).checked_mul(i128::from(num))?, i128::from(den));
+    let q = n.checked_abs()?.checked_mul(2)?.checked_add(d.checked_abs()?)?.checked_div(d.checked_abs()?.checked_mul(2)?)?;
+    let q = if (n < 0) != (d < 0) { q.checked_neg()? } else { q };
     i64::try_from(q).ok()
 }
 
@@ -138,6 +138,202 @@ fn split(total: i64, weights: &[i64]) -> Vec<i64> {
         .collect()
 }
 
+/// One task's assignments, copied out of the project to be edited together, with the rules
+/// they follow read once: the task's type (Fixed Duration for a summary) and whether it is
+/// effort-driven. Every edit below works on the copy; [`Project::put_crew`] writes it back, so a
+/// refused edit leaves the project as it was, and an edit costs the task's assignments, not the
+/// project's.
+pub(crate) struct Crew {
+    pub task: TaskId,
+    pub ty: TaskType,
+    pub effort: bool,
+    pub summary: bool,
+    /// The task's duration, as the edits leave it.
+    pub duration: i64,
+    /// All the task's assignments, in order (materials and costs too).
+    pub list: Vec<Assignment>,
+    /// Where in the project's assignments `list` came from.
+    slots: Vec<usize>,
+}
+
+impl Crew {
+    /// How many assignments the task had in the project when the crew was taken.
+    pub fn taken(&self) -> usize {
+        self.slots.len()
+    }
+
+    fn work_units(a: &Assignment) -> Option<u32> {
+        if let Units::Work(u) = a.units { Some(u) } else { None }
+    }
+
+    /// The task's work: its work assignments' work, added up.
+    pub fn work_total(&self) -> i64 {
+        self.list.iter().filter(|a| Crew::work_units(a).is_some()).fold(0i64, |t, a| t.saturating_add(a.work))
+    }
+
+    pub fn has_work_rows(&self) -> bool {
+        self.list.iter().any(|a| Crew::work_units(a).is_some())
+    }
+
+    /// The task's duration as its work assignments set it: the longest of those with work (one at
+    /// 0%, doing none, doesn't hold it). A summary's is rolled up, and a task with none keeps its own.
+    pub fn settle(&mut self) {
+        if self.summary {
+            return;
+        }
+        if let Some(d) = self.list.iter().filter(|a| Crew::work_units(a).is_some() && a.work > 0).map(|a| a.duration).max() {
+            self.duration = d;
+        }
+    }
+
+    /// A new duration: Fixed Units and Fixed Duration keep the units and recalculate the work;
+    /// Fixed Work keeps the work and recalculates the units. Every work assignment then lasts the
+    /// new duration.
+    fn set_duration(&mut self, duration: i64) -> Result<(), ModelError> {
+        for a in &mut self.list {
+            let Some(u) = Crew::work_units(a) else { continue };
+            if self.ty == TaskType::FixedWork {
+                match units_of(a.work, duration)? {
+                    Some(units) => a.units = Units::Work(units),
+                    None if a.work > 0 => {
+                        return Err(ModelError::Invalid("a Fixed Work task with work can't have no duration; change its work or type first".into()));
+                    }
+                    None => {}
+                }
+            } else {
+                a.work = work_of(duration, u);
+            }
+            a.duration = duration;
+        }
+        self.duration = duration;
+        Ok(())
+    }
+
+    /// New work for the task, shared among its work assignments in proportion to their work
+    /// (their units when it has none): Fixed Units and Fixed Work recalculate the duration, Fixed
+    /// Duration the units.
+    fn set_work(&mut self, work: i64) -> Result<(), ModelError> {
+        let current: Vec<i64> = self.list.iter().filter(|a| Crew::work_units(a).is_some()).map(|a| a.work).collect();
+        let weights: Vec<i64> =
+            if current.iter().any(|w| *w > 0) { current } else { self.list.iter().filter_map(Crew::work_units).map(i64::from).collect() };
+        let mut shares = split(work, &weights).into_iter();
+        for a in &mut self.list {
+            let Some(u) = Crew::work_units(a) else { continue };
+            let share = shares.next().unwrap_or(0);
+            a.work = share;
+            if self.ty == TaskType::FixedDuration {
+                match units_of(share, a.duration)? {
+                    Some(units) => a.units = Units::Work(units),
+                    None if share > 0 => return Err(ModelError::Invalid("a Fixed Duration task with no duration can't take work".into())),
+                    None => {}
+                }
+            } else {
+                match duration_of(share, u)? {
+                    Some(d) => a.duration = d,
+                    None if share > 0 => return Err(ModelError::Invalid("an assignment at 0% can't do work; give it units first".into())),
+                    None => {}
+                }
+            }
+        }
+        self.settle();
+        Ok(())
+    }
+
+    /// New units for work assignment `i`: Fixed Units and Fixed Work keep its work and
+    /// recalculate its duration (the task's is the longest); Fixed Duration keeps its duration
+    /// and recalculates its work. At 0% a Fixed Units assignment does no work; a Fixed Work one
+    /// can't.
+    pub fn set_units(&mut self, i: usize, units: u32) -> Result<(), ModelError> {
+        let ty = self.ty;
+        let a = self.list.get_mut(i).ok_or_else(|| ModelError::Invalid("no such assignment".into()))?;
+        if ty == TaskType::FixedDuration {
+            a.work = work_of(a.duration, units);
+        } else {
+            match duration_of(a.work, units)? {
+                Some(d) => a.duration = d,
+                None if ty == TaskType::FixedWork && a.work > 0 => {
+                    return Err(ModelError::Invalid("a Fixed Work task keeps its work, so its units can't be 0%".into()));
+                }
+                None => a.work = 0,
+            }
+        }
+        a.units = Units::Work(units);
+        self.settle();
+        Ok(())
+    }
+
+    /// Adds an assignment. A work resource works the task's duration at its units; when `share`
+    /// and the task already has work and is effort-driven, that work is shared again among all
+    /// its work assignments.
+    pub fn add(&mut self, mut a: Assignment, share: bool) -> Result<(), ModelError> {
+        let before = self.work_total();
+        if let Some(u) = Crew::work_units(&a) {
+            a.duration = self.duration;
+            a.work = work_of(self.duration, u);
+        }
+        let work = Crew::work_units(&a).is_some();
+        self.list.push(a);
+        if work && share && before > 0 && self.effort { self.share(before) } else { Ok(()) }
+    }
+
+    /// Removes assignment `i`. An effort-driven task shares the work it had among the work
+    /// assignments left; otherwise the duration is the longest left. With none left the duration
+    /// stays, and Fixed Units and Fixed Duration tasks lose their work, as Project's "Remove or
+    /// replace a resource assignment" says.
+    pub fn remove(&mut self, i: usize) -> Result<(), ModelError> {
+        let before = self.work_total();
+        if i >= self.list.len() {
+            return Err(ModelError::Invalid("no such assignment".into()));
+        }
+        let gone = self.list.remove(i);
+        if Crew::work_units(&gone).is_none() {
+            return Ok(());
+        }
+        if before > 0 && self.effort && self.has_work_rows() {
+            self.share(before)
+        } else {
+            self.settle();
+            Ok(())
+        }
+    }
+
+    /// Effort-driven: `total` work shared among the work assignments in proportion to their
+    /// units. Fixed Units and Fixed Work: one duration for all, the total over the units added up.
+    /// Fixed Duration: the duration stays and the units are recalculated. Nothing changes when the
+    /// units add up to 0%.
+    fn share(&mut self, total: i64) -> Result<(), ModelError> {
+        let units: Vec<i64> = self.list.iter().filter_map(Crew::work_units).map(i64::from).collect();
+        let sum = units.iter().fold(0i64, |t, u| t.saturating_add(*u));
+        if sum <= 0 {
+            self.settle();
+            return Ok(());
+        }
+        let (ty, duration) = (self.ty, self.duration);
+        let span = ratio(total, i64::from(FULL_TIME), sum).unwrap_or(i64::MAX);
+        if ty != TaskType::FixedDuration && !(0..=MAX_MINUTES).contains(&span) {
+            return Err(ModelError::Invalid(format!("that would make the task longer than {} days", crate::MAX_DAYS)));
+        }
+        let mut shares = split(total, &units).into_iter();
+        for a in &mut self.list {
+            if Crew::work_units(a).is_none() {
+                continue;
+            }
+            let share = shares.next().unwrap_or(0);
+            a.work = share;
+            if ty == TaskType::FixedDuration {
+                a.duration = duration;
+                if let Some(u) = units_of(share, duration)? {
+                    a.units = Units::Work(u);
+                }
+            } else {
+                a.duration = span;
+            }
+        }
+        self.settle();
+        Ok(())
+    }
+}
+
 impl Project {
     /// Whether a task keeps its work as resources come and go: its Effort Driven flag (always for
     /// Fixed Work), never for a summary.
@@ -151,14 +347,52 @@ impl Project {
         if self.is_summary(id) { TaskType::FixedDuration } else { self.task(id).map_or(TaskType::FixedUnits, |t| t.task_type) }
     }
 
-    /// Positions in `assignments` of a task's work assignments.
-    fn work_rows(&self, task: TaskId) -> Vec<usize> {
-        self.assignments.iter().enumerate().filter(|(_, a)| a.task == task && matches!(a.units, Units::Work(_))).map(|(i, _)| i).collect()
-    }
-
     /// A task's work: its work assignments' work, added up.
     pub fn task_work(&self, task: TaskId) -> i64 {
-        self.work_rows(task).iter().filter_map(|&i| self.assignments.get(i)).fold(0i64, |a, x| a.saturating_add(x.work))
+        self.assignments.iter().filter(|a| a.task == task && matches!(a.units, Units::Work(_))).fold(0i64, |t, a| t.saturating_add(a.work))
+    }
+
+    /// A copy of a task's assignments to edit ([`Crew`]): one pass over the project.
+    pub(crate) fn crew(&self, task: TaskId) -> Result<Crew, ModelError> {
+        let t = self.task(task)?;
+        let summary = self.is_summary(task);
+        let (slots, list) = self.assignments.iter().enumerate().filter(|(_, a)| a.task == task).map(|(i, a)| (i, *a)).unzip();
+        Ok(Crew {
+            task,
+            ty: if summary { TaskType::FixedDuration } else { t.task_type },
+            effort: !summary && (t.effort_driven || t.task_type == TaskType::FixedWork),
+            summary,
+            duration: t.duration,
+            list,
+            slots,
+        })
+    }
+
+    /// Writes an edited crew back: its assignments into the places the task's had (new ones at
+    /// the end, places left over removed) and the duration it settled on. One pass.
+    pub(crate) fn put_crew(&mut self, crew: Crew) {
+        let Crew { task, summary, duration, list, slots, .. } = crew;
+        let n = list.len();
+        let mut list = list.into_iter();
+        for &i in slots.iter().take(n) {
+            if let (Some(x), Some(a)) = (self.assignments.get_mut(i), list.next()) {
+                *x = a;
+            }
+        }
+        if n > slots.len() {
+            self.assignments.extend(list);
+        } else if let Some(left) = slots.get(n..).filter(|l| !l.is_empty()) {
+            let stale: BTreeSet<usize> = left.iter().copied().collect();
+            let mut k = 0usize;
+            self.assignments.retain(|_| {
+                let keep = !stale.contains(&k);
+                k += 1;
+                keep
+            });
+        }
+        if !summary && let Ok(t) = self.task_mut(task) {
+            t.duration = duration;
+        }
     }
 
     /// Sets a task's type and Effort Driven flag (either may be left as it is). A Fixed Work task
@@ -186,34 +420,21 @@ impl Project {
 
     /// Sets a task's duration (working minutes, shown in `unit`): Fixed Units and Fixed Duration
     /// keep the units and recalculate the work; Fixed Work keeps the work and recalculates the
-    /// units. Every work assignment then lasts the new duration. A summary's is rolled up.
+    /// units. Every work assignment then lasts the new duration, even when they were of different
+    /// lengths: Microsoft's published pages don't say what happens to assignments of different
+    /// lengths when a new duration is typed, so that is ProjectCraft's choice. A summary's is
+    /// rolled up.
     pub fn set_duration(&mut self, id: TaskId, duration: i64, unit: crate::DurationUnit) -> Result<(), ModelError> {
         if self.is_summary(id) {
             return Err(ModelError::Invalid("a summary task's duration is rolled up from its subtasks and can't be set".into()));
         }
         let duration = check_minutes(duration)?;
-        let ty = self.task_type_of(id);
-        let mut p = self.clone();
-        for i in p.work_rows(id) {
-            let Some(a) = p.assignments.get_mut(i) else { continue };
-            let Units::Work(u) = a.units else { continue };
-            if ty == TaskType::FixedWork {
-                match units_of(a.work, duration)? {
-                    Some(units) => a.units = Units::Work(units),
-                    None if a.work > 0 => {
-                        return Err(ModelError::Invalid("a Fixed Work task with work can't have no duration; change its work or type first".into()));
-                    }
-                    None => {}
-                }
-            } else {
-                a.work = work_of(duration, u);
-            }
-            a.duration = duration;
-        }
-        let t = p.task_mut(id)?;
+        let mut crew = self.crew(id)?;
+        crew.set_duration(duration)?;
+        self.put_crew(crew);
+        let t = self.task_mut(id)?;
         t.duration = duration;
         t.duration_unit = unit;
-        *self = p;
         Ok(())
     }
 
@@ -228,146 +449,20 @@ impl Project {
         if !(0..=MAX_WORK).contains(&work) {
             return Err(ModelError::Invalid(format!("work must be between 0 and {} hours", MAX_WORK / 60)));
         }
-        let rows = self.work_rows(id);
-        if rows.is_empty() {
+        let mut crew = self.crew(id)?;
+        if !crew.has_work_rows() {
             return Err(ModelError::Invalid("assign a work resource before setting the work: work is what the task's resources do".into()));
         }
-        let ty = self.task_type_of(id);
-        let mut p = self.clone();
-        let current: Vec<i64> = rows.iter().filter_map(|&i| p.assignments.get(i)).map(|a| a.work).collect();
-        let weights = if current.iter().any(|w| *w > 0) {
-            current
-        } else {
-            rows.iter().filter_map(|&i| p.assignments.get(i)).map(|a| if let Units::Work(u) = a.units { i64::from(u) } else { 0 }).collect()
-        };
-        for (&i, share) in rows.iter().zip(split(work, &weights)) {
-            let Some(a) = p.assignments.get_mut(i) else { continue };
-            let Units::Work(u) = a.units else { continue };
-            a.work = share;
-            if ty == TaskType::FixedDuration {
-                match units_of(share, a.duration)? {
-                    Some(units) => a.units = Units::Work(units),
-                    None if share > 0 => return Err(ModelError::Invalid("a Fixed Duration task with no duration can't take work".into())),
-                    None => {}
-                }
-            } else {
-                match duration_of(share, u)? {
-                    Some(d) => a.duration = d,
-                    None if share > 0 => return Err(ModelError::Invalid("an assignment at 0% can't do work; give it units first".into())),
-                    None => {}
-                }
-            }
-        }
-        p.settle(id);
-        *self = p;
+        crew.set_work(work)?;
+        self.put_crew(crew);
         Ok(())
     }
 
-    /// A work assignment's new units: Fixed Units and Fixed Work keep its work and recalculate
-    /// its duration (the task's is the longest); Fixed Duration keeps its duration and
-    /// recalculates its work. At 0% a Fixed Units assignment does no work; a Fixed Work one can't.
-    pub(crate) fn set_work_units(&mut self, i: usize, units: u32) -> Result<(), ModelError> {
-        let Some(task) = self.assignments.get(i).map(|a| a.task) else { return Ok(()) };
-        let ty = self.task_type_of(task);
-        let Some(a) = self.assignments.get_mut(i) else { return Ok(()) };
-        if ty == TaskType::FixedDuration {
-            a.work = work_of(a.duration, units);
-        } else {
-            match duration_of(a.work, units)? {
-                Some(d) => a.duration = d,
-                None if ty == TaskType::FixedWork && a.work > 0 => {
-                    return Err(ModelError::Invalid("a Fixed Work task keeps its work, so its units can't be 0%".into()));
-                }
-                None => a.work = 0,
-            }
-        }
-        a.units = Units::Work(units);
-        self.settle(task);
-        Ok(())
-    }
-
-    /// Fills a new work assignment (at row `i`): it works the task's duration at its units. When
-    /// the task already had work (`before`) and is effort-driven, that work is shared again among
-    /// all its work assignments.
-    pub(crate) fn fill_new_work(&mut self, i: usize, before: i64) -> Result<(), ModelError> {
-        let Some(task) = self.assignments.get(i).map(|a| a.task) else { return Ok(()) };
-        let duration = self.task(task)?.duration;
-        if let Some(a) = self.assignments.get_mut(i)
-            && let Units::Work(u) = a.units
-        {
-            a.duration = duration;
-            a.work = work_of(duration, u);
-        }
-        if before > 0 && self.is_effort_driven(task) { self.share_work(task, before) } else { Ok(()) }
-    }
-
-    /// After a work assignment of `task` was removed, with `before` the work the task had: an
-    /// effort-driven task shares it among the work assignments left; otherwise the duration is
-    /// the longest left. With none left the duration stays, and Fixed Units and Fixed Duration
-    /// tasks lose their work, as Project's "Remove or replace a resource assignment" says.
-    pub(crate) fn after_work_removed(&mut self, task: TaskId, before: i64) -> Result<(), ModelError> {
-        if before > 0 && self.is_effort_driven(task) && !self.work_rows(task).is_empty() {
-            self.share_work(task, before)
-        } else {
-            self.settle(task);
-            Ok(())
-        }
-    }
-
-    /// Effort-driven: `total` work shared among a task's work assignments in proportion to their
-    /// units. Fixed Units and Fixed Work: one duration for all, the total over the units added up.
-    /// Fixed Duration: the duration stays and the units are recalculated. Nothing changes when the
-    /// units add up to 0%.
-    fn share_work(&mut self, task: TaskId, total: i64) -> Result<(), ModelError> {
-        let rows = self.work_rows(task);
-        let units: Vec<i64> =
-            rows.iter().filter_map(|&i| self.assignments.get(i)).map(|a| if let Units::Work(u) = a.units { i64::from(u) } else { 0 }).collect();
-        let sum = units.iter().sum::<i64>();
-        if sum <= 0 {
-            self.settle(task);
-            return Ok(());
-        }
-        let ty = self.task_type_of(task);
-        let duration = self.task(task)?.duration;
-        let span = ratio(total, i64::from(FULL_TIME), sum).unwrap_or(i64::MAX);
-        if ty != TaskType::FixedDuration && !(0..=MAX_MINUTES).contains(&span) {
-            return Err(ModelError::Invalid(format!("that would make the task longer than {} days", crate::MAX_DAYS)));
-        }
-        for (&i, share) in rows.iter().zip(split(total, &units)) {
-            let new_units = if ty == TaskType::FixedDuration { units_of(share, duration)? } else { None };
-            let Some(a) = self.assignments.get_mut(i) else { continue };
-            a.work = share;
-            if ty == TaskType::FixedDuration {
-                a.duration = duration;
-                if let Some(u) = new_units {
-                    a.units = Units::Work(u);
-                }
-            } else {
-                a.duration = span;
-            }
-        }
-        self.settle(task);
-        Ok(())
-    }
-
-    /// A task's duration as its work assignments set it: the longest of theirs. A summary's is
-    /// rolled up, and a task with no work assignment keeps its own.
-    pub(crate) fn settle(&mut self, task: TaskId) {
-        if self.is_summary(task) {
-            return;
-        }
-        let longest = self.work_rows(task).iter().filter_map(|&i| self.assignments.get(i)).map(|a| a.duration).max();
-        if let (Some(d), Ok(t)) = (longest, self.task_mut(task)) {
-            t.duration = d;
-        }
-    }
-
-    /// Settles each of these tasks ([`Project::settle`]): after assignments were dropped with a
-    /// resource.
-    /// One pass over the assignments and one over the tasks, however many there are.
+    /// Settles each of these tasks ([`Crew::settle`]) after assignments were dropped with a
+    /// resource: one pass over the assignments and one over the tasks, however many there are.
     pub(crate) fn settle_all(&mut self, tasks: &BTreeSet<TaskId>) {
         let mut longest: std::collections::BTreeMap<TaskId, i64> = std::collections::BTreeMap::new();
-        for a in self.assignments.iter().filter(|a| tasks.contains(&a.task) && matches!(a.units, Units::Work(_))) {
+        for a in self.assignments.iter().filter(|a| tasks.contains(&a.task) && matches!(a.units, Units::Work(_)) && a.work > 0) {
             let d = longest.entry(a.task).or_insert(0);
             *d = (*d).max(a.duration);
         }

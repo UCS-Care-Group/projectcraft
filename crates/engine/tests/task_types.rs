@@ -284,6 +284,21 @@ fn worked_example_tt17_costs_follow_the_work() {
     }
 }
 
+/// An assignment at 0% does no work and doesn't hold the duration: Ann and Bob at 100% on 10
+/// days, Bob set to 0%, then Ann to 200%: Ann's 80 hours take 5 days, and so does the task.
+#[test]
+fn worked_example_tt18_an_assignment_at_0_percent_holds_nothing() {
+    let mut s = draft("Fixed Units", false);
+    s.run("assignment.add", &json!({"task": 1, "resource": 2})).unwrap();
+    s.run("assignment.setUnits", &json!({"task": 1, "resource": 2, "units": "0%"})).unwrap();
+    assert_eq!((duration(&s), work(&s), work_of(&s, BOB)), (10 * D, 80 * H, 0));
+    s.run("assignment.setUnits", &json!({"task": 1, "resource": 1, "units": "200%"})).unwrap();
+    assert_eq!((duration(&s), work(&s)), (5 * D, 80 * H));
+    // It opens the same way.
+    let again = Session::load_json(&s.save_json().unwrap()).unwrap();
+    assert_eq!(again.project, s.project);
+}
+
 #[test]
 fn types_and_options_are_commands_and_bad_ones_change_nothing() {
     let mut s = draft("Fixed Units", false);
@@ -347,8 +362,16 @@ fn a_file_from_before_task_types_loads_with_its_work() {
     assert_eq!((t.task_type, t.effort_driven), (TaskType::FixedUnits, false));
     let a: Vec<(i64, i64)> = s.project.assignments.iter().map(|a| (a.work, a.duration)).collect();
     assert_eq!(a, [(20 * H, 5 * D), (0, 0)]);
-    // A file whose task is shorter than its longest assignment, or whose work is out of range, is refused.
-    for (k, v) in [("duration", json!(9999)), ("work", json!(-5)), ("duration", json!(i64::MAX))] {
+    // A file whose task's duration isn't its longest assignment's (a hand edit, say) still opens:
+    // the duration is repaired, so the plan is never lost.
+    let mut edited = serde_json::from_str::<serde_json::Value>(&s.save_json().unwrap()).unwrap();
+    edited["assignments"][0]["duration"] = json!(9999);
+    let opened = Session::load_json(&edited.to_string()).unwrap();
+    assert_eq!(opened.project.task(TaskId(1)).unwrap().duration, 9999);
+    edited["tasks"][0]["duration"] = json!(17);
+    assert_eq!(Session::load_json(&edited.to_string()).unwrap().project.task(TaskId(1)).unwrap().duration, 9999);
+    // Work or a duration out of range is still refused.
+    for (k, v) in [("work", json!(-5)), ("duration", json!(i64::MAX)), ("duration", json!(-2)), ("work", json!(i64::MAX))] {
         let mut bad = serde_json::from_str::<serde_json::Value>(&s.save_json().unwrap()).unwrap();
         bad["assignments"][0][k] = v.clone();
         assert!(Session::load_json(&bad.to_string()).is_err(), "{k} {v}");
