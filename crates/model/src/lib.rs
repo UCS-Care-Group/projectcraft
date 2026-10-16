@@ -6,6 +6,7 @@
 
 mod duration;
 mod outline;
+mod resource;
 mod rows;
 mod schedule;
 
@@ -17,6 +18,10 @@ use serde::{Deserialize, Serialize};
 pub use duration::{DAYS_PER_MONTH, DAYS_PER_WEEK, parse_duration};
 pub use outline::{CIRCULAR_OUTLINE, MAX_OUTLINE_LEVEL, Outline};
 pub use projectcraft_time::Date;
+pub use resource::{
+    AccrueAt, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS, FULL_TIME, MAX_MONEY, MAX_RESOURCE_TEXT, MAX_RESOURCES, MAX_UNITS, Resource,
+    ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_name, format_money, parse_money, parse_units, units_text,
+};
 pub use schedule::{Driver, Schedule, TaskDates, schedule};
 
 /// Longest duration or lag accepted, in working days (about 400 years): keeps all arithmetic in range.
@@ -324,11 +329,21 @@ pub struct Project {
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub next_id: u32,
+    /// The Resource Sheet's rows, top to bottom. A file without them has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<Resource>,
+    /// The Unique ID the next resource gets; repaired on load so none is reused.
+    #[serde(default, skip_serializing_if = "is_first_id")]
+    pub next_resource_id: u32,
+}
+
+fn is_first_id(n: &u32) -> bool {
+    *n <= 1
 }
 
 impl Project {
     pub fn new(name: impl Into<String>, start: Date) -> Self {
-        Project { name: name.into(), start, calendar: Calendar::default(), tasks: Vec::new(), next_id: 1 }
+        Project { name: name.into(), start, calendar: Calendar::default(), tasks: Vec::new(), next_id: 1, resources: Vec::new(), next_resource_id: 1 }
     }
 
     pub fn task(&self, id: TaskId) -> Result<&Task, ModelError> {
