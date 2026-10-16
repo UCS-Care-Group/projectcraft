@@ -1,10 +1,12 @@
 //! Assignments in the Gantt Chart: the Work column's text, the Resource Names column's status
 //! message, and the Assign Resources dialog (Alt+F10, or the toolbar), as Microsoft Project's.
 //!
-//! The dialog lists every resource for the focused task, the assigned ones first with a tick.
-//! Assign adds one (with the units typed, or the default), Remove takes it off, and typing new
-//! units into an assigned row and pressing Enter changes them. Each is one `assignment.*` command,
-//! so one undo step; a refused one (units that don't read) says why and changes nothing.
+//! The dialog acts on every selected task, as Microsoft Project's does, and lists every resource:
+//! a tick where all of them have it, a dash where only some do. Assign adds it to the tasks
+//! without it (with the units typed, or the default), Remove takes it off those with it, and
+//! typing new units into a ticked row and pressing Enter changes them on all. The units and work
+//! shown are the focused task's. Each is one `assignment.*` command over the whole selection, so
+//! one undo step; a refused one (units that don't read) says why and changes nothing.
 
 use std::collections::BTreeMap;
 
@@ -92,17 +94,27 @@ pub(crate) fn created_message(before: &Project, after: &Project) -> Option<Strin
     }
 }
 
-/// The dialog's own state: the task it assigns to, and the units typed into each row.
+/// The dialog's own state: the focused task, every selected task it assigns to (the focused one
+/// among them, in row order), and the units typed into each row.
 pub(crate) struct AssignForm {
     pub task: TaskId,
+    pub tasks: Vec<TaskId>,
     pub units: BTreeMap<ResourceId, String>,
 }
 
 impl AssignForm {
-    /// Each assigned row shows its units; the others start empty (the default).
-    fn read(project: &Project, task: TaskId) -> AssignForm {
+    /// Each row the focused task has shows its units; the others start empty (the default).
+    fn read(project: &Project, task: TaskId, tasks: Vec<TaskId>) -> AssignForm {
         let units = project.assignments_of(task).map(|a| (a.resource, project.units_text_full(a))).collect();
-        AssignForm { task, units }
+        AssignForm { task, tasks, units }
+    }
+
+    /// The params naming the tasks and the resource: `task` for one, `tasks` for a selection.
+    fn target(&self, resource: ResourceId) -> Value {
+        match self.tasks.as_slice() {
+            [one] => json!({"task": one.0, "resource": resource.0}),
+            many => json!({"tasks": many.iter().map(|t| t.0).collect::<Vec<_>>(), "resource": resource.0}),
+        }
     }
 }
 
@@ -113,12 +125,23 @@ fn default_hint(project: &Project, id: ResourceId) -> String {
     project.units_text_full(&a)
 }
 
+/// How many of `tasks` the resource is assigned to.
+fn held_by(project: &Project, tasks: &[TaskId], resource: ResourceId) -> usize {
+    tasks.iter().filter(|t| project.assignments_of(**t).any(|a| a.resource == resource)).count()
+}
+
 impl App {
-    /// Opens Assign Resources for the focused task; says so when no task has the focus.
+    /// Opens Assign Resources for the selected tasks, showing the focused one's units; says so
+    /// when no task has the focus.
     pub fn open_assign_resources(&mut self) {
-        match self.sel.cursor.filter(|id| self.session.project.task(*id).is_ok()) {
+        let p = &self.session.project;
+        match self.sel.cursor.filter(|id| p.task(*id).is_ok()) {
             Some(task) => {
-                self.assign = Some(AssignForm::read(&self.session.project, task));
+                let mut tasks: Vec<TaskId> = self.sel.ids(&self.order()).into_iter().filter(|t| p.task(*t).is_ok()).collect();
+                if !tasks.contains(&task) {
+                    tasks = vec![task];
+                }
+                self.assign = Some(AssignForm::read(p, task, tasks));
                 self.status.clear();
             }
             None => self.status = tl!("Select a task to assign resources to.").to_owned(),
@@ -129,17 +152,37 @@ impl App {
         let Some(mut form) = self.assign.take() else { return };
         let p = self.session.project.clone();
         let Ok(task) = p.task(form.task) else { return };
+        // Undo can take selected tasks away; the focused one is still there (or this closed).
+        form.tasks.retain(|t| p.task(*t).is_ok());
+        if !form.tasks.contains(&form.task) {
+            form.tasks = vec![form.task];
+        }
+        let selected = form.tasks.len();
         let error = self.status.clone();
         let t = Tokens::get(ctx);
         let mut command: Option<(&'static str, Value)> = None;
         let mut close = false;
         let assigned: Vec<Assignment> = p.assignments_of(form.task).copied().collect();
-        let others = p.resources.iter().filter(|r| !assigned.iter().any(|a| a.resource == r.id)).map(|r| r.id);
-        let rows: Vec<ResourceId> = assigned.iter().map(|a| a.resource).chain(others).collect();
+        // The focused task's resources first, then those other selected tasks have, then the rest.
+        let held: BTreeMap<ResourceId, usize> = p.resources.iter().map(|r| (r.id, held_by(&p, &form.tasks, r.id))).collect();
+        let count_of = |id: ResourceId| held.get(&id).copied().unwrap_or(0);
+        let others: Vec<ResourceId> = p.resources.iter().map(|r| r.id).filter(|id| !assigned.iter().any(|a| a.resource == *id)).collect();
+        let rows: Vec<ResourceId> = assigned
+            .iter()
+            .map(|a| a.resource)
+            .chain(others.iter().copied().filter(|id| count_of(*id) > 0))
+            .chain(others.iter().copied().filter(|id| count_of(*id) == 0))
+            .collect();
         let modal = egui::Modal::new(egui::Id::new("assign_resources")).show(ctx, |ui| {
             ui.set_width(600.0);
             ui.heading(tl!("Assign Resources"));
-            ui.label(RichText::new(crate::i18n::fmt(tl!("Task: {name}"), &[("name", &task.name)])).color(t.text_dim));
+            if selected > 1 {
+                let count = selected.to_string();
+                ui.label(crate::i18n::fmt(tl!("{count} tasks selected: Assign and Remove act on all of them."), &[("count", &count)]));
+                ui.label(RichText::new(crate::i18n::fmt(tl!("Units and work shown are for {name}."), &[("name", &task.name)])).color(t.text_dim));
+            } else {
+                ui.label(RichText::new(crate::i18n::fmt(tl!("Task: {name}"), &[("name", &task.name)])).color(t.text_dim));
+            }
             ui.add_space(10.0);
             if rows.is_empty() {
                 ui.label(
@@ -156,11 +199,22 @@ impl App {
                     for id in &rows {
                         let Ok(r) = p.resource(*id) else { continue };
                         let a = assigned.iter().find(|a| a.resource == *id);
-                        // A tick, drawn as text, on the assigned rows.
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                        if a.is_some() {
-                            let pt = |x: f32, y: f32| rect.left_top() + egui::vec2(x, y);
-                            ui.painter().add(egui::Shape::line(vec![pt(2.0, 8.5), pt(6.5, 13.0), pt(14.0, 3.5)], egui::Stroke::new(2.0, t.accent)));
+                        let count = count_of(*id);
+                        let all = count == selected;
+                        // Drawn: a tick where every selected task has the resource, a dash where
+                        // only some do.
+                        let (rect, mark) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                        let pt = |x: f32, y: f32| rect.left_top() + egui::vec2(x, y);
+                        let stroke = egui::Stroke::new(2.0, t.accent);
+                        if all {
+                            ui.painter().add(egui::Shape::line(vec![pt(2.0, 8.5), pt(6.5, 13.0), pt(14.0, 3.5)], stroke));
+                        } else if count > 0 {
+                            ui.painter().line_segment([pt(3.0, 8.0), pt(13.0, 8.0)], stroke);
+                            let (n, total) = (count.to_string(), selected.to_string());
+                            mark.on_hover_text(crate::i18n::fmt(
+                                tl!("Assigned to {count} of the {total} selected tasks"),
+                                &[("count", &n), ("total", &total)],
+                            ));
                         }
                         ui.label(&r.name);
                         ui.label(RichText::new(tl!(r.kind.name())).color(t.text_dim));
@@ -169,26 +223,34 @@ impl App {
                         let edit = ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(110.0).min_size(egui::vec2(110.0, 0.0)));
                         let entered = edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                         ui.label(a.map(|a| assignment_work_text(&p, a)).unwrap_or_default());
-                        match a {
+                        let typed = text.trim().to_owned();
+                        ui.horizontal(|ui| match a.filter(|_| all) {
+                            // On every selected task: new units go to all of them.
                             Some(a) => {
-                                let changed = text.trim() != p.units_text_full(a);
-                                if (entered || edit.lost_focus()) && changed && !text.trim().is_empty() {
-                                    command = Some(("assignment.setUnits", json!({"task": form.task.0, "resource": id.0, "units": text.trim()})));
+                                if (entered || edit.lost_focus()) && typed != p.units_text_full(a) && !typed.is_empty() {
+                                    let mut params = form.target(*id);
+                                    params["units"] = json!(typed);
+                                    command = Some(("assignment.setUnits", params));
                                 }
                                 if ui.button(tl!("Remove")).clicked() {
-                                    command = Some(("assignment.remove", json!({"task": form.task.0, "resource": id.0})));
+                                    command = Some(("assignment.remove", form.target(*id)));
                                 }
                             }
+                            // On none or some: Assign gives it to the rest, Remove (when some
+                            // have it) takes it off them.
                             None => {
                                 if ui.button(tl!("Assign")).clicked() || entered {
-                                    let mut params = json!({"task": form.task.0, "resource": id.0});
-                                    if !text.trim().is_empty() {
-                                        params["units"] = json!(text.trim());
+                                    let mut params = form.target(*id);
+                                    if !typed.is_empty() {
+                                        params["units"] = json!(typed);
                                     }
                                     command = Some(("assignment.add", params));
                                 }
+                                if count > 0 && ui.button(tl!("Remove")).clicked() {
+                                    command = Some(("assignment.remove", form.target(*id)));
+                                }
                             }
-                        }
+                        });
                         ui.end_row();
                     }
                 });
@@ -214,10 +276,73 @@ impl App {
             && self.run(cmd, params)
         {
             // Show the assignments as they now are.
-            form = AssignForm::read(&self.session.project, form.task);
+            form = AssignForm::read(&self.session.project, form.task, form.tasks);
         }
         if !(close || modal.should_close()) {
             self.assign = Some(form);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::{Key, Modifiers};
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    use projectcraft_engine::model::{ResourceId, TaskId};
+    use serde_json::json;
+
+    use crate::App;
+
+    /// With several tasks selected, a summary among them, Assign, new units and Remove each act on
+    /// all of them as one command, so one undo step each; the dialog says the selection is mixed.
+    #[test]
+    fn assign_resources_acts_on_every_selected_task() {
+        let mut s = projectcraft_engine::sample();
+        // Order furniture under Survey the new floor: the survey becomes a summary task.
+        s.run("task.indent", &json!({"ids": [3]})).unwrap();
+        let before = s.project.clone();
+        let mut h = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(|ui, app: &mut App| app.ui(ui), App::new(s, None));
+        h.run_steps(3);
+        h.get_by_label("Survey the new floor").click();
+        h.run_steps(3);
+        h.get_by_label("Furniture delivered").click_modifiers(Modifiers::SHIFT);
+        h.run_steps(3);
+        h.key_press_modifiers(Modifiers::ALT, Key::F10);
+        h.run_steps(3);
+        let form = h.state().assign.as_ref().unwrap();
+        assert_eq!((form.task, form.tasks.clone()), (TaskId(4), vec![TaskId(2), TaskId(3), TaskId(4)]));
+        assert!(h.query_by_label_contains("3 tasks selected").is_some());
+        assert!(h.query_by_label_contains("shown are for Furniture delivered").is_some());
+        // Priya is on the summary and Order furniture, not on Furniture delivered: Assign gives
+        // her to the one without, the others keep their units.
+        h.get_all_by_label("Assign").next().unwrap().click();
+        h.run_steps(3);
+        let p = &h.state().session.project;
+        assert_eq!(p.resource_names(TaskId(2)), "Priya Shah[50%], Tom Okafor[50%]");
+        assert_eq!(p.resource_names(TaskId(3)), "Priya Shah");
+        assert_eq!(p.resource_names(TaskId(4)), "Priya Shah");
+        // Now on all three: new units, typed into her row and entered, go to all of them.
+        h.state_mut().assign.as_mut().unwrap().units.insert(ResourceId(1), "25%".into());
+        h.run_steps(2);
+        h.get_all_by_role(egui::accesskit::Role::TextInput).next().unwrap().focus();
+        h.run_steps(1);
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        for t in [2, 3, 4] {
+            assert!(h.state().session.project.resource_names(TaskId(t)).starts_with("Priya Shah[25%]"), "task {t}");
+        }
+        h.get_all_by_label("Remove").next().unwrap().click();
+        h.run_steps(3);
+        let p = &h.state().session.project;
+        let names: Vec<String> = [2, 3, 4].iter().map(|t| p.resource_names(TaskId(*t))).collect();
+        assert_eq!(names, ["Tom Okafor[50%]", "", ""]);
+        h.get_by_label("Close").click();
+        h.run_steps(2);
+        for _ in 0..3 {
+            h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+            h.run_steps(2);
+        }
+        assert_eq!(h.state().session.project, before, "three commands, three undo steps");
     }
 }

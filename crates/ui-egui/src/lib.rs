@@ -421,7 +421,7 @@ impl App {
                     let can = self.sel.cursor.is_some();
                     if ui
                         .add_enabled(can, egui::Button::new(tl!("Assign Resources…")))
-                        .on_hover_text(tl!("Assign resources to the focused task (Alt+F10)"))
+                        .on_hover_text(tl!("Assign resources to the selected tasks (Alt+F10)"))
                         .clicked()
                     {
                         self.open_assign_resources();
