@@ -16,6 +16,8 @@ use serde_json::json;
 const GATE: Duration = Duration::from_millis(10);
 /// Timed runs per plan; the median is reported.
 const RUNS: usize = 31;
+/// The most a hostile plan's finish-type hold search may cost a reschedule, in release.
+const HOSTILE_GATE: Duration = Duration::from_millis(250);
 
 /// A small linear congruential generator (Knuth's MMIX constants): the same seed, the same plan.
 struct Lcg(u64);
@@ -43,7 +45,8 @@ fn date(s: &str) -> Date {
 /// A plan of `n` tasks. Phases (level 1) hold 3 work packages (level 2), each holding 3 groups
 /// (level 3) of 8 tasks (level 4). Tasks run 0–10 days (some milestones) and link to 1–2 of the
 /// previous 15 tasks with any link type and a lag of −2 to +3 days; work packages are chained FS
-/// to the one before. Every 9th task has a constraint, every 11th a deadline. The calendar has
+/// to the one before. Every 9th task has a constraint, every 11th a deadline, and about one group
+/// in four must finish no earlier than a date. The calendar has
 /// about one holiday a month and a few working Saturdays.
 fn plan(n: usize, seed: u64) -> Project {
     let start = date("2026-01-05");
@@ -74,6 +77,11 @@ fn plan(n: usize, seed: u64) -> Project {
                         p.set_preds(id, vec![Link { pred: prev, kind: LinkKind::FS, lag: 0 }]).unwrap();
                     }
                     prev_package = Some(id);
+                }
+                3 if rng.chance(25) => {
+                    // A group that must finish no earlier than a date: a finish-type summary hold.
+                    let d = start.add_days(leaves.len() as i64 * 2 + 10 + rng.below(30) as i64).unwrap();
+                    p.task_mut(id).unwrap().constraint = Constraint::FinishNoEarlierThan(d);
                 }
                 4 => {
                     let k = leaves.len();
@@ -166,6 +174,7 @@ fn the_generated_plan_is_realistic_and_schedules_deterministically() {
     }
     assert!(links.iter().any(|l| l.lag > 0) && links.iter().any(|l| l.lag < 0));
     assert!(p.tasks.iter().filter(|t| !t.constraint.is_asap()).count() >= 10);
+    assert!(p.tasks.iter().any(|t| t.outline_level == 3 && !t.constraint.is_asap()), "a summary with a finish-type hold");
     assert!(p.tasks.iter().filter(|t| t.deadline.is_some()).count() >= 10);
     assert!(p.calendar.exceptions.values().any(|w| *w) && p.calendar.exceptions.values().any(|w| !*w));
 
@@ -191,5 +200,58 @@ fn reschedule_200_tasks_under_10_ms() {
     println!("perf ({build}, median of {RUNS}): reschedule 200 tasks {t200:.2?}, 2,000 tasks {t2000:.2?} (gate: 200 under {GATE:?})");
     if !cfg!(debug_assertions) {
         assert!(t200 < GATE, "200-task reschedule took {t200:.2?}, over the {GATE:?} gate");
+    }
+}
+
+/// A hostile plan for the finish-type hold search: one summary over everything, Finish No
+/// Earlier Than a far date, holding blocks of `depth` nested summaries with the same constraint,
+/// each over two subtasks the hold can't move (Must Start On and Start No Later Than the project
+/// start). No hold ever reaches its date, so every search runs to its bounds, and the outer one
+/// reschedules the whole plan at each try. The worst shape found within the search's bounds.
+fn hostile(n: usize, depth: u32) -> Project {
+    let start = date("2026-01-05");
+    let far = date("9000-01-01");
+    let mut p = Project::new("Hostile", start);
+    let add = |p: &mut Project, level: u32, duration: i64, c: Constraint| {
+        let id = p.add_task("T", duration).unwrap();
+        let t = p.task_mut(id).unwrap();
+        t.outline_level = level;
+        t.constraint = c;
+    };
+    add(&mut p, 1, 1, Constraint::FinishNoEarlierThan(far));
+    while p.tasks.len() + depth as usize + 2 <= n {
+        for l in 1..=depth {
+            add(&mut p, 1 + l, 1, Constraint::FinishNoEarlierThan(far));
+        }
+        add(&mut p, depth + 2, 2, Constraint::MustStartOn(start));
+        add(&mut p, depth + 2, 2, Constraint::StartNoLaterThan(start));
+    }
+    p
+}
+
+/// The worst case the finish-type hold search allows: a full-size hostile plan (`MAX_TASKS`
+/// tasks) schedules in under 250 ms in release (median of 3), the same dates every time.
+#[test]
+#[ignore = "timing; run in release by `cargo xtask perf`"]
+fn hostile_finish_holds_stay_bounded() {
+    let p = hostile(projectcraft_engine::model::MAX_TASKS, 9);
+    let mut times = Vec::new();
+    let mut last = None;
+    for _ in 0..3 {
+        let t0 = Instant::now();
+        let s = projectcraft_engine::model::schedule(&p);
+        times.push(t0.elapsed());
+        assert!(s.is_ok());
+        if let Some(prev) = &last {
+            assert_eq!(prev, &s, "same dates every time");
+        }
+        last = Some(s);
+    }
+    times.sort();
+    let t = times[1];
+    let build = if cfg!(debug_assertions) { "debug" } else { "release" };
+    println!("perf ({build}, median of 3): hostile finish holds, {} tasks {t:.2?} (gate: under {HOSTILE_GATE:?})", p.tasks.len());
+    if !cfg!(debug_assertions) {
+        assert!(t < HOSTILE_GATE, "hostile schedule took {t:.2?}, over the {HOSTILE_GATE:?} gate");
     }
 }
