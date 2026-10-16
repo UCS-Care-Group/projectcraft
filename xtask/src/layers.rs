@@ -61,7 +61,8 @@ fn intra_layer_allowed(from: &str, to: &str) -> bool {
 }
 
 /// External crates that constitute a UI toolkit / windowing dependency.
-/// Entries ending in `*` are prefixes.
+/// Entries ending in `*` are prefixes. `craft-atomic` (storytold/craft-libs) is std-only file
+/// writing with no UI dependencies, so it is not one: the engine saves through it.
 pub const UI_CRATES: &[&str] = &["egui", "eframe", "winit", "egui_kittest", "rfd", "bevy*"];
 
 /// First layer allowed to use UI crates.
@@ -281,6 +282,11 @@ mod tests {
         }
         assert!(check(&[c("projectcraft-engine", &[("egui_extras_not", Normal, false)])]).is_empty());
         assert!(!check(&[c("projectcraft-mcp", &[("winit", Normal, false)])]).is_empty());
+    }
+
+    #[test]
+    fn craft_atomic_allowed_in_the_engine() {
+        assert!(check(&[c("projectcraft-engine", &[("craft-atomic", Normal, false)])]).is_empty());
     }
 
     #[test]

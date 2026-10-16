@@ -748,6 +748,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-atomic"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=8f5a2831614e632f91ad367f7af2a6e5b61b9529#8f5a2831614e632f91ad367f7af2a6e5b61b9529"
+dependencies = [
+ "rustix 1.1.5",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2519,6 +2527,7 @@ dependencies = [
 name = "projectcraft-engine"
 version = "0.0.1"
 dependencies = [
+ "craft-atomic",
  "projectcraft-model",
  "projectcraft-time",
  "proptest",

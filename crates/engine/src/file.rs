@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Write as _};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -157,55 +157,83 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
     p.check_resources().map_err(|e| bad(e.to_string()))
 }
 
-/// Writes a temp file beside `path` with `write`, fsyncs it, copies the old file to `.bak` (when
-/// `bak`), then renames the temp file over `path`. On any error `path` is untouched and the temp
-/// file removed.
+/// Saves `path` through craft-atomic: `write` fills an owner-only staging file beside it, which
+/// is flushed and renamed over `path`. When `bak`, the previous file is copied to `<path>.bak`
+/// once the new content is written, before it replaces the old. On any error `path` is untouched.
+#[cfg(not(target_arch = "wasm32"))]
 fn replace_file(path: &Path, bak: bool, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
-    let tmp = sibling(path, ".tmp");
-    let result = (|| {
-        let mut f = create_private(&tmp)?;
-        write(&mut f)?;
-        f.sync_all()?;
-        drop(f);
+    replace_file_with(&craft_atomic::RealFs, craft_atomic::RenameRetry::platform(), path, bak, write)
+}
+
+/// The web build has no file system to save to.
+#[cfg(target_arch = "wasm32")]
+fn replace_file(_: &Path, _: bool, _: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    Err(no_files())
+}
+
+/// [`replace_file`] through `fs`, so a test can make the disk fail at any step.
+#[cfg(not(target_arch = "wasm32"))]
+fn replace_file_with(
+    fs: &dyn craft_atomic::AtomicFs,
+    retry: craft_atomic::RenameRetry,
+    path: &Path,
+    bak: bool,
+    write: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
+    owner_only(path);
+    private().atomic_write_with_custom(fs, retry, path, |f| {
+        write(f)?;
         if bak && path.exists() {
-            // Copied into a file created owner-only, so the `.bak` is never readable by others.
-            let mut from = File::open(path)?;
-            let mut to = create_private(&sibling(path, ".bak"))?;
-            io::copy(&mut from, &mut to)?;
+            // Staged owner-only from its first byte, so the `.bak` is never readable by others.
+            let bak = sibling(path, ".bak");
+            owner_only(&bak);
+            private().atomic_write_with(&bak, |to| io::copy(&mut File::open(path)?, to).map(drop))?;
         }
-        fs::rename(&tmp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-        return result;
-    }
-    // Make the rename itself durable. Directories can't be opened on every platform; best effort.
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty())
-        && let Ok(d) = File::open(dir)
+        Ok(())
+    })
+}
+
+/// New files staged and created owner-only (0600 on Unix), never wider for a moment.
+#[cfg(not(target_arch = "wasm32"))]
+fn private() -> craft_atomic::WriteOptions {
+    craft_atomic::WriteOptions::default().with_new_file_permissions(craft_atomic::NewFilePermissions::Private)
+}
+
+/// craft-atomic keeps the mode of a file it replaces, so an existing file wider than owner-only
+/// (an old `.bak`, a plan another program saved) is narrowed to 0600 first. Best effort: a file
+/// another account owns can't be narrowed, and keeps its mode.
+#[cfg(not(target_arch = "wasm32"))]
+fn owner_only(path: &Path) {
+    #[cfg(unix)]
     {
-        let _ = d.sync_all();
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(m) = fs::metadata(path)
+            && m.is_file()
+            && m.permissions().mode() & 0o077 != 0
+        {
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        }
     }
-    Ok(())
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
-/// Creates (or truncates) `path` for writing, readable and writable by the owner only (0600 on
-/// Unix, even when the file already existed with wider permissions). Elsewhere, the platform default.
-fn create_private(path: &Path) -> io::Result<File> {
-    let mut options = File::options();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let f = options.open(path)?;
-    // `mode` only applies to a new file; an existing one (a stale temp, an old `.bak`) is tightened.
-    #[cfg(unix)]
-    f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    Ok(f)
+#[cfg(target_arch = "wasm32")]
+fn no_files() -> io::Error {
+    io::Error::new(io::ErrorKind::Unsupported, "the web build saves no files")
 }
 
-/// Writes `bytes` to `path`, owner-only (0600) on Unix. For small app files such as settings.
+/// Writes `bytes` to `path` atomically, owner-only (0600) on Unix. For small app files such as settings.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut f = create_private(path)?;
-    f.write_all(bytes)
+    owner_only(path);
+    private().atomic_write(path, bytes)
+}
+
+/// The web build has no file system to write to.
+#[cfg(target_arch = "wasm32")]
+pub fn write_private(_: &Path, _: &[u8]) -> io::Result<()> {
+    Err(no_files())
 }
 
 /// Creates `dir` and any missing parents; each folder it creates is owner-only (0700) on Unix.
@@ -621,6 +649,61 @@ mod tests {
         assert_eq!(Session::open(&path).unwrap().project, full());
         Session::new(full()).save_to(&path).unwrap();
         assert_eq!(Session::open(&path).unwrap().project, full());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A disk that fails at one step of a save: the flush of the staged file, or the rename.
+    struct FailingDisk {
+        sync: bool,
+        rename: bool,
+    }
+
+    impl craft_atomic::AtomicFs for FailingDisk {
+        fn create_new(&self, path: &Path, permissions: craft_atomic::NewFilePermissions) -> io::Result<File> {
+            craft_atomic::RealFs.create_new(path, permissions)
+        }
+        fn sync(&self, file: &File) -> io::Result<()> {
+            if self.sync { Err(io::Error::new(io::ErrorKind::StorageFull, "injected: disk full")) } else { craft_atomic::RealFs.sync(file) }
+        }
+        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            if self.rename { Err(io::Error::other("injected: power cut before the rename")) } else { craft_atomic::RealFs.rename(from, to) }
+        }
+        fn hard_link(&self, from: &Path, to: &Path) -> io::Result<()> {
+            craft_atomic::RealFs.hard_link(from, to)
+        }
+        fn remove(&self, path: &Path) -> io::Result<()> {
+            craft_atomic::RealFs.remove(path)
+        }
+        fn sync_dir(&self, dir: &Path) -> io::Result<()> {
+            craft_atomic::RealFs.sync_dir(dir)
+        }
+        fn set_permissions(&self, file: &File, perms: fs::Permissions) -> io::Result<()> {
+            craft_atomic::RealFs.set_permissions(file, perms)
+        }
+    }
+
+    #[test]
+    fn a_save_interrupted_by_the_disk_leaves_the_old_file_whole() {
+        let dir = tmp_dir("injected");
+        let path = dir.join("plan.projectcraft");
+        Session::new(full()).save_to(&path).unwrap();
+        let before = fs::read(&path).unwrap();
+        let mut s = Session::new(full());
+        s.run("task.add", &json!({"name": "Snag list", "duration": 3})).unwrap();
+        let text = s.save_json().unwrap();
+        let no_retry = craft_atomic::RenameRetry { attempts: 0, first_delay_ms: 0 };
+        for disk in [FailingDisk { sync: true, rename: false }, FailingDisk { sync: false, rename: true }] {
+            let failed = replace_file_with(&disk, no_retry, &path, true, |f| f.write_all(text.as_bytes()));
+            assert!(failed.is_err());
+            assert_eq!(fs::read(&path).unwrap(), before, "the old file, never a broken one");
+            assert_eq!(Session::open(&path).unwrap().project, full());
+            let left: Vec<_> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+            assert_eq!(left.len(), 2, "only the file and its .bak: {left:?}");
+        }
+        // The next save on a working disk lands whole.
+        replace_file_with(&FailingDisk { sync: false, rename: false }, no_retry, &path, true, |f| f.write_all(text.as_bytes())).unwrap();
+        assert_eq!(Session::open(&path).unwrap().project, s.project);
+        assert_eq!(Session::open(&sibling(&path, ".bak")).unwrap().project, full());
         let _ = fs::remove_dir_all(dir);
     }
 

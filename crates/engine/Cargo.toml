@@ -15,5 +15,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
+# Atomic saves (staging beside the file, fsync, rename, owner-only staging). The web build saves
+# no files.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+craft-atomic = { workspace = true }
+
 [dev-dependencies]
 proptest = { workspace = true }

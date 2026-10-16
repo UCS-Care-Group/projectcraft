@@ -6,7 +6,7 @@ members = ["crates/*", "apps/*", "xtask"]
 version = "0.0.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-rust-version = "1.90"
+rust-version = "1.95"
 repository = "https://github.com/UCS-Care-Group/projectcraft"
 
 [workspace.dependencies]
@@ -29,6 +29,11 @@ eframe = { version = "0.36", default-features = false }
 egui_kittest = "0.36"
 # native Open / Save As dialogs; the desktop app only (layers forbid it below L6)
 rfd = "0.17"
+
+# craft-libs (storytold/craft-libs): shared crates of the Craft suite, a git dependency pinned by
+# `rev`; deny.toml allows that one repository.
+# Crash-safe atomic file replacement; the engine's saves, native only.
+craft-atomic = { git = "https://github.com/storytold/craft-libs", rev = "8f5a2831614e632f91ad367f7af2a6e5b61b9529" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

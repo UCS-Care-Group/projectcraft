@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (caps in working minutes; file format 2 migration) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (saves through craft-atomic) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -71,10 +71,17 @@ control channel and MCP, where the caller may be a script or an AI agent.
 Not an attacker, but the reason the program exists: a crash, a full disk or a power cut while
 saving.
 
-- **Atomic saves.** A save writes `<file>.tmp` beside the file, flushes it to disk, copies the
-  previous save to `<file>.bak`, then renames the new one into place (`replace_file` in
-  `crates/engine/src/file.rs`). The file on disk is always the previous save or this one, never
-  half of either; on any error the original is untouched and the temp file removed.
+- **Atomic saves.** The project file, its `.bak`, the recovery copy and the settings files are
+  written through `craft-atomic` (storytold/craft-libs): the new content goes into a hidden
+  staging file beside the file, is flushed to disk (a full flush on macOS), and is renamed into
+  place, then the folder is flushed; on Windows a rename blocked for a moment by a virus scanner
+  or indexer is retried. A symbolic link is kept and the file it names is written. Once the new
+  content is written, and before it replaces the old, the previous save is copied to
+  `<file>.bak` the same way (`replace_file` in `crates/engine/src/file.rs`). The file on disk is
+  always the previous save or this one, never half of either; on any error the original is
+  untouched and the staging file removed. A crash or power cut mid-save can leave a staging file
+  (`.<name>.<pid>-<n>.craft_tmp`, owner-only) beside the file; it is never read. A test injects a
+  disk that fails at the flush and at the rename and checks the old file survives whole.
 - **Never crash** (above) is the main defence: an error is reported and the project stays open.
 - **No autosave or crash recovery yet.** Unsaved changes live only in memory. When autosave and
   recovery arrive, their files go beside the project or in the settings folder, are written with
@@ -98,14 +105,14 @@ where it is kept and who it is shared with. Deleting a resource removes its name
 save, but the `.bak` keeps the previous save until the one after.
 
 - On Unix (Linux, macOS, the BSDs) every file ProjectCraft writes is owner-only, mode 0600: the
-  project file (its atomic-save temp file is created 0600 and renamed over the old one, so saving
-  over a wider file also leaves 0600), the `.bak` (copied into a file created 0600), the recovery
-  copy, and the settings files (`recent-files.txt`, `autosave.txt`). A stale temp or `.bak` with
-  wider permissions is tightened to 0600 when reused. Settings and recovery folders ProjectCraft
-  creates are 0700; a folder that already exists, such as the one the owner saves into, is left as
-  it is. `create_private`, `write_private` and `create_private_dir_all` in
+  project file, the `.bak`, the recovery copy, and the settings files (`recent-files.txt`,
+  `autosave.txt`). Each is staged with craft-atomic's private permissions, so it is 0600 from its
+  first byte and never readable by others for a moment. craft-atomic keeps the mode of a file it
+  replaces, so an existing file or `.bak` with wider permissions is first tightened to 0600; one
+  owned by another account can't be tightened and keeps its mode. Settings and recovery folders
+  ProjectCraft creates are 0700; a folder that already exists, such as the one the owner saves
+  into, is left as it is. `replace_file`, `write_private` and `create_private_dir_all` in
   `crates/engine/src/file.rs`, with Unix-only tests there and in `crates/ui-egui/src/recovery.rs`.
-  std only, no new dependency.
 - On Windows the files get the folder's access list, like any document; the settings folder is in
   the owner's profile. The web build writes no files.
 - The recent-files list holds paths only, read back capped at 64 KB, and entries that no longer
@@ -120,7 +127,8 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 - **Dependencies:** `cargo deny check` ([`deny.toml`](../deny.toml); `cargo xtask deny`, a step of
   `cargo xtask ci` and a CI job that `ci-ok` requires) fails on a RustSec vulnerability, allows
   only OSI-permissive licences (no GPL, LGPL or AGPL) plus one font licence for one crate, and only
-  crates.io as a source. `Cargo.lock` is committed.
+  crates.io as a source, plus git from the Craft suite's own `storytold/craft-libs` alone, pinned
+  to a commit by `rev`. `Cargo.lock` is committed.
 - **Workflows:** every third-party action is pinned to a full commit SHA, kept current by
   Dependabot with a week's cooldown (Cargo updates too); checkouts don't keep credentials;
   workflows get read-only permissions unless a job needs more.
@@ -150,3 +158,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 | 2026-10-16 | minor | Owner-only permissions on Unix: files written 0600, new settings and recovery folders 0700 (#37) |
 | 2026-10-16 | minor | Resources: project files hold people's names (personal data, no contact details); resources validated on load (#54) |
 | 2026-10-16 | minor | Durations and lags capped in working minutes; version-1 files migrate with the day cap kept (#52) |
+| 2026-10-16 | minor | Saves, `.bak`, recovery copy and settings written through craft-atomic; craft-libs allowed as a pinned git source (#67) |
