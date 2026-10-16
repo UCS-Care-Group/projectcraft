@@ -33,6 +33,10 @@ pub struct Tokens {
     pub warning: Color32,
     /// A summary task's bar and its end points.
     pub bar_summary: Color32,
+    /// A deadline marker on the Gantt Chart.
+    pub deadline: Color32,
+    /// A missed deadline: its marker and the indicator.
+    pub deadline_missed: Color32,
 }
 
 impl Tokens {
@@ -58,6 +62,8 @@ impl Tokens {
             bar_critical: Color32::from_rgb(0xC8, 0x3C, 0x3C),
             warning: Color32::from_rgb(0xB0, 0x5A, 0x00),
             bar_summary: Color32::from_rgb(0x30, 0x30, 0x30),
+            deadline: Color32::from_rgb(0x2E, 0x7D, 0x32),
+            deadline_missed: Color32::from_rgb(0xA3, 0x15, 0x7A),
         }
     }
 
@@ -83,6 +89,8 @@ impl Tokens {
             bar_critical: Color32::from_rgb(0xE8, 0x62, 0x62),
             warning: Color32::from_rgb(0xF2, 0xA6, 0x3B),
             bar_summary: Color32::from_rgb(0xD2, 0xD2, 0xD2),
+            deadline: Color32::from_rgb(0x6C, 0xC0, 0x70),
+            deadline_missed: Color32::from_rgb(0xF0, 0x6A, 0xC8),
         }
     }
 

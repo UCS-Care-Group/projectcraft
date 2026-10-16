@@ -408,6 +408,28 @@ const COMMANDS: &[CommandSpec] = &[
         },
     },
     CommandSpec {
+        id: "task.setDeadline",
+        label: "Deadline",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "id": task_id(),
+                    "date": {"type": "string", "format": "date", "description": "YYYY-MM-DD; leave out to clear. A deadline never moves the task; finishing after it gives negative slack."},
+                }),
+                &["id"],
+            )
+        },
+        run: |p, v| {
+            let date = match v.get("date").and_then(Value::as_str) {
+                Some(d) => Some(d.parse::<Date>().map_err(|e| CmdError::Params(e.to_string()))?),
+                None => None,
+            };
+            p.task_mut(id_param(v)?)?.deadline = date;
+            Ok(())
+        },
+    },
+    CommandSpec {
         id: "task.indent",
         label: "Indent Task",
         effect: Effect::Edit,

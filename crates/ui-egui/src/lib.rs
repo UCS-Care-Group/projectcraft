@@ -33,14 +33,18 @@ enum Field {
     Start,
     Finish,
     Preds,
+    Deadline,
 }
 
 /// The command a typed Start or Finish issues: Start No Earlier Than or Finish No Earlier Than
-/// that date. The cell keeps showing the scheduler's date, as in Microsoft Project.
+/// that date. The cell keeps showing the scheduler's date, as in Microsoft Project. A typed
+/// Deadline sets the deadline; an empty one clears it.
 fn typed_date(field: Field, id: TaskId, text: &str) -> Option<(&'static str, Value)> {
     let ty = match field {
         Field::Start => "SNET",
         Field::Finish => "FNET",
+        Field::Deadline if text.trim().is_empty() => return Some(("task.setDeadline", json!({"id": id.0}))),
+        Field::Deadline => return Some(("task.setDeadline", json!({"id": id.0, "date": text.trim()}))),
         _ => return None,
     };
     Some(("task.setConstraint", json!({"id": id.0, "type": ty, "date": text.trim()})))
@@ -303,15 +307,15 @@ impl App {
             // ID and the indicators are narrow, fixed-width columns.
             ui.add_sized([ID_W, ROW_H], egui::Label::new(RichText::new(tl!("ID")).strong()));
             ui.add_sized([ROW_H, ROW_H], egui::Label::new(""));
-            for h in ["Task Name", "Duration", "Start", "Finish", "Predecessors", ""] {
+            for h in ["Task Name", "Duration", "Start", "Finish", "Predecessors", "Deadline", ""] {
                 ui.label(RichText::new(tl!(h)).strong());
             }
             ui.end_row();
             let p = &self.session.project;
             let outline = Outline::of(p);
-            let rows: Vec<_> = p.tasks.iter().map(|t| (t.id, t.name.clone(), t.duration, p.preds_text_rows(&t.preds))).collect();
+            let rows: Vec<_> = p.tasks.iter().map(|t| (t.id, t.name.clone(), t.duration, p.preds_text_rows(&t.preds), t.deadline)).collect();
             // The ID column is the row number; commands get Unique IDs.
-            for (i, (id, name, duration, preds)) in rows.into_iter().enumerate() {
+            for (i, (id, name, duration, preds, deadline)) in rows.into_iter().enumerate() {
                 let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
                 let summary = outline.is_summary(i);
                 ui.add_sized([ID_W, ROW_H], egui::Label::new(i.saturating_add(1).to_string()));
@@ -345,12 +349,15 @@ impl App {
                         Err(e) => self.status = e.to_string(),
                     }
                 }
+                if let Some(c) = self.cell(ui, id, Field::Deadline, &deadline.map_or_else(String::new, |d| d.to_string()), 80.0) {
+                    commands.extend(typed_date(Field::Deadline, id, &c));
+                }
                 let shape = match (summary, duration) {
                     (true, _) => Bar::Summary,
                     (false, 0) => Bar::Milestone,
                     (false, _) => Bar::Task,
                 };
-                gantt_bar(ui, start, dates, shape);
+                gantt_bar(ui, start, dates, shape, deadline);
                 ui.end_row();
             }
         });
@@ -379,19 +386,32 @@ impl App {
     }
 }
 
-/// The indicator cell: a warning triangle, drawn in code, when a constraint overrides one of the
-/// task's links.
+/// The indicator cell, drawn in code: a warning triangle when a constraint overrides one of the
+/// task's links, else a round "!" badge when the task finishes after its deadline. The tooltip
+/// names every indicator that applies.
 fn indicator(ui: &mut egui::Ui, dates: Option<projectcraft_engine::model::TaskDates>) {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ROW_H, ROW_H), Sense::hover());
-    if !dates.is_some_and(|d| d.constraint_conflict) {
-        return;
-    }
+    let Some(d) = dates.filter(|d| d.constraint_conflict || d.deadline_missed) else { return };
     let t = Tokens::get(ui.ctx());
     let (c, r) = (rect.center(), ROW_H * 0.36);
     let p = ui.painter();
-    p.add(egui::Shape::convex_polygon(vec![c + Vec2::new(0.0, -r), c + Vec2::new(r, r * 0.8), c + Vec2::new(-r, r * 0.8)], t.warning, Stroke::NONE));
-    p.text(c + Vec2::new(0.0, r * 0.2), egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(ROW_H * 0.45), t.surface);
-    response.on_hover_text(tl!("Constraint conflict: a link can't be honoured, so this task keeps its constraint date and has negative slack."));
+    let mut tips = Vec::new();
+    if d.constraint_conflict {
+        p.add(egui::Shape::convex_polygon(
+            vec![c + Vec2::new(0.0, -r), c + Vec2::new(r, r * 0.8), c + Vec2::new(-r, r * 0.8)],
+            t.warning,
+            Stroke::NONE,
+        ));
+        p.text(c + Vec2::new(0.0, r * 0.2), egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(ROW_H * 0.45), t.surface);
+        tips.push(tl!("Constraint conflict: a link can't be honoured, so this task keeps its constraint date and has negative slack."));
+    } else {
+        p.circle_filled(c, r * 0.85, t.deadline_missed);
+        p.text(c, egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(ROW_H * 0.45), t.surface);
+    }
+    if d.deadline_missed {
+        tips.push(tl!("Missed deadline: this task finishes after its deadline, so it has negative slack."));
+    }
+    response.on_hover_text(tips.join("\n"));
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -402,7 +422,11 @@ enum Bar {
     Summary,
 }
 
-fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::model::TaskDates>, shape: Bar) {
+/// How far past the project start a deadline marker is drawn, in calendar days; one further out
+/// (a hostile date in year 9999) would make the chart absurdly wide, so it isn't drawn.
+const MARKER_MAX_DAYS: i64 = 36_600;
+
+fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::model::TaskDates>, shape: Bar, deadline: Option<Date>) {
     let Some(d) = dates else {
         ui.label("");
         return;
@@ -410,7 +434,10 @@ fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::
     // Calendar days, so weekends show as gaps.
     let x0 = d.start.days_since(start) as f32 * DAY_W;
     let x1 = (d.finish.days_since(start) + 1) as f32 * DAY_W;
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(x1.max(x0 + DAY_W) + DAY_W, ROW_H), Sense::hover());
+    // The deadline marker sits at the end of its day, as a finish does.
+    let marker = deadline.map(|dl| dl.days_since(start)).filter(|n| (0..MARKER_MAX_DAYS).contains(n)).map(|n| (n + 1) as f32 * DAY_W);
+    let width = x1.max(x0 + DAY_W).max(marker.unwrap_or(0.0)) + DAY_W;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::hover());
     let t = Tokens::get(ui.ctx());
     let colour = if d.critical { t.bar_critical } else { t.bar };
     let p = ui.painter();
@@ -435,6 +462,24 @@ fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::
         let bar = egui::Rect::from_min_max(egui::pos2(rect.left() + x0, rect.top() + 5.0), egui::pos2(rect.left() + x1, rect.bottom() - 5.0));
         p.rect_filled(bar, 2.0, colour);
     }
+    if let Some(x) = marker {
+        deadline_marker(p, egui::pos2(rect.left() + x, rect.top()), &t, d.deadline_missed);
+    }
+}
+
+/// The deadline marker, drawn in code: a short stem with a downward-pointing head whose tip
+/// rests on the top edge of the bar, at the deadline's x. Missed, it takes the missed colour.
+fn deadline_marker(p: &egui::Painter, top: egui::Pos2, t: &Tokens, missed: bool) {
+    let colour = if missed { t.deadline_missed } else { t.deadline };
+    // Stem from the row top, head from 4 to 14 pt down: over the bar's top edge, outlined in
+    // the surface colour so it reads on a bar of any colour.
+    let (x, half) = (top.x, 6.0);
+    p.line_segment([egui::pos2(x, top.y), egui::pos2(x, top.y + 5.0)], Stroke::new(2.5, colour));
+    p.add(egui::Shape::convex_polygon(
+        vec![egui::pos2(x - half, top.y + 4.0), egui::pos2(x + half, top.y + 4.0), egui::pos2(x, top.y + 14.0)],
+        colour,
+        Stroke::new(1.0, t.surface),
+    ));
 }
 
 #[cfg(test)]
@@ -509,6 +554,23 @@ mod tests {
         assert_eq!(params["type"], "FNET");
         assert!(typed_date(Field::Name, TaskId(5), "x").is_none());
         assert!(s.run(cmd, &typed_date(Field::Start, TaskId(5), "next week").unwrap().1).is_err());
+    }
+
+    /// A typed Deadline sets it; clearing the cell clears it. Nothing moves either way.
+    #[test]
+    fn typing_a_deadline_sets_or_clears_it() {
+        let mut s = projectcraft_engine::sample();
+        let before = s.schedule.as_ref().unwrap().tasks[&TaskId(4)];
+        let (cmd, params) = typed_date(Field::Deadline, TaskId(4), " 2026-11-13 ").unwrap();
+        assert_eq!((cmd, &params), ("task.setDeadline", &json!({"id": 4, "date": "2026-11-13"})));
+        s.run(cmd, &params).unwrap();
+        let after = s.schedule.as_ref().unwrap().tasks[&TaskId(4)];
+        assert!(after.deadline_missed);
+        assert_eq!((after.start, after.finish), (before.start, before.finish));
+        let (cmd, params) = typed_date(Field::Deadline, TaskId(4), "  ").unwrap();
+        assert_eq!(params, json!({"id": 4}));
+        s.run(cmd, &params).unwrap();
+        assert_eq!(s.project.task(TaskId(4)).unwrap().deadline, None);
     }
 
     /// Alt+Shift+→ / ← indent or outdent the selected row; with no row selected the keys do nothing.

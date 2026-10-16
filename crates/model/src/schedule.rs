@@ -16,6 +16,13 @@
 //! back to its predecessors, so their slack goes negative too. Either way the task is flagged
 //! ([`TaskDates::constraint_conflict`]) on every run.
 //!
+//! A deadline is not a constraint: it never moves a task, but caps its late finish
+//! (LF = min(LF, deadline)), so slack counts from the deadline when that is earlier, and a finish
+//! after it gives negative slack that the late dates carry back to the predecessors, as Microsoft's
+//! Deadline field and "Show slack" pages describe. A deadline on a non-working day counts as the
+//! previous working day. The task is flagged ([`TaskDates::deadline_missed`]) when it finishes
+//! after the deadline. On a summary, the cap reaches every subtask.
+//!
 //! Summary tasks ([`Outline`]) are rolled up, not scheduled: a summary starts at its earliest
 //! subtask's start and finishes at its latest subtask's finish, and its duration is the working
 //! days between. Each subtask comes before its summary in [`order`], so a summary's dates are
@@ -54,6 +61,8 @@ pub struct TaskDates {
     pub critical: bool,
     /// A link can't be honoured because a hard constraint holds the task earlier: show a warning.
     pub constraint_conflict: bool,
+    /// It finishes after its deadline: show the missed-deadline indicator.
+    pub deadline_missed: bool,
     /// What set the start.
     pub driver: Driver,
 }
@@ -389,8 +398,10 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
             Constraint::MustStartOn(_) | Constraint::MustFinishOn(_) => ef.get(i).copied().unwrap_or(end),
             _ => end,
         };
-        let my_lf = my_lf.min(cap);
-        // Roll-up: a summary's successors and constraint hold back each of its subtasks.
+        // A deadline caps the late finish too (LF = min(LF, deadline)) and never moves the task.
+        let deadline = t.deadline.map_or(end, |dl| finish_offset(p, dl));
+        let my_lf = my_lf.min(cap).min(deadline);
+        // Roll-up: a summary's successors, constraint and deadline hold back each of its subtasks.
         if let Some(k) = summary(i) {
             for &c in k {
                 if let Some(x) = lf.get_mut(c) {
@@ -428,16 +439,18 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
         // Roll-up: a summary takes the tighter of its start and finish slack.
         let slack = if summary(i).is_some() { (ls - s).min(lfi - f) } else { ls - early.get(i).copied().unwrap_or(s) };
         let first = |o: i64| if d(i) == 0 { day(o - 1) } else { day(o) };
+        let finish = last(s, f)?;
         tasks.insert(
             t.id,
             TaskDates {
                 start: first(s)?,
-                finish: last(s, f)?,
+                finish,
                 late_start: first(ls)?,
                 late_finish: last(ls, lfi)?,
                 slack,
                 critical: slack <= 0,
                 constraint_conflict: conflict.get(i).copied().unwrap_or(false),
+                deadline_missed: t.deadline.is_some_and(|dl| finish > dl),
                 driver: driver.get(i).copied().unwrap_or(Driver::ProjectStart),
             },
         );

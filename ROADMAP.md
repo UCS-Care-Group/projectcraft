@@ -58,6 +58,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | M1.4: calendar exceptions (non-working and working days); `calendar.setWorking`, `calendar.addException`, `calendar.removeException`; a week with no working weekday refused; old `holidays` load as exceptions; Project ▸ Change Working Time dialog; worked example 7 (#14) |
 | 2026-10-16 | M1.1: summaries take links (as predecessor and successor) and every constraint type; a summary's link or constraint holds all its subtasks, through nesting; `ParentSummary` start driver; a link between a summary and its own subtask, or an indent or outdent that would make one, is refused as a circular relationship; worked examples 1, 2, 9, 10 (#8) |
 | 2026-10-16 | SEC: on Unix every file ProjectCraft writes (project file via its atomic-save temp, `.bak`, recovery copy, settings files) is created 0600, and new settings and recovery folders 0700; no-op on Windows and the web (#37) |
+| 2026-10-16 | M1.3: deadlines: `task.setDeadline` (no date clears); a deadline never moves a task but caps its late finish, so finishing after it gives negative slack back through the predecessors; missed deadlines flagged (sheet indicator, CLI `>`); deadline marker on the Gantt; Deadline column; worked examples (#13) |
 
 ## Revision history
 | Date | Change | Summary |
