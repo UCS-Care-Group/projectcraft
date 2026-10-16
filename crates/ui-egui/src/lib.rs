@@ -27,6 +27,7 @@ pub mod theme;
 pub mod timescale;
 
 use theme::Tokens;
+mod browser;
 mod files;
 pub use files::{EXTENSION, FileRequest, MAX_RECENT, parse_recent, push_recent, recent_text};
 mod recovery;
@@ -132,6 +133,10 @@ pub struct App {
     keeper: Option<recovery::Keeper>,
     /// The Change Working Time dialog, while it is open.
     working_time: Option<WorkingTime>,
+    /// The built-in file browser, while it is open (when the system dialog can't be shown).
+    browser: Option<Box<browser::FileBrowser>>,
+    /// The folder the built-in browser showed last; it opens there next time.
+    browser_dir: Option<std::path::PathBuf>,
     /// The Gantt Chart's day width in points: view state, not saved and not undone.
     day_w: f32,
 }
@@ -168,6 +173,8 @@ impl App {
             title: String::new(),
             keeper: None,
             working_time: None,
+            browser: None,
+            browser_dir: None,
             day_w: timescale::Preset::Days.day_w(),
         }
     }
@@ -280,6 +287,7 @@ impl App {
         self.change_working_time(&ctx);
         self.unsaved_prompt(&ctx);
         self.recovery_prompt(&ctx);
+        self.file_browser(&ctx);
         self.update_title(&ctx);
     }
 
@@ -296,7 +304,8 @@ impl App {
         if let Some((cmd, params)) = outline_key(&ids, indent, outdent) {
             self.run(cmd, params);
         }
-        let modal = self.prompt.is_some() || self.working_time.is_some() || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
+        let modal =
+            self.prompt.is_some() || self.working_time.is_some() || self.browser.is_some() || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
         if self.editing.is_some() || ctx.text_edit_focused() || modal {
             return;
         }

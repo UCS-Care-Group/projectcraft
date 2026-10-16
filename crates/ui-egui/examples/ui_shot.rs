@@ -11,7 +11,8 @@
 //! `{"click": "label"}` clicks the first widget with that label (say `File`, or `Open` with
 //! unsaved changes for the Save changes? prompt; a task's name selects its row), with
 //! `"mods": "shift" | "ctrl" | "alt+shift"` held, `{"key": "ArrowDown"}` presses a key (egui's key
-//! names, same `mods`), `{"recover": "/abs/dir"}` turns on the
+//! names, same `mods`), `{"browse": "open" | "save", "dir": "/abs/dir"}` opens the built-in file
+//! browser as when no system dialog can be shown, `{"recover": "/abs/dir"}` turns on the
 //! recovery copy with `dir` as the untitled folder (an `untitled.projectcraft.recovery` there is
 //! offered back). The window is 1280×720 pt at 2× (override with
 //! `{"width": w, "height": h}` and `{"scale": s}` on any line) and opens the sample project
@@ -20,7 +21,7 @@
 use egui::ThemePreference;
 use egui_kittest::kittest::Queryable;
 use projectcraft_engine::Session;
-use projectcraft_ui_egui::App;
+use projectcraft_ui_egui::{App, FileRequest};
 use serde_json::{Value, json};
 
 fn main() {
@@ -69,6 +70,11 @@ fn run() -> Result<(), String> {
                 Some(node) => node.click_modifiers(mods(&l)),
                 None => println!("click: no `{label}`"),
             }
+            harness.run_steps(4);
+        } else if let Some(what) = l.get("browse").and_then(Value::as_str) {
+            let request = if what == "save" { FileRequest::SaveAs } else { FileRequest::Open };
+            let dir = l.get("dir").and_then(Value::as_str).map(std::path::PathBuf::from);
+            harness.state_mut().open_file_browser(request, dir, true);
             harness.run_steps(4);
         } else if let Some(dir) = l.get("recover").and_then(Value::as_str) {
             harness.state_mut().keep_recovery(Some(dir.into()), true);
