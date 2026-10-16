@@ -838,9 +838,9 @@ mod tests {
         let b = p.add_task("B", 2 * D).unwrap();
         let c = p.add_task("C", D).unwrap();
         let m = p.add_task("D", 0).unwrap();
-        p.set_preds(b, parse_preds("1", D).unwrap()).unwrap();
-        p.set_preds(c, parse_preds("1", D).unwrap()).unwrap();
-        p.set_preds(m, parse_preds("2,3", D).unwrap()).unwrap();
+        p.set_preds(b, parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
+        p.set_preds(c, parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
+        p.set_preds(m, parse_preds("2,3", &crate::Options::default()).unwrap()).unwrap();
         let s = schedule(&p).unwrap();
         let t = |id| s.tasks[&id];
         assert_eq!((t(a).start, t(a).finish), (date("2026-01-05"), date("2026-01-07")));
@@ -861,11 +861,11 @@ mod tests {
         let mut p = Project::new("t", date("2026-01-05"));
         let a = p.add_task("A", 4 * D).unwrap();
         let b = p.add_task("B", 2 * D).unwrap();
-        p.set_preds(b, parse_preds("1SS+1", D).unwrap()).unwrap();
+        p.set_preds(b, parse_preds("1SS+1", &crate::Options::default()).unwrap()).unwrap();
         assert_eq!(schedule(&p).unwrap().tasks[&b].start, date("2026-01-06"));
-        p.set_preds(b, parse_preds("1FF", D).unwrap()).unwrap();
+        p.set_preds(b, parse_preds("1FF", &crate::Options::default()).unwrap()).unwrap();
         assert_eq!(schedule(&p).unwrap().tasks[&b].finish, schedule(&p).unwrap().tasks[&a].finish);
-        p.set_preds(b, parse_preds("1FS-2", D).unwrap()).unwrap();
+        p.set_preds(b, parse_preds("1FS-2", &crate::Options::default()).unwrap()).unwrap();
         assert_eq!(schedule(&p).unwrap().tasks[&b].start, date("2026-01-07"));
     }
 
@@ -877,8 +877,8 @@ mod tests {
         let b = p.add_task("B", 2 * D).unwrap();
         let c = p.add_task("C", D).unwrap();
         p.indent(&[a, b]).unwrap();
-        p.set_preds(b, parse_preds("2", D).unwrap()).unwrap();
-        p.set_preds(c, parse_preds("1", D).unwrap()).unwrap();
+        p.set_preds(b, parse_preds("2", &crate::Options::default()).unwrap()).unwrap();
+        p.set_preds(c, parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
         (p, [s, a, b, c])
     }
 
@@ -908,7 +908,7 @@ mod tests {
         let e = p.add_task("E", 5 * D).unwrap();
         p.indent(&[a, sub, b, dd]).unwrap();
         p.indent(&[b, dd]).unwrap();
-        p.set_preds(dd, parse_preds("4", D).unwrap()).unwrap();
+        p.set_preds(dd, parse_preds("4", &crate::Options::default()).unwrap()).unwrap();
         let sch = schedule(&p).unwrap();
         let t = |id| sch.tasks[&id];
         assert_eq!((t(sub).start, t(sub).finish), (date("2026-01-05"), date("2026-01-06")));
@@ -943,7 +943,7 @@ mod tests {
         let a = p.add_task("A", 3 * D).unwrap();
         let m = p.add_task("M", 0).unwrap();
         let k = p.add_task("K", 0).unwrap();
-        p.set_preds(m, parse_preds("1", D).unwrap()).unwrap();
+        p.set_preds(m, parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
         p.task_mut(k).unwrap().constraint = Constraint::StartNoEarlierThan(date("2026-01-12"));
         let s = schedule(&p).unwrap();
         assert_eq!((s.tasks[&a].start_at, s.tasks[&a].finish_at), (at("2026-01-05", 8, 0), at("2026-01-07", 17, 0)));
@@ -958,8 +958,8 @@ mod tests {
         let a = p.add_task("A", 240).unwrap();
         let b = p.add_task("B", D).unwrap();
         let c = p.add_task("C", 90).unwrap();
-        p.set_preds(b, parse_preds("1", D).unwrap()).unwrap();
-        p.set_preds(c, parse_preds("2FS+30m", D).unwrap()).unwrap();
+        p.set_preds(b, parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
+        p.set_preds(c, parse_preds("2FS+30m", &crate::Options::default()).unwrap()).unwrap();
         let s = schedule(&p).unwrap();
         // A Mon 8:00–12:00; B from 13:00, a working day, to Tue 12:00; C 30 minutes later, 13:30–15:00.
         assert_eq!(s.tasks[&a].finish_at, at("2026-01-05", 12, 0));
@@ -1012,7 +1012,7 @@ mod tests {
             let kinds = [LinkKind::FS, LinkKind::SS, LinkKind::FF, LinkKind::SF];
             for (succ, pred, kind, lag) in links {
                 if let Some(&id) = ids.get(succ) {
-                    p.task_mut(id).unwrap().preds.push(crate::Link { pred: TaskId(pred), kind: kinds[usize::from(kind)], lag: lag * D });
+                    p.task_mut(id).unwrap().preds.push(crate::Link { pred: TaskId(pred), kind: kinds[usize::from(kind)], lag: lag * D, lag_unit: crate::DurationUnit::Days });
                 }
             }
             for (row, ty, day) in constraints {
@@ -1059,7 +1059,7 @@ mod tests {
             p.task_mut(id).unwrap().outline_level = depth + 1;
         }
         p.task_mut(a).unwrap().constraint = Constraint::MustStartOn(date("2026-01-05"));
-        p.set_preds(b, parse_preds(&a.0.to_string(), D).unwrap()).unwrap();
+        p.set_preds(b, parse_preds(&a.0.to_string(), &crate::Options::default()).unwrap()).unwrap();
         let first = schedule(&p).unwrap();
         assert_eq!(first, schedule(&p).unwrap());
         let outer = p.tasks[0].id;
@@ -1089,7 +1089,7 @@ mod tests {
             let kinds = [LinkKind::FS, LinkKind::SS, LinkKind::FF, LinkKind::SF];
             for (succ, pred, kind, lag) in links {
                 if let Some(&id) = ids.get(succ) {
-                    p.task_mut(id).unwrap().preds.push(crate::Link { pred: TaskId(pred), kind: kinds[usize::from(kind)], lag: lag * D });
+                    p.task_mut(id).unwrap().preds.push(crate::Link { pred: TaskId(pred), kind: kinds[usize::from(kind)], lag: lag * D, lag_unit: crate::DurationUnit::Days });
                 }
             }
             for (row, ty, day) in constraints {

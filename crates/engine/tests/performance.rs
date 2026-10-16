@@ -80,7 +80,7 @@ fn plan(n: usize, seed: u64) -> Project {
             match level {
                 2 => {
                     if let Some(prev) = prev_package {
-                        p.set_preds(id, vec![Link { pred: prev, kind: LinkKind::FS, lag: 0 }]).unwrap();
+                        p.set_preds(id, vec![Link { pred: prev, kind: LinkKind::FS, lag: 0, lag_unit: Default::default() }]).unwrap();
                     }
                     prev_package = Some(id);
                 }
@@ -122,7 +122,7 @@ fn plan(n: usize, seed: u64) -> Project {
                                 15..18 => LinkKind::FF,
                                 _ => LinkKind::SF,
                             };
-                            links.push(Link { pred, kind, lag: (rng.below(6) as i64 - 2) * DAY });
+                            links.push(Link { pred, kind, lag: (rng.below(6) as i64 - 2) * DAY, lag_unit: Default::default() });
                         }
                     }
                     p.set_preds(id, links).unwrap();

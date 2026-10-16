@@ -23,7 +23,7 @@ fn levels(s: &Session) -> Vec<u32> {
 }
 
 fn preds(s: &Session, id: u32) -> String {
-    preds_text(&s.project.task(TaskId(id)).unwrap().preds, s.project.minutes_per_day())
+    preds_text(&s.project.task(TaskId(id)).unwrap().preds, &s.project.options)
 }
 
 fn rows_text(s: &Session, id: u32) -> String {
@@ -53,7 +53,7 @@ fn worked_example_unique_ids_kept_and_links_survive_reorder() {
         v.sort();
         v
     };
-    let links_before: Vec<String> = s.project.tasks.iter().map(|t| preds_text(&t.preds, 480)).collect();
+    let links_before: Vec<String> = s.project.tasks.iter().map(|t| preds_text(&t.preds, &Default::default())).collect();
     let dates_before = s.schedule.as_ref().unwrap().tasks.clone();
     // Network cabling (Unique ID 5, row 5) moves above Survey the new floor (row 2).
     s.run("task.move", &json!({"ids": [5], "to": 2})).unwrap();
@@ -71,7 +71,7 @@ fn worked_example_unique_ids_kept_and_links_survive_reorder() {
     let by_id: Vec<String> = {
         let mut ts = s.project.tasks.clone();
         ts.sort_by_key(|t| t.id);
-        ts.iter().map(|t| preds_text(&t.preds, 480)).collect()
+        ts.iter().map(|t| preds_text(&t.preds, &Default::default())).collect()
     };
     assert_eq!(by_id, links_before);
     assert_eq!(s.schedule.as_ref().unwrap().tasks, dates_before, "same plan, same dates");

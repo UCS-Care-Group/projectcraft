@@ -247,7 +247,7 @@ mod tests {
     fn indenting_under_a_linked_predecessor_is_circular() {
         // Worked example 10's shape: T2 follows T1; indenting T2 under T1 would link a summary to its own subtask.
         let (mut p, ids) = project(&[1, 1]);
-        p.set_preds(ids[1], parse_preds("1", 480).unwrap()).unwrap();
+        p.set_preds(ids[1], parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
         assert_eq!(p.indent(&[ids[1]]).unwrap_err().to_string(), CIRCULAR_OUTLINE);
         assert_eq!(levels(&p), [1, 1]);
     }
@@ -256,7 +256,7 @@ mod tests {
     fn an_outdent_that_adopts_a_linked_successor_is_circular() {
         // T4 follows T2. Outdenting T2 makes T4, below it, its subtask: a summary linked to its own subtask.
         let (mut p, ids) = project(&[1, 2, 3, 2]);
-        p.set_preds(ids[3], parse_preds("2", 480).unwrap()).unwrap();
+        p.set_preds(ids[3], parse_preds("2", &crate::Options::default()).unwrap()).unwrap();
         assert_eq!(p.outdent(&[ids[1]]).unwrap_err().to_string(), CIRCULAR_OUTLINE);
         assert_eq!(levels(&p), [1, 2, 3, 2]);
     }
@@ -264,20 +264,20 @@ mod tests {
     #[test]
     fn a_linked_task_may_become_a_summary_but_never_link_to_its_own_subtask() {
         let (mut p, ids) = project(&[1, 1, 1]);
-        p.set_preds(ids[1], parse_preds("1", 480).unwrap()).unwrap();
+        p.set_preds(ids[1], parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
         p.indent(&[ids[2]]).unwrap();
         assert!(p.is_summary(ids[1]));
         // Either way round, at any depth; links outside the summary are fine.
         let (mut p, ids) = project(&[1, 2, 3, 1]);
         for (succ, pred) in [(0, "2"), (0, "3"), (1, "1"), (2, "1"), (2, "2"), (1, "3")] {
-            let e = p.set_preds(ids[succ], parse_preds(pred, 480).unwrap()).unwrap_err();
+            let e = p.set_preds(ids[succ], parse_preds(pred, &crate::Options::default()).unwrap()).unwrap_err();
             assert_eq!(e.to_string(), CIRCULAR_OUTLINE, "row {} after {pred}", succ + 1);
         }
-        p.set_preds(ids[3], parse_preds("1, 3", 480).unwrap()).unwrap();
+        p.set_preds(ids[3], parse_preds("1, 3", &crate::Options::default()).unwrap()).unwrap();
         p.set_preds(ids[0], vec![]).unwrap();
         let (mut p, ids) = project(&[1, 2, 1]);
-        p.set_preds(ids[0], parse_preds("3", 480).unwrap()).unwrap();
-        p.set_preds(ids[1], parse_preds("3", 480).unwrap()).unwrap();
+        p.set_preds(ids[0], parse_preds("3", &crate::Options::default()).unwrap()).unwrap();
+        p.set_preds(ids[1], parse_preds("3", &crate::Options::default()).unwrap()).unwrap();
     }
 
     proptest::proptest! {

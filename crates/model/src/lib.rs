@@ -16,7 +16,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-pub use duration::{DAYS_PER_MONTH, DAYS_PER_WEEK, parse_duration};
+pub use duration::{DurationUnit, duration_text, lag_text, parse_duration, parse_lag};
 pub use outline::{CIRCULAR_OUTLINE, MAX_OUTLINE_LEVEL, Outline};
 pub use projectcraft_time::Date;
 pub use resource::{
@@ -79,6 +79,9 @@ pub struct Link {
     /// Working minutes; negative is lead.
     #[serde(default)]
     pub lag: i64,
+    /// The unit the lag was typed in, to show it the same way. A file without one has days.
+    #[serde(default, skip_serializing_if = "DurationUnit::is_days")]
+    pub lag_unit: DurationUnit,
 }
 
 /// A date rule on a task's start or finish, as Microsoft Project's Constraint Type field.
@@ -177,6 +180,10 @@ pub struct Task {
     /// Working minutes; 0 is a milestone. A day of duration is the project's hours per day
     /// ([`Options::minutes_per_day`]).
     pub duration: i64,
+    /// The unit the duration was typed in, to show it the same way (`4h` stays `4h`). A file
+    /// without one has days.
+    #[serde(default, skip_serializing_if = "DurationUnit::is_days")]
+    pub duration_unit: DurationUnit,
     #[serde(default)]
     pub preds: Vec<Link>,
     #[serde(default, skip_serializing_if = "Constraint::is_asap")]
@@ -548,23 +555,37 @@ impl Project {
     /// Predecessors as the Predecessors column shows them: by row ID. A link to a missing task
     /// (only a damaged file could hold one) shows as `?`.
     pub fn preds_text_rows(&self, preds: &[Link]) -> String {
-        let day = self.minutes_per_day();
         let one = |l: &Link| match self.row_of(l.pred) {
-            Some(row) => link_text(row, l, day),
-            None => link_text('?', l, day),
+            Some(row) => link_text(row, l, &self.options),
+            None => link_text('?', l, &self.options),
         };
         preds.iter().map(one).collect::<Vec<_>>().join(", ")
     }
 
     /// Reads the Predecessors column: row IDs, returned as links by Unique ID.
     pub fn parse_preds_rows(&self, text: &str) -> Result<Vec<Link>, ModelError> {
-        parse_preds(text, self.minutes_per_day())?
+        parse_preds(text, &self.options)?
             .into_iter()
             .map(|l| {
                 let pred = self.task_at_row(l.pred.0).ok_or_else(|| ModelError::Invalid(format!("no task with ID {}", l.pred)))?;
                 Ok(Link { pred, ..l })
             })
             .collect()
+    }
+
+    /// The Predecessors column's text with each row ID turned into its task's Unique ID and every
+    /// lag kept exactly as typed (`2SS+1.33d`), for `task.setPredecessors`. Refuses what
+    /// [`Project::parse_preds_rows`] refuses.
+    pub fn preds_rows_to_ids(&self, text: &str) -> Result<String, ModelError> {
+        self.parse_preds_rows(text)?;
+        let parts = text.split([',', ';']).map(str::trim).filter(|p| !p.is_empty()).map(|part| {
+            let digits = part.find(|c: char| !c.is_ascii_digit()).unwrap_or(part.len());
+            let (row, rest) = (part.get(..digits).unwrap_or(""), part.get(digits..).unwrap_or(""));
+            let id =
+                row.parse::<u32>().ok().and_then(|r| self.task_at_row(r)).ok_or_else(|| ModelError::Invalid(format!("no task with ID {row}")))?;
+            Ok(format!("{id}{rest}"))
+        });
+        Ok(parts.collect::<Result<Vec<_>, ModelError>>()?.join(", "))
     }
 
     /// Replaces a task's predecessors, refusing links to missing tasks, to itself, between a
@@ -617,59 +638,40 @@ pub fn days_text(minutes: i64, minutes_per_day: i64) -> String {
     }
 }
 
-/// Predecessors by Unique ID, as commands take them: `3, 5SS+2, 7FF-1`, lags in days of
-/// `minutes_per_day` (in hours or minutes when not whole days: `4FS+4h`).
-pub fn preds_text(preds: &[Link], minutes_per_day: i64) -> String {
-    preds.iter().map(|l| link_text(l.pred, l, minutes_per_day)).collect::<Vec<_>>().join(", ")
+/// Predecessors by Unique ID: `3, 5SS+2, 7FF-1, 8FS+4h`, each lag in the unit it was typed in
+/// at the project's `options` (to two decimals; days without a suffix).
+pub fn preds_text(preds: &[Link], options: &Options) -> String {
+    preds.iter().map(|l| link_text(l.pred, l, options)).collect::<Vec<_>>().join(", ")
 }
 
 /// One link, its predecessor written as `pred`.
-fn link_text(pred: impl fmt::Display, l: &Link, minutes_per_day: i64) -> String {
+fn link_text(pred: impl fmt::Display, l: &Link, options: &Options) -> String {
     let kind = match l.kind {
         LinkKind::FS if l.lag == 0 => String::new(),
         k => format!("{k:?}"),
     };
-    let day = minutes_per_day.max(1);
-    let lag = match l.lag {
-        0 => String::new(),
-        m if m % day == 0 => format!("{:+}", m / day),
-        m if m % 60 == 0 => format!("{:+}h", m / 60),
-        m => format!("{m:+}m"),
-    };
-    format!("{pred}{kind}{lag}")
+    format!("{pred}{kind}{}", lag_text(l.lag, l.lag_unit, options))
 }
 
-/// Reads what [`preds_text`] writes. A lag is in days of `minutes_per_day`, with an optional
-/// `d`; `h` (hours) and `m` (minutes) are read too, so a lag that isn't whole days round-trips.
-pub fn parse_preds(text: &str, minutes_per_day: i64) -> Result<Vec<Link>, ModelError> {
+/// Reads the Predecessors text by Unique ID, as commands take it: `3, 5ss+2, 7FF-1d, 8FS+4h`. A
+/// lag is a number with an optional sign and unit ([`parse_lag`]): days when it has none.
+pub fn parse_preds(text: &str, options: &Options) -> Result<Vec<Link>, ModelError> {
     let bad = |p: &str| ModelError::Invalid(format!("not a predecessor: {}", p.chars().take(40).collect::<String>()));
-    let day = minutes_per_day.max(1);
     let mut out = Vec::new();
     for part in text.split([',', ';']).map(str::trim).filter(|p| !p.is_empty()) {
         let digits = part.find(|c: char| !c.is_ascii_digit()).unwrap_or(part.len());
-        let (id, rest) = part.split_at(digits);
+        let (id, rest) = (part.get(..digits).unwrap_or(""), part.get(digits..).unwrap_or("").trim_start());
         let pred = TaskId(id.parse().map_err(|_| bad(part))?);
-        let upper = rest.to_ascii_uppercase();
-        let (kind, lag) = match upper.get(..2) {
-            Some("FS") => (LinkKind::FS, &rest[2..]),
-            Some("SS") => (LinkKind::SS, &rest[2..]),
-            Some("FF") => (LinkKind::FF, &rest[2..]),
-            Some("SF") => (LinkKind::SF, &rest[2..]),
-            _ => (LinkKind::FS, rest),
+        let kind = match rest.get(..2).map(str::to_ascii_uppercase).as_deref() {
+            Some("FS") => Some(LinkKind::FS),
+            Some("SS") => Some(LinkKind::SS),
+            Some("FF") => Some(LinkKind::FF),
+            Some("SF") => Some(LinkKind::SF),
+            _ => None,
         };
-        let lag = lag.trim();
-        let (num, unit) = match lag.char_indices().last() {
-            Some((i, c)) if c.is_ascii_alphabetic() => (lag.get(..i).unwrap_or("").trim(), c.to_ascii_lowercase()),
-            _ => (lag, 'd'),
-        };
-        let n = if num.is_empty() { 0 } else { num.trim_start_matches('+').parse::<i64>().map_err(|_| bad(part))? };
-        let size = match unit {
-            'd' => check_days(n.saturating_abs())? * day,
-            'h' => check_minutes(n.saturating_abs().saturating_mul(60))?,
-            'm' => check_minutes(n.saturating_abs())?,
-            _ => return Err(bad(part)),
-        };
-        out.push(Link { pred, kind, lag: size * n.signum() });
+        let lag = if kind.is_some() { rest.get(2..).unwrap_or("") } else { rest }.trim();
+        let (lag, lag_unit) = if lag.is_empty() { (0, DurationUnit::Days) } else { parse_lag(lag, options)? };
+        out.push(Link { pred, kind: kind.unwrap_or_default(), lag, lag_unit });
     }
     Ok(out)
 }
@@ -681,21 +683,59 @@ mod tests {
     /// A day of duration at the default 8 hours.
     const D: i64 = 480;
 
+    /// The default options: 8 hours a day, 40 a week, 20 days a month.
+    const O: Options = Options { minutes_per_day: 480, minutes_per_week: 2400, days_per_month: 20 };
+
+    fn link(pred: u32, kind: LinkKind, lag: i64, lag_unit: DurationUnit) -> Link {
+        Link { pred: TaskId(pred), kind, lag, lag_unit }
+    }
+
     #[test]
     fn predecessor_text_round_trips() {
-        let links = parse_preds("3, 5ss+2, 7FF-1d;9", D).unwrap();
+        let links = parse_preds("3, 5ss+2, 7FF-1d;9", &O).unwrap();
         assert_eq!(links[1].lag, 2 * D, "lags are working minutes");
-        assert_eq!(preds_text(&links, D), "3, 5SS+2, 7FF-1, 9");
-        assert!(parse_preds("x", D).is_err());
-        assert!(parse_preds("1FS+999999999999999999999", D).is_err());
-        assert!(parse_preds(&format!("1FS+{}", MAX_DAYS + 1), D).is_err(), "the day cap holds");
-        assert!(parse_preds("1FS+3w", D).is_err());
-        assert_eq!(parse_preds("", D).unwrap(), vec![]);
-        // A lag that isn't whole days (the hours per day changed) is written exactly and reads back.
-        let odd = vec![Link { pred: TaskId(2), kind: LinkKind::SS, lag: 960 }, Link { pred: TaskId(3), kind: LinkKind::FS, lag: -90 }];
-        assert_eq!(preds_text(&odd, 450), "2SS+16h, 3FS-90m");
-        assert_eq!(parse_preds(&preds_text(&odd, 450), 450).unwrap(), odd);
-        assert_eq!(preds_text(&odd, 480), "2SS+2, 3FS-90m");
+        assert_eq!(preds_text(&links, &O), "3, 5SS+2, 7FF-1, 9");
+        assert!(parse_preds("x", &O).is_err());
+        assert!(parse_preds("1FS+x", &O).is_err());
+        assert!(parse_preds("1d", &O).is_err(), "a unit needs a number");
+        assert_eq!(parse_preds("1FS+999999999999999999999", &O).unwrap()[0].lag, MAX_MINUTES, "clamped, as a duration is");
+        assert_eq!(parse_preds("", &O).unwrap(), vec![]);
+        assert!(parse_preds("1FS+3ed", &O).unwrap_err().to_string().contains("elapsed lags aren't supported yet"));
+        assert!(parse_preds("1SS+50%", &O).unwrap_err().to_string().contains("percent lags aren't supported yet"));
+        // Part-day lags keep the unit typed.
+        let part = parse_preds("2SS+4h, 3FS-1.5d, 4FF+30m, 5SF+1w, 6+1mo, 7 FS + 2 hrs", &O).unwrap();
+        assert_eq!(
+            part,
+            vec![
+                link(2, LinkKind::SS, 240, DurationUnit::Hours),
+                link(3, LinkKind::FS, -720, DurationUnit::Days),
+                link(4, LinkKind::FF, 30, DurationUnit::Minutes),
+                link(5, LinkKind::SF, 2400, DurationUnit::Weeks),
+                link(6, LinkKind::FS, 9600, DurationUnit::Months),
+                link(7, LinkKind::FS, 120, DurationUnit::Hours),
+            ]
+        );
+        assert_eq!(preds_text(&part, &O), "2SS+4h, 3FS-1.5, 4FF+30m, 5SF+1w, 6FS+1mo, 7FS+2h");
+        assert_eq!(parse_preds(&preds_text(&part, &O), &O).unwrap(), part);
+        // Days show at the hours per day in force: 960 minutes is 2 days at 8 hours, 2.13 at 7.5.
+        let odd = vec![link(2, LinkKind::SS, 960, DurationUnit::Days)];
+        assert_eq!(preds_text(&odd, &Options { minutes_per_day: 450, ..O }), "2SS+2.13");
+        assert_eq!(preds_text(&odd, &O), "2SS+2");
+    }
+
+    #[test]
+    fn row_ids_become_unique_ids_with_lags_as_typed() {
+        let mut p = Project::new("t", Date::from_ymd(2026, 1, 5).unwrap());
+        let a = p.add_task("a", D).unwrap();
+        for n in ["b", "c"] {
+            p.add_task(n, D).unwrap();
+        }
+        p.delete_tasks(&[a]).unwrap();
+        // Rows 1 and 2 are Unique IDs 2 and 3.
+        assert_eq!(p.preds_rows_to_ids(" 1SS+1.33d; 2fs-4h ").unwrap(), "2SS+1.33d, 3fs-4h");
+        assert_eq!(p.preds_rows_to_ids("").unwrap(), "");
+        assert!(p.preds_rows_to_ids("3").is_err());
+        assert!(p.preds_rows_to_ids("1FS+2x").is_err());
     }
 
     #[test]
@@ -713,11 +753,11 @@ mod tests {
         let mut p = Project::new("t", Date::from_ymd(2026, 1, 5).unwrap());
         let a = p.add_task("a", D).unwrap();
         let b = p.add_task("b", D).unwrap();
-        p.set_preds(b, parse_preds("1", D).unwrap()).unwrap();
-        assert!(matches!(p.set_preds(a, parse_preds("2", D).unwrap()), Err(ModelError::Cycle(_))));
+        p.set_preds(b, parse_preds("1", &O).unwrap()).unwrap();
+        assert!(matches!(p.set_preds(a, parse_preds("2", &O).unwrap()), Err(ModelError::Cycle(_))));
         assert!(p.task(a).unwrap().preds.is_empty());
-        assert!(p.set_preds(a, parse_preds("1", D).unwrap()).is_err());
-        assert!(p.set_preds(a, parse_preds("42", D).unwrap()).is_err());
+        assert!(p.set_preds(a, parse_preds("1", &O).unwrap()).is_err());
+        assert!(p.set_preds(a, parse_preds("42", &O).unwrap()).is_err());
     }
 
     #[test]
@@ -730,17 +770,17 @@ mod tests {
         p.delete_tasks(&[a]).unwrap();
         assert_eq!((p.row_of(b), p.row_of(c), p.row_of(a)), (Some(1), Some(2), None));
         let links = p.parse_preds_rows("1SS+2").unwrap();
-        assert_eq!(links, vec![Link { pred: b, kind: LinkKind::SS, lag: 2 * D }]);
+        assert_eq!(links, vec![Link { pred: b, kind: LinkKind::SS, lag: 2 * D, lag_unit: DurationUnit::Days }]);
         p.set_preds(c, links).unwrap();
         assert_eq!(p.preds_text_rows(&p.task(c).unwrap().preds), "1SS+2");
-        assert_eq!(preds_text(&p.task(c).unwrap().preds, D), "2SS+2", "stored by Unique ID");
+        assert_eq!(preds_text(&p.task(c).unwrap().preds, &O), "2SS+2", "stored by Unique ID");
         // Moving rows renumbers the column; the link still points at b.
         p.tasks.swap(0, 1);
         assert_eq!(p.preds_text_rows(&p.task(c).unwrap().preds), "2SS+2");
         assert_eq!(p.task(c).unwrap().preds[0].pred, b);
         assert!(p.parse_preds_rows("3").is_err());
         assert!(p.parse_preds_rows("0").is_err());
-        assert_eq!(p.preds_text_rows(&[Link { pred: TaskId(99), kind: LinkKind::FF, lag: -D }]), "?FF-1");
+        assert_eq!(p.preds_text_rows(&[link(99, LinkKind::FF, -D, DurationUnit::Days)]), "?FF-1");
         // A deleted Unique ID is never handed out again.
         assert_eq!(p.add_task("d", D).unwrap(), TaskId(4));
     }
@@ -863,7 +903,7 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn parse_preds_never_panics(s in "\\PC{0,40}") {
-            let _ = parse_preds(&s, D);
+            let _ = parse_preds(&s, &O);
             let mut p = Project::new("t", Date::from_ymd(2026, 1, 5).unwrap());
             p.add_task("a", D).unwrap();
             if let Ok(links) = p.parse_preds_rows(&s) {

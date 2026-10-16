@@ -11,7 +11,7 @@
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{
-    MAX_WORKING_TIMES, Outline, TaskId, WorkingTime, check_working_times, clock, days_text, parse_clock, parse_duration, preds_text,
+    DurationUnit, MAX_WORKING_TIMES, Outline, TaskId, WorkingTime, check_working_times, clock, duration_text, parse_clock,
 };
 use projectcraft_engine::{Session, WEEKDAYS, time::Date};
 use serde_json::{Value, json};
@@ -510,7 +510,7 @@ impl App {
         Some(match field {
             Field::Name => t.name.clone(),
             Field::Duration if p.is_summary(id) => return None,
-            Field::Duration => format!("{}d", days_text(t.duration, p.minutes_per_day())),
+            Field::Duration => duration_text(t.duration, t.duration_unit, &p.options),
             Field::Start => date(dates.map(|d| d.start)),
             Field::Finish => date(dates.map(|d| d.finish)),
             Field::Preds => p.preds_text_rows(&t.preds),
@@ -527,20 +527,19 @@ impl App {
             Field::Name => {
                 self.run("task.rename", json!({"id": id.0, "name": text}));
             }
-            Field::Duration => match parse_duration(&text) {
-                Ok(d) => {
-                    self.run("task.setDuration", json!({"id": id.0, "duration": d}));
-                }
-                Err(e) => self.status = e.to_string(),
-            },
+            Field::Duration => {
+                // The text as typed: the command reads its unit, and keeps it for display.
+                self.run("task.setDuration", json!({"id": id.0, "duration": text.trim()}));
+            }
             Field::Start | Field::Finish | Field::Deadline => {
                 if let Some((cmd, params)) = typed_date(field, id, &text) {
                     self.run(cmd, params);
                 }
             }
-            Field::Preds => match self.session.project.parse_preds_rows(&text) {
-                Ok(links) => {
-                    self.run("task.setPredecessors", json!({"id": id.0, "text": preds_text(&links, self.session.project.minutes_per_day())}));
+            // Row IDs become Unique IDs; each lag goes as typed, so it keeps its unit and value.
+            Field::Preds => match self.session.project.preds_rows_to_ids(&text) {
+                Ok(by_id) => {
+                    self.run("task.setPredecessors", json!({"id": id.0, "text": by_id}));
                 }
                 Err(e) => self.status = e.to_string(),
             },
@@ -818,7 +817,8 @@ impl App {
                 ] {
                     let lead = if field == Field::Name { indent } else { 0.0 };
                     let value = self.cell_text(id, field);
-                    let shown = value.clone().unwrap_or_else(|| format!("{}d", days_text(duration, self.session.project.minutes_per_day())));
+                    // A summary's rolled-up duration shows in days.
+                    let shown = value.clone().unwrap_or_else(|| duration_text(duration, DurationUnit::Days, &self.session.project.options));
                     let inner = ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.add_space(lead);
@@ -957,9 +957,10 @@ fn gantt_bar(
     // Through the gaps between rows too, so the shading runs top to bottom unbroken.
     timescale::shade(ui, rect.expand2(Vec2::new(0.0, ui.spacing().item_spacing.y / 2.0)), scale, calendar);
     let Some(d) = dates else { return };
-    // Calendar days, so weekends show as gaps. Kept within the chart, whatever a file's dates.
-    let x0 = scale.x(d.start).clamp(0.0, chart_w);
-    let x1 = scale.x(d.finish.add_days(1).unwrap_or(d.finish)).clamp(0.0, chart_w);
+    // Calendar days, so weekends show as gaps; within a day, at the moment's share of its working
+    // time (see `timescale::moment_x`). Kept within the chart, whatever a file's dates.
+    let x0 = timescale::moment_x(scale, calendar, d.start_at).clamp(0.0, chart_w);
+    let x1 = timescale::moment_x(scale, calendar, d.finish_at).clamp(0.0, chart_w);
     // The deadline marker sits at the end of its day, as a finish does; a date off the chart
     // (a hostile one in year 9999) isn't drawn.
     let marker = deadline.and_then(|dl| timescale::end_of_day_x(scale, dl, chart_w));
@@ -976,7 +977,7 @@ fn gantt_bar(
             p.add(egui::Shape::convex_polygon(vec![egui::pos2(outer, bottom), egui::pos2(inner, bottom), tip], t.bar_summary, Stroke::NONE));
         }
     } else if shape == Bar::Milestone {
-        let c = egui::pos2(rect.left() + x1, rect.center().y); // the end of its day
+        let c = egui::pos2(rect.left() + x1, rect.center().y); // its moment
         let r = ROW_H * 0.3;
         p.add(egui::Shape::convex_polygon(
             vec![c + Vec2::new(0.0, -r), c + Vec2::new(r, 0.0), c + Vec2::new(0.0, r), c + Vec2::new(-r, 0.0)],
@@ -984,7 +985,9 @@ fn gantt_bar(
             Stroke::NONE,
         ));
     } else {
-        let bar = egui::Rect::from_min_max(egui::pos2(rect.left() + x0, rect.top() + 5.0), egui::pos2(rect.left() + x1, rect.bottom() - 5.0));
+        // At least 2 points wide, so a task of minutes still shows at the coarsest zoom.
+        let bar =
+            egui::Rect::from_min_max(egui::pos2(rect.left() + x0, rect.top() + 5.0), egui::pos2(rect.left() + x1.max(x0 + 2.0), rect.bottom() - 5.0));
         p.rect_filled(bar, 2.0, colour);
     }
     if let Some(x) = marker {
@@ -1297,6 +1300,22 @@ mod tests {
         typed(&mut h, "2w");
         key(&mut h, Modifiers::NONE, Key::Enter);
         assert_eq!(h.state().session.project.tasks[2].duration, 10 * 480, "ten 8-hour days, in working minutes");
+        assert_eq!(h.state().cell_text(TaskId(3), Field::Duration).as_deref(), Some("2w"), "shown in the unit typed");
+        // Part-day durations and lags keep their unit.
+        key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        typed(&mut h, "1.5d");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().session.project.tasks[2].duration, 720);
+        assert_eq!(h.state().cell_text(TaskId(3), Field::Duration).as_deref(), Some("1.5d"));
+        key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        typed(&mut h, "4h");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().cell_text(TaskId(3), Field::Duration).as_deref(), Some("4h"));
+        key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        typed(&mut h, "3ed");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert!(h.state().status.contains("elapsed durations aren't supported yet"), "{}", h.state().status);
+        assert_eq!(h.state().cell_text(TaskId(3), Field::Duration).as_deref(), Some("4h"));
         // Enter alone moves down too.
         key(&mut h, Modifiers::NONE, Key::Enter);
         assert_eq!(picked(&h), [5]);

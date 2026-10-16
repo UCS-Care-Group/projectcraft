@@ -6,7 +6,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::{CIRCULAR_OUTLINE, Constraint, MAX_OUTLINE_LEVEL, MAX_TASKS, ModelError, Outline, Project, Task, TaskId, check_minutes, schedule};
+use crate::{
+    CIRCULAR_OUTLINE, Constraint, DurationUnit, MAX_OUTLINE_LEVEL, MAX_TASKS, ModelError, Outline, Project, Task, TaskId, check_minutes, schedule,
+};
 
 impl Project {
     /// Inserts a task above `before` at that row's outline level, or at the end at the last row's
@@ -104,7 +106,16 @@ impl Project {
         let duration = check_minutes(duration)?;
         let id = TaskId(self.next_id.max(1));
         self.next_id = id.0.checked_add(1).ok_or_else(|| ModelError::Invalid("out of task ids".into()))?;
-        Ok(Task { id, name, duration, preds: Vec::new(), constraint: Constraint::Asap, outline_level, deadline: None })
+        Ok(Task {
+            id,
+            name,
+            duration,
+            duration_unit: DurationUnit::Days,
+            preds: Vec::new(),
+            constraint: Constraint::Asap,
+            outline_level,
+            deadline: None,
+        })
     }
 
     /// The 0-based row of a task.
@@ -152,7 +163,7 @@ mod tests {
     fn a_move_that_links_a_summary_to_its_own_subtask_is_refused() {
         // T3 follows T1; moving it above T2 would make it T1's subtask.
         let (mut p, ids) = project(&[1, 2, 1]);
-        p.set_preds(ids[2], parse_preds("1", 480).unwrap()).unwrap();
+        p.set_preds(ids[2], parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
         let before = p.clone();
         assert_eq!(p.move_tasks(&[ids[2]], Some(ids[1])).unwrap_err().to_string(), CIRCULAR_OUTLINE);
         assert_eq!(p, before);

@@ -3,7 +3,7 @@
 use std::process::ExitCode;
 
 use projectcraft_engine::Session;
-use projectcraft_engine::model::{days_text, preds_text};
+use projectcraft_engine::model::{days_text, duration_text, preds_text};
 use serde_json::Value;
 
 const USAGE: &str = "\
@@ -83,14 +83,14 @@ fn run(args: Vec<String>) -> Result<(), String> {
                 // Subtasks indent two spaces a level.
                 let name = format!("{}{}", "  ".repeat(level.saturating_sub(1).min(20) as usize), t.name);
                 println!(
-                    "{:>4}{crit} {:<28} {:>4}d  {}  {}  {:>5}{warn} {}",
+                    "{:>4}{crit} {:<28} {:>6}  {}  {}  {:>5}{warn} {}",
                     t.id,
                     name,
-                    days_text(t.duration, day),
+                    duration_text(t.duration, t.duration_unit, &s.project.options),
                     d.start,
                     d.finish,
                     days_text(d.slack, day),
-                    preds_text(&t.preds, day)
+                    preds_text(&t.preds, &s.project.options)
                 );
             }
             Ok(())

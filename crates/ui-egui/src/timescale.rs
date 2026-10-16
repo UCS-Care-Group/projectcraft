@@ -7,7 +7,7 @@
 //! spanning decades costs no more to draw than one spanning a month.
 
 use egui::{FontId, Rect, Stroke, pos2};
-use projectcraft_engine::model::Calendar;
+use projectcraft_engine::model::{Calendar, MINUTES_IN_DAY, Moment, minutes_of};
 use projectcraft_engine::time::Date;
 
 use crate::theme::Tokens;
@@ -274,6 +274,25 @@ pub fn in_range(scale: Scale, d: Date) -> bool {
     (0..MAX_CHART_DAYS).contains(&d.days_since(scale.origin))
 }
 
+/// The x of a moment (a task's start or finish). Within its day, a moment sits at its share of
+/// the day's working time: the day's first working minute is the left edge of its column and the
+/// end of its last the right edge, so a whole-day task fills its days and a 4-hour task in an
+/// 8-hour day half of one, and the lunch hour takes no width (12:00 and 13:00 are both half way).
+/// Microsoft does not document how bars sit within a day; this keeps whole days as they were and
+/// shows each part-day in proportion to the working time it is. A day with no working time (only a
+/// damaged file could put a moment there) is spread over the 24 hours.
+pub fn moment_x(scale: Scale, calendar: &Calendar, m: Moment) -> f32 {
+    let times = calendar.times_on(m.date);
+    let total = minutes_of(times);
+    let share = if total == 0 {
+        f32::from(m.minute.min(MINUTES_IN_DAY)) / f32::from(MINUTES_IN_DAY)
+    } else {
+        let before: u32 = times.iter().map(|t| u32::from(m.minute.clamp(t.from, t.to) - t.from)).sum();
+        before as f32 / total as f32
+    };
+    scale.x(m.date) + share * scale.day_w
+}
+
 /// The x of the end of `d` (where a finish or a deadline is drawn), if it is on a chart
 /// `chart_w` wide.
 pub fn end_of_day_x(scale: Scale, d: Date, chart_w: f32) -> Option<f32> {
@@ -396,6 +415,24 @@ mod tests {
         // A deadline the chart is widened for is drawn.
         let far = date("2027-06-30");
         assert!(end_of_day_x(s, far, chart_width(s, far, 0.0)).is_some());
+    }
+
+    #[test]
+    fn moments_sit_at_their_share_of_the_day_s_working_time() {
+        let s = Scale::for_project(date("2026-11-04"), 16.0);
+        let cal = Calendar::default(); // 8:00-12:00, 13:00-17:00
+        let at = |d: &str, h: u16, m: u16| moment_x(s, &cal, Moment { date: date(d), minute: h * 60 + m });
+        let x = s.x(date("2026-11-04"));
+        assert_eq!(at("2026-11-04", 8, 0), x, "the first working minute is the left edge");
+        assert_eq!(at("2026-11-04", 6, 0), x, "before it too");
+        assert_eq!(at("2026-11-04", 17, 0), x + 16.0, "the end of the last is the right edge");
+        assert_eq!(at("2026-11-04", 12, 0), x + 8.0);
+        assert_eq!(at("2026-11-04", 13, 0), x + 8.0, "the lunch hour takes no width");
+        assert_eq!(at("2026-11-04", 10, 0), x + 4.0);
+        assert_eq!(at("2026-11-04", 15, 0), x + 12.0);
+        // A day with no working time (a Saturday) is spread over the 24 hours.
+        assert_eq!(at("2026-11-07", 12, 0), s.x(date("2026-11-07")) + 8.0);
+        assert_eq!(moment_x(s, &cal, Moment { date: date("2026-11-07"), minute: u16::MAX }), s.x(date("2026-11-08")));
     }
 
     #[test]
