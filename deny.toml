@@ -7,7 +7,7 @@
 #   CLAUDE.md): a crate offered under "X OR GPL" is taken under X. The one non-OSI licence the
 #   tree needs is allowed for exactly the crate that needs it.
 # - bans: two versions of one crate warn (the GUI stack brings some).
-# - sources: crates.io only.
+# - sources: crates.io, and git from storytold/craft-libs alone (pinned by `rev` in Cargo.toml).
 
 [graph]
 all-features = true
@@ -55,4 +55,4 @@ wildcards = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+allow-git = ["https://github.com/storytold/craft-libs"]
