@@ -119,6 +119,7 @@ impl App {
                 self.sel = Selection::default();
                 self.resources = crate::resource_sheet::ResourceSheet::default();
                 self.status = i18n::fmt(tl!("Opened {path}"), &[("path", &path.display().to_string())]);
+                self.sweep_temps(path);
                 push_recent(&mut self.recent, path);
                 self.recent_changed = true;
                 self.check_recovery();
@@ -144,11 +145,20 @@ impl App {
         Ok(())
     }
 
+    /// Removes the temporary files that unfinished saves left beside `path`, after an open or a
+    /// save; the status bar says so when one couldn't be removed.
+    pub(crate) fn sweep_temps(&mut self, path: &Path) {
+        if projectcraft_engine::sweep_stale_temps(path).failed {
+            self.status = format!("{} · {}", self.status, tl!("Couldn't remove a temporary file left by an unfinished save"));
+        }
+    }
+
     /// Saves to `path`; true when it worked. Undo history is kept.
     fn save_to(&mut self, path: &Path) -> bool {
         match self.write_file(path) {
             Ok(()) => {
                 self.status = i18n::fmt(tl!("Saved {path}"), &[("path", &path.display().to_string())]);
+                self.sweep_temps(path);
                 true
             }
             Err(e) => {
@@ -473,5 +483,26 @@ mod tests {
             assert_eq!(a.session.project.tasks.len(), 1);
         }
         assert_eq!(a.recent, vec![junk], "the missing file is pruned; the unreadable one stays");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_leftover_temp_that_cannot_be_removed_is_noted_in_the_status_bar() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp("sweep");
+        let file = dir.join("plan.projectcraft");
+        Session::new(Project::new("Plan", projectcraft_engine::time::Date::EPOCH)).save_to(&file).unwrap();
+        let temp = std::fs::File::create(dir.join(".plan.projectcraft.4242-0.craft_tmp")).unwrap();
+        temp.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60)).unwrap();
+        let mut a = app();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let locked = std::fs::File::create(dir.join("probe")).is_err(); // root can write anyway
+        a.open_path(&file);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(a.status.starts_with("Opened"), "{}", a.status);
+        assert_eq!(a.status.contains("temporary file"), locked, "{}", a.status);
+        a.open_path(&file);
+        assert!(!a.status.contains("temporary file"), "removed once it can be: {}", a.status);
+        assert!(!dir.join(".plan.projectcraft.4242-0.craft_tmp").exists());
     }
 }
