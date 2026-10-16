@@ -23,7 +23,8 @@
 //! A milestone is a moment, not a day: at the end of a working day (after a finish-to-start link,
 //! on its predecessor's finish date) or at the start of one (constrained to start on a date, on
 //! that date). The end of one working day and the start of the next are the same working minute
-//! offset; which side it is decides the moment. See [`moments`].
+//! offset; which side it is decides the moment. A task finish-to-finish after a milestone at the
+//! start of a day finishes at that moment too, never at the end of the day before. See [`moments`].
 //!
 //! A deadline is not a constraint: it never moves a task, but caps its late finish
 //! (LF = min(LF, deadline)), so slack counts from the deadline when that is earlier, and a finish
@@ -558,12 +559,43 @@ fn moments(p: &Project, o: &Days, tree: &Tree, order: &[usize], es: &[i64], ef: 
     let mut start: Vec<Point> = es.iter().map(|&s| (s, true)).collect();
     let mut finish: Vec<Point> = ef.iter().map(|&f| (f, false)).collect();
     let mut hold: Vec<Point> = vec![(0, true); n];
+    // The latest finish each row's finish-type links (and its summaries') ask for, as a point.
+    let mut due: Vec<Point> = vec![(0, false); n];
     // A start worked back from a finish is the start of a day for a task with duration.
     let back = |o: i64, side: bool, dur: i64| (o, side || dur > 0);
     for &node in order {
         let (i, is_hold) = node.checked_sub(n).map_or((node, false), |s| (s, true));
         let Some(t) = p.tasks.get(i) else { continue };
         let kids = tree.summary(i);
+        if is_hold == kids.is_some() {
+            // A finish-to-finish link from a moment at the start of a day (a milestone there, or a
+            // finish already held to one) asks for that moment, as does a start-to-finish link from
+            // a milestone there; the end of the working minute before is earlier on the clock. A
+            // summary's ask reaches its subtasks.
+            let mut ask = tree.parent(i).and_then(|up| due.get(up).copied()).unwrap_or((0, false));
+            for l in &t.preds {
+                let Some(&j) = index.get(&l.pred) else { continue };
+                let (Some(&ps), Some(&pf)) = (start.get(j), finish.get(j)) else { continue };
+                let lag = l.lag.clamp(-MAX_MINUTES, MAX_MINUTES);
+                ask = ask.max(match l.kind {
+                    LinkKind::FF => (pf.0 + lag, pf.1),
+                    LinkKind::SF => (ps.0 + lag, ps.1 && d(j) == 0),
+                    LinkKind::FS | LinkKind::SS => continue,
+                });
+            }
+            if let Some(x) = due.get_mut(i) {
+                *x = ask;
+            }
+            // A task with duration that the forward pass finishes at that moment finishes there.
+            let f = ef.get(i).copied().unwrap_or(0);
+            if !is_hold
+                && d(i) > 0
+                && ask == (f, true)
+                && let Some(x) = finish.get_mut(i)
+            {
+                *x = ask;
+            }
+        }
         if let (Some(k), false) = (kids, is_hold) {
             // Roll-up: the earliest start and the latest finish of the subtasks.
             let s = k.iter().filter_map(|&c| start.get(c).copied()).min();
@@ -983,6 +1015,31 @@ mod tests {
         assert_eq!(s.tasks[&b].late_finish, date("2026-01-09"));
         // B must finish by Friday 12:00, so it may start as late as Thursday 12:00: 4 hours of slack.
         assert_eq!(s.tasks[&b].slack, 240);
+    }
+
+    /// Issue #74: a milestone Start No Earlier Than a Saturday sits at Monday 8:00. A summary
+    /// finish-to-finish after it, over one 1-day subtask, finishes at that moment too (Friday
+    /// 8:00 – Monday 8:00, a day of working time), not at Friday 17:00 before it; so does a task
+    /// finish-to-finish after the summary. Working time, and so slack, is the same either way.
+    #[test]
+    fn a_finish_to_finish_successor_never_finishes_before_a_milestone_at_the_start_of_a_day() {
+        let mut p = Project::new("t", date("2026-01-05"));
+        let m = p.add_task("M", 0).unwrap();
+        let s = p.add_task("S", 0).unwrap();
+        let a = p.add_task("A", D).unwrap();
+        let b = p.add_task("B", D).unwrap();
+        p.task_mut(a).unwrap().outline_level = 2;
+        p.task_mut(m).unwrap().constraint = Constraint::StartNoEarlierThan(date("2026-01-10"));
+        p.set_preds(s, parse_preds("1FF", &crate::Options::default()).unwrap()).unwrap();
+        p.set_preds(b, parse_preds("2FF", &crate::Options::default()).unwrap()).unwrap();
+        let sch = schedule(&p).unwrap();
+        let t = |id| sch.tasks[&id];
+        assert_eq!((t(m).start_at, t(m).finish_at), (at("2026-01-12", 8, 0), at("2026-01-12", 8, 0)));
+        for id in [s, a, b] {
+            assert_eq!((t(id).start_at, t(id).finish_at), (at("2026-01-09", 8, 0), at("2026-01-12", 8, 0)), "{id:?}");
+        }
+        assert_eq!(t(a).slack, 0);
+        assert_eq!(sch.finish, date("2026-01-12"));
     }
 
     #[test]

@@ -83,6 +83,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | SEC: the project file, `.bak`, recovery copy and settings files are saved through `craft-atomic` (storytold/craft-libs, pinned by `rev`): staging beside the file, full flush on macOS, Windows rename retry, owner-only from the first byte; ProjectCraft's own temp/rename/fsync code removed; native only (#67) |
 | 2026-10-16 | SEC: on macOS quitting (window close, Cmd+Q from a new app menu whose Quit asks first) goes through `-[NSApplication terminate:]` via `craft-quit` from storytold/craft-libs, after the Save / Don't Save / Cancel prompt, so eframe never closes the window under AppKit; the close check runs in eframe's `logic`, so a close while minimized also asks first (the window comes back for the prompt); other platforms unchanged. `cargo xtask layers` keeps `craft-quit` to the UI and app layers (#66) |
 | 2026-10-16 | M2.0: part-day durations and lags: `30m`, `4h`, `1.5d`, `2w`, `1mo` (decimals allowed), converted with the project's hours per day / per week / days per month and rounded to the nearest minute; the unit typed is kept for display (`4h` stays `4h`, days to two decimals), in the Duration and Predecessors columns (`3FS+4h`) and the CLI; elapsed units and percent lags refused with the reason; commands take the text or whole days as before; Gantt bars start and end part-way through a day, in proportion to the day's working time; part-day worked examples (#53) |
+| 2026-10-16 | M2: a finish-to-finish successor (task or summary) never finishes before a milestone predecessor at the start of a day: it finishes at that moment (Monday 8:00, not Friday 17:00), the same working time, so slack is unchanged; an intermittent property-test failure fixed (#74) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -97,3 +98,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | All M1 tickets landed; headline numbers refreshed; reschedule timings added |
 | 2026-10-16 | minor | M1 reached |
 | 2026-10-16 | minor | M2 checklist added |
+| 2026-10-16 | minor | FF after a milestone at the start of a day (#74) |
