@@ -42,12 +42,17 @@
 //! and a hard constraint on a summary caps the late finish of every subtask. A link between a
 //! summary and one of its own subtasks is a loop through the outline, so [`order`] refuses it.
 //!
-//! ponytail: a finish-type link or constraint on a summary (FF, SF, Finish No Earlier/Later Than,
-//! Must Finish On) needs the summary's duration before its subtasks are scheduled; it takes the
-//! rolled-up duration from a first pass without those holds, so a hold that changes the duration
-//! (a subtask's own link or constraint) can leave the finish a little off the date. Schedules
-//! forward from the project start, with no actual progress and no resource levelling; each is its
-//! own step on the roadmap. A Must Start On before the project start is held at the project start.
+//! A finish-type link or constraint on a summary (FF, SF, Finish No Earlier/Later Than, Must
+//! Finish On) is about the summary's finish, which its subtasks set, so the hold is searched for:
+//! the earliest hold at which the summary finishes on or after the date (for Finish No Later Than,
+//! the latest at which it finishes by it), trying a hold by scheduling the summary's subtasks again
+//! from it. A later hold never makes the finish earlier, and moves it at most a day per day, so a
+//! few tries land on the date exactly, even when a subtask's own link or constraint makes the span
+//! depend on the hold. The search is bounded (see `HOLD_STEPS`).
+//!
+//! ponytail: schedules forward from the project start, with no actual progress and no resource
+//! levelling; each is its own step on the roadmap. A Must Start On before the project start is
+//! held at the project start.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -263,52 +268,87 @@ fn constrain(p: &Project, c: Constraint, start: i64, why: Driver, dur: i64) -> (
     (held, soft_early, why, start > held)
 }
 
-/// One forward pass. `sdur` is each summary's duration as its finish-type links and constraint
-/// see it.
-fn forward(p: &Project, tree: &Tree, order: &[usize], dur: &[i64], sdur: &[i64]) -> Forward {
+/// Bounds on the search for a finish-type hold (below), so a damaged file can't make the pass
+/// spin. Each summary's hold is searched for in the pass itself until `HOLD_STEPS` scheduling
+/// steps are taken in all; a summary inside one being searched for is searched for again at each
+/// try, so nested searches stop `HOLD_DEPTH` deep or after `HOLD_NESTED_STEPS` steps. A step counts
+/// one plus the task's links. Past a bound a summary keeps its start-type hold, the same way on
+/// every run. The bounds keep the worst file a full-size plan can hold to a few hundred
+/// milliseconds a reschedule in release (`cargo xtask perf` times it).
+const HOLD_DEPTH: u32 = 8;
+const HOLD_NESTED_STEPS: u64 = 2_000_000;
+const HOLD_STEPS: u64 = 8_000_000;
+/// Jumps straight to the earliest hold the finish allows, before halving what range is left.
+const HOLD_JUMPS: u32 = 8;
+
+/// The forward pass: each node in [`order`] in turn, and each summary's hold.
+struct Pass<'a> {
+    p: &'a Project,
+    tree: &'a Tree,
+    order: &'a [usize],
+    /// Where each node sits in `order`.
+    at: Vec<usize>,
+    index: HashMap<TaskId, usize>,
+    dur: &'a [i64],
+    f: Forward,
+    /// Each summary's hold, and the summary whose own link or constraint set it (none: the
+    /// project start).
+    hold: Vec<i64>,
+    source: Vec<Option<usize>>,
+    /// Scheduling steps taken, finish-type hold searches included.
+    steps: u64,
+}
+
+/// One forward pass.
+fn forward(p: &Project, tree: &Tree, order: &[usize], dur: &[i64]) -> Forward {
     let n = p.tasks.len();
-    let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
-    let d = |i: usize| dur.get(i).copied().unwrap_or(0);
-    let id = |i: usize| p.tasks.get(i).map_or(TaskId(0), |t| t.id);
+    let mut at = vec![0usize; 2 * n];
+    for (k, &node) in order.iter().enumerate() {
+        if let Some(x) = at.get_mut(node) {
+            *x = k;
+        }
+    }
     // Offsets stay small: at most MAX_TASKS chains of MAX_DAYS-bounded steps fit in i64.
-    let mut f = Forward { es: vec![0; n], ef: vec![0; n], early: vec![0; n], conflict: vec![false; n], driver: vec![Driver::ProjectStart; n] };
-    // Each summary's hold, and the summary whose own link or constraint set it (none: the project start).
-    let mut hold = vec![0i64; n];
-    let mut source: Vec<Option<usize>> = vec![None; n];
-    // A subtask's start from its summary's hold, if that is later than `start`.
-    let held_by = |hold: &[i64], source: &[Option<usize>], i: usize, start: i64| {
-        let up = tree.parent(i)?;
-        let h = hold.get(up).copied().unwrap_or(0);
-        (h > start).then(|| (h, source.get(up).copied().flatten()))
-    };
-    for &node in order {
-        if let Some(s) = node.checked_sub(n) {
-            // A summary's hold: its links, at least its own summary's hold, then its constraint.
-            let Some(t) = p.tasks.get(s).filter(|_| tree.summary(s).is_some()) else { continue };
-            let ds = sdur.get(s).copied().unwrap_or(0);
-            let (mut start, mut why) = link_start(t, &index, &f.es, &f.ef, ds);
-            let mut src = Some(s);
-            if let Some((h, up_src)) = held_by(&hold, &source, s, start) {
-                (start, src) = (h, up_src);
-                why = up_src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(id(u)));
-            }
-            let (held, _, why, conflict) = constrain(p, t.constraint, start, why, ds);
-            if why == Driver::ProjectStart {
-                src = None;
-            } else if matches!(why, Driver::Link(_) | Driver::Constraint) {
-                src = Some(s);
-            }
-            if let (Some(h), Some(sr), Some(w), Some(c)) = (hold.get_mut(s), source.get_mut(s), f.driver.get_mut(s), f.conflict.get_mut(s)) {
-                *h = held;
-                *sr = src;
-                *w = why;
-                *c = conflict;
-            }
-            continue;
+    let f = Forward { es: vec![0; n], ef: vec![0; n], early: vec![0; n], conflict: vec![false; n], driver: vec![Driver::ProjectStart; n] };
+    let index = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+    let mut pass = Pass { p, tree, order, at, index, dur, f, hold: vec![0; n], source: vec![None; n], steps: 0 };
+    pass.run(0, order.len(), 0);
+    pass.f
+}
+
+impl Pass<'_> {
+    /// The nodes at `from..to` in `order`.
+    fn run(&mut self, from: usize, to: usize, depth: u32) {
+        for k in from..to {
+            let Some(&node) = self.order.get(k) else { break };
+            let row = node.checked_sub(self.p.tasks.len()).unwrap_or(node);
+            let links = self.p.tasks.get(row).map_or(0, |t| t.preds.len());
+            self.steps = self.steps.saturating_add(1).saturating_add(u64::try_from(links).unwrap_or(u64::MAX));
+            self.step(node, depth);
+        }
+    }
+
+    fn id(&self, i: usize) -> TaskId {
+        self.p.tasks.get(i).map_or(TaskId(0), |t| t.id)
+    }
+
+    /// A subtask's start from its summary's hold, if that is later than `start`.
+    fn held_by(&self, i: usize, start: i64) -> Option<(i64, Option<usize>)> {
+        let up = self.tree.parent(i)?;
+        let h = self.hold.get(up).copied().unwrap_or(0);
+        (h > start).then(|| (h, self.source.get(up).copied().flatten()))
+    }
+
+    fn step(&mut self, node: usize, depth: u32) {
+        let (p, tree) = (self.p, self.tree);
+        if let Some(s) = node.checked_sub(p.tasks.len()) {
+            self.summary_hold(s, depth);
+            return;
         }
         let i = node;
-        let Some(t) = p.tasks.get(i) else { continue };
+        let Some(t) = p.tasks.get(i) else { return };
         if let Some(k) = tree.summary(i) {
+            let f = &mut self.f;
             roll_up(k, &mut f.es, &mut f.ef, i);
             let (s, e) = (f.es.get(i).copied().unwrap_or(0), f.ef.get(i).copied().unwrap_or(0));
             // The subtasks' own links can still take the summary past a No Later Than or Must date.
@@ -323,25 +363,142 @@ fn forward(p: &Project, tree: &Tree, order: &[usize], dur: &[i64], sdur: &[i64])
                 *a = s;
                 *c |= missed;
             }
-            continue;
+            return;
         }
-        let (mut start, mut why) = link_start(t, &index, &f.es, &f.ef, d(i));
-        if let Some((h, src)) = held_by(&hold, &source, i, start) {
+        let d = self.dur.get(i).copied().unwrap_or(0);
+        let (mut start, mut why) = link_start(t, &self.index, &self.f.es, &self.f.ef, d);
+        if let Some((h, src)) = self.held_by(i, start) {
             start = h;
-            why = src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(id(u)));
+            why = src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(self.id(u)));
         }
-        let (held, soft_early, why, conflict) = constrain(p, t.constraint, start, why, d(i));
+        let (held, soft_early, why, conflict) = constrain(p, t.constraint, start, why, d);
+        let f = &mut self.f;
         if let (Some(a), Some(b), Some(e), Some(c), Some(w)) =
             (f.es.get_mut(i), f.ef.get_mut(i), f.early.get_mut(i), f.conflict.get_mut(i), f.driver.get_mut(i))
         {
             *a = held;
-            *b = held + d(i);
+            *b = held + d;
             *e = soft_early;
             *c = conflict;
             *w = why;
         }
     }
-    f
+
+    /// A summary's hold: its start-type links, at least its own summary's hold, then its
+    /// finish-type links, then its constraint, per Microsoft's definitions. A finish-type link or
+    /// constraint holds the subtasks just as much as lets the summary finish on (or by) its date.
+    fn summary_hold(&mut self, s: usize, depth: u32) {
+        let p = self.p;
+        let Some(t) = p.tasks.get(s).filter(|_| self.tree.summary(s).is_some()) else { return };
+        // FS and SS: the earliest the subtasks may start. FF and SF: the earliest the summary may finish.
+        let (mut start, mut why) = (0i64, Driver::ProjectStart);
+        let mut finish: Option<(i64, Driver)> = None;
+        for l in &t.preds {
+            let Some(&j) = self.index.get(&l.pred) else { continue };
+            let (pes, pef) = (self.f.es.get(j).copied().unwrap_or(0), self.f.ef.get(j).copied().unwrap_or(0));
+            let lag = l.lag.clamp(-crate::MAX_DAYS, crate::MAX_DAYS);
+            match l.kind {
+                LinkKind::FS | LinkKind::SS => {
+                    let x = if l.kind == LinkKind::FS { pef } else { pes } + lag;
+                    if x > start || (x == start && why == Driver::ProjectStart) {
+                        (start, why) = (x, Driver::Link(l.pred));
+                    }
+                }
+                LinkKind::FF | LinkKind::SF => {
+                    let x = if l.kind == LinkKind::FF { pef } else { pes } + lag;
+                    if finish.is_none_or(|(f, _)| x > f) {
+                        finish = Some((x, Driver::Link(l.pred)));
+                    }
+                }
+            }
+        }
+        let mut src = Some(s);
+        if let Some((h, up_src)) = self.held_by(s, start) {
+            (start, src) = (h, up_src);
+            why = up_src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(self.id(u)));
+        }
+        if let Some((target, w)) = finish {
+            let h = self.earliest_hold(s, start, target, depth);
+            if h > start {
+                (start, why) = (h, w);
+            }
+        }
+        // Where the links put it (and a No Earlier Than date); then what a hard constraint makes of it.
+        let natural = match t.constraint {
+            Constraint::StartNoEarlierThan(cd) => start.max(start_offset(p, cd)),
+            Constraint::FinishNoEarlierThan(cd) => self.earliest_hold(s, start, finish_offset(p, cd), depth),
+            _ => start,
+        };
+        let must = matches!(t.constraint, Constraint::MustStartOn(_) | Constraint::MustFinishOn(_));
+        let held = match t.constraint {
+            Constraint::StartNoLaterThan(cd) => natural.min(start_offset(p, cd)),
+            // The latest hold that finishes by the date: one before the earliest that finishes after it.
+            Constraint::FinishNoLaterThan(cd) => {
+                natural.min(self.earliest_hold(s, 0, finish_offset(p, cd).saturating_add(1), depth).saturating_sub(1))
+            }
+            Constraint::MustStartOn(cd) => start_offset(p, cd),
+            Constraint::MustFinishOn(cd) => self.earliest_hold(s, 0, finish_offset(p, cd), depth),
+            _ => natural,
+        }
+        .max(0);
+        let why = if natural > start || held != natural || must { Driver::Constraint } else { why };
+        let conflict = start > held;
+        if why == Driver::ProjectStart {
+            src = None;
+        } else if matches!(why, Driver::Link(_) | Driver::Constraint) {
+            src = Some(s);
+        }
+        let f = &mut self.f;
+        if let (Some(h), Some(sr), Some(w), Some(c)) = (self.hold.get_mut(s), self.source.get_mut(s), f.driver.get_mut(s), f.conflict.get_mut(s)) {
+            *h = held;
+            *sr = src;
+            *w = why;
+            *c = conflict;
+        }
+    }
+
+    /// Where summary `s` finishes (its early finish offset) if its hold is `h`: the pass from its
+    /// hold to its roll-up, run again. Every node there is worked out again by the pass itself
+    /// before anything reads it, so nothing is left behind. None once the bounds are spent.
+    fn finish_with_hold(&mut self, s: usize, h: i64, depth: u32) -> Option<i64> {
+        let limit = if depth == 0 { HOLD_STEPS } else { HOLD_NESTED_STEPS };
+        if depth >= HOLD_DEPTH || self.steps >= limit {
+            return None;
+        }
+        let n = self.p.tasks.len();
+        let (from, to) = (self.at.get(n + s)?.saturating_add(1), self.at.get(s)?.saturating_add(1));
+        *self.hold.get_mut(s)? = h;
+        self.run(from, to, depth + 1);
+        self.f.ef.get(s).copied()
+    }
+
+    /// The earliest hold from `lo` on at which summary `s` finishes at `target` or later. The
+    /// finish never moves earlier as the hold moves later, and at most a day per day, so
+    /// `lo + (target − finish)` is never past the answer: jump there, then halve what is left.
+    fn earliest_hold(&mut self, s: usize, mut lo: i64, target: i64, depth: u32) -> i64 {
+        for _ in 0..HOLD_JUMPS {
+            let Some(f) = self.finish_with_hold(s, lo, depth) else { return lo };
+            if f >= target {
+                return lo;
+            }
+            lo = lo.saturating_add(target.saturating_sub(f)).min(lo.max(target));
+        }
+        // From `target` on, any subtask that follows the hold finishes after it.
+        let mut hi = lo.max(target);
+        match self.finish_with_hold(s, hi, depth) {
+            Some(f) if f >= target => {}
+            _ => return hi,
+        }
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            match self.finish_with_hold(s, mid, depth) {
+                Some(f) if f >= target => hi = mid,
+                Some(_) => lo = mid + 1,
+                None => return hi,
+            }
+        }
+        hi
+    }
 }
 
 /// A moment between two working days: a working-day offset, and whether it is the start of that
@@ -442,17 +599,8 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     let summary = |i: usize| tree.summary(i);
     let dur: Vec<i64> = p.tasks.iter().map(|t| t.duration.clamp(0, crate::MAX_DAYS)).collect();
 
-    // Forward pass. A summary's finish-type link or constraint takes its duration from a first pass.
-    let finish_type = |t: &Task| {
-        matches!(t.constraint, Constraint::FinishNoEarlierThan(_) | Constraint::FinishNoLaterThan(_) | Constraint::MustFinishOn(_))
-            || t.preds.iter().any(|l| matches!(l.kind, LinkKind::FF | LinkKind::SF))
-    };
-    let mut fw = forward(p, &tree, &order, &dur, &vec![0; n]);
-    if p.tasks.iter().enumerate().any(|(i, t)| summary(i).is_some() && finish_type(t)) {
-        let sdur: Vec<i64> = fw.ef.iter().zip(&fw.es).map(|(f, s)| f - s).collect();
-        fw = forward(p, &tree, &order, &dur, &sdur);
-    }
-    let Forward { es, ef, early, conflict, driver } = fw;
+    // Forward pass.
+    let Forward { es, ef, early, conflict, driver } = forward(p, &tree, &order, &dur);
     let end = ef.iter().copied().max().unwrap_or(0);
     // Roll-up: from here on a summary's duration is its rolled-up one.
     let dur: Vec<i64> =
@@ -741,6 +889,95 @@ mod tests {
             }
             let first = schedule(&p);
             proptest::prop_assert_eq!(&first, &schedule(&p));
+        }
+    }
+
+    /// The last working day on or before `d`: where a finish-type date lands.
+    fn workday_back(p: &Project, d: Date) -> Date {
+        let mut d = d;
+        for _ in 0..7 {
+            if p.calendar.is_workday(d) {
+                break;
+            }
+            d = d.add_days(-1).unwrap();
+        }
+        d
+    }
+
+    /// Nested summaries 40 deep, each Finish No Earlier Than a later date than the one inside it,
+    /// over a subtask fixed by Must Start On and one linked after it: the searches stay within
+    /// their bounds, the outermost lands on its date, and the dates come out the same twice.
+    #[test]
+    fn deeply_nested_finish_holds_are_bounded_and_land_on_their_dates() {
+        let mut p = Project::new("t", date("2026-01-05"));
+        let depth = 40u32;
+        for l in 0..depth {
+            let id = p.add_task(format!("S{l}"), 1).unwrap();
+            let t = p.task_mut(id).unwrap();
+            t.outline_level = l + 1;
+            t.constraint = Constraint::FinishNoEarlierThan(date("2026-03-02").add_days(i64::from(depth - l)).unwrap());
+        }
+        let a = p.add_task("A", 2).unwrap();
+        let b = p.add_task("B", 3).unwrap();
+        for id in [a, b] {
+            p.task_mut(id).unwrap().outline_level = depth + 1;
+        }
+        p.task_mut(a).unwrap().constraint = Constraint::MustStartOn(date("2026-01-05"));
+        p.set_preds(b, parse_preds(&a.0.to_string()).unwrap()).unwrap();
+        let first = schedule(&p).unwrap();
+        assert_eq!(first, schedule(&p).unwrap());
+        let outer = p.tasks[0].id;
+        let cd = date("2026-03-02").add_days(i64::from(depth)).unwrap();
+        assert_eq!(p.tasks[0].constraint, Constraint::FinishNoEarlierThan(cd));
+        assert_eq!(first.tasks[&outer].finish, workday_back(&p, cd));
+    }
+
+    proptest::proptest! {
+        /// Finish-type holds on summaries (Finish No Earlier Than, finish-to-finish and
+        /// start-to-finish links into them) over subtasks that are As Soon As Possible or Start No
+        /// Earlier Than: every such summary finishes on or after its date, never panics, and gives
+        /// the same dates twice.
+        #[test]
+        fn finish_holds_on_summaries_are_met_and_deterministic(
+            levels in proptest::collection::vec(0u32..5, 1..12),
+            links in proptest::collection::vec((0usize..12, 0u32..14, 0u8..4, -3i64..4), 0..14),
+            constraints in proptest::collection::vec((0usize..12, 0u8..2, 0i64..40), 0..6),
+            durations in proptest::collection::vec(0i64..6, 12),
+        ) {
+            let mut p = Project::new("t", date("2026-01-05"));
+            for (i, l) in levels.iter().enumerate() {
+                let id = p.add_task(format!("T{i}"), durations[i]).unwrap();
+                p.task_mut(id).unwrap().outline_level = *l;
+            }
+            let ids: Vec<TaskId> = p.tasks.iter().map(|t| t.id).collect();
+            let kinds = [LinkKind::FS, LinkKind::SS, LinkKind::FF, LinkKind::SF];
+            for (succ, pred, kind, lag) in links {
+                if let Some(&id) = ids.get(succ) {
+                    p.task_mut(id).unwrap().preds.push(crate::Link { pred: TaskId(pred), kind: kinds[usize::from(kind)], lag });
+                }
+            }
+            for (row, ty, day) in constraints {
+                let d = date("2026-01-01").add_days(day).unwrap();
+                if let Some(&id) = ids.get(row) {
+                    p.task_mut(id).unwrap().constraint =
+                        if ty == 0 { Constraint::StartNoEarlierThan(d) } else { Constraint::FinishNoEarlierThan(d) };
+                }
+            }
+            let first = schedule(&p);
+            proptest::prop_assert_eq!(&first, &schedule(&p));
+            let Ok(sch) = first else { return Ok(()) };
+            for t in p.tasks.iter().filter(|t| p.is_summary(t.id)) {
+                let finish = sch.tasks[&t.id].finish;
+                if let Constraint::FinishNoEarlierThan(cd) = t.constraint
+                    && cd >= p.start
+                {
+                    proptest::prop_assert!(finish >= workday_back(&p, cd), "{} finishes {finish:?} before {cd:?}", t.name);
+                }
+                for l in t.preds.iter().filter(|l| l.kind == LinkKind::FF && l.lag == 0) {
+                    let Some(pd) = sch.tasks.get(&l.pred) else { continue };
+                    proptest::prop_assert!(finish >= pd.finish, "{} finishes {finish:?} before its FF predecessor", t.name);
+                }
+            }
         }
     }
 }

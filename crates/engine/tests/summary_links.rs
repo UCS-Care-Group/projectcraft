@@ -231,3 +231,72 @@ fn a_loaded_summary_to_subtask_link_is_reported_as_a_loop() {
     let s = Session::load_json(&damaged.to_string()).unwrap();
     assert!(s.schedule.is_err());
 }
+
+/// Rows: 1 X (10 days, Mon 5 – Fri 16); 2 Phase { 3 A (2 days, Must Start On Mon 5); 4 B (3 days,
+/// after A) }. A is fixed, so Phase's span depends on where its hold puts B: Mon 5 – Fri 9 at the
+/// earliest, longer the later B starts. A finish-type hold has to land on the date, not on an
+/// estimate of the span taken without it.
+fn fixed_then_chain() -> Session {
+    let mut s = Session::new(Project::new("t", date("2026-01-05")));
+    for (name, duration) in [("X", 10), ("Phase", 1), ("A", 2), ("B", 3)] {
+        s.run("task.add", &json!({"name": name, "duration": duration})).unwrap();
+    }
+    s.run("task.indent", &json!({"ids": [3, 4]})).unwrap();
+    s.run("task.setConstraint", &json!({"id": 3, "type": "MSO", "date": "2026-01-05"})).unwrap();
+    preds(&mut s, 4, "3").unwrap();
+    s
+}
+
+/// Finish No Earlier Than on a summary: "the task finishes on or after the date"; otherwise as soon
+/// as possible. Phase FNET Fri 16: B (after A, Mon 5 – Tue 6) is held to Wed 14 – Fri 16, so Phase
+/// finishes exactly Fri 16 (a span estimate without the hold would leave it on Fri 9).
+#[test]
+fn a_finish_no_earlier_than_summary_finishes_on_its_date_when_its_subtasks_link_inside_it() {
+    let mut s = fixed_then_chain();
+    assert_eq!(start_finish(&s, 2), (date("2026-01-05"), date("2026-01-09")), "unconstrained: A then B");
+    s.run("task.setConstraint", &json!({"id": 2, "type": "FNET", "date": "2026-01-16"})).unwrap();
+    assert_eq!(start_finish(&s, 4), (date("2026-01-14"), date("2026-01-16")));
+    assert_eq!(start_finish(&s, 2), (date("2026-01-05"), date("2026-01-16")));
+    assert_eq!(dates(&s, 4).driver, Driver::ParentSummary(TaskId(2)));
+    assert_eq!(dates(&s, 2).driver, Driver::Constraint);
+    // A date the subtasks already reach is no hold: back to Mon 5 – Fri 9.
+    s.run("task.setConstraint", &json!({"id": 2, "type": "FNET", "date": "2026-01-07"})).unwrap();
+    assert_eq!(start_finish(&s, 2), (date("2026-01-05"), date("2026-01-09")));
+    assert_eq!(start_finish(&s, 4), (date("2026-01-07"), date("2026-01-09")));
+}
+
+/// Finish-to-finish into a summary: "the dependent task can't finish until the predecessor
+/// finishes". X FF Phase: Phase finishes with X, Fri 16, and no later.
+#[test]
+fn a_finish_to_finish_predecessor_into_a_summary_lands_on_its_finish() {
+    let mut s = fixed_then_chain();
+    preds(&mut s, 2, "1FF").unwrap();
+    assert_eq!(start_finish(&s, 4), (date("2026-01-14"), date("2026-01-16")));
+    assert_eq!(start_finish(&s, 2), (date("2026-01-05"), date("2026-01-16")));
+    assert_eq!(dates(&s, 2).driver, Driver::Link(TaskId(1)));
+    // With lag: FF+1 finishes Mon 19.
+    preds(&mut s, 2, "1FF+1").unwrap();
+    assert_eq!(start_finish(&s, 2).1, date("2026-01-19"));
+    // Start-to-finish from X (starts Mon 5) plus 7: Phase finishes no earlier than Tue 13.
+    preds(&mut s, 2, "1SF+7").unwrap();
+    assert_eq!(start_finish(&s, 2).1, date("2026-01-13"));
+}
+
+/// Must Finish On a summary: "the task must finish on the date". Phase MFO Fri 16 finishes Fri 16;
+/// Finish No Later Than Tue 13 with a link from a predecessor that would take it to Wed 14 holds
+/// it at Tue 13, with a warning.
+#[test]
+fn must_finish_on_and_finish_no_later_than_a_summary_land_on_their_dates() {
+    let mut s = fixed_then_chain();
+    s.run("task.setConstraint", &json!({"id": 2, "type": "MFO", "date": "2026-01-16"})).unwrap();
+    assert_eq!(start_finish(&s, 4), (date("2026-01-14"), date("2026-01-16")));
+    assert_eq!(start_finish(&s, 2), (date("2026-01-05"), date("2026-01-16")));
+    assert!(!dates(&s, 2).constraint_conflict);
+    // P (5 days, Mon 5 – Fri 9) → Phase puts B Mon 12 – Wed 14; FNLT Tue 13 holds it a day earlier.
+    s.run("task.add", &json!({"name": "P", "duration": 5})).unwrap();
+    preds(&mut s, 2, "5").unwrap();
+    s.run("task.setConstraint", &json!({"id": 2, "type": "FNLT", "date": "2026-01-13"})).unwrap();
+    assert_eq!(start_finish(&s, 4), (date("2026-01-09"), date("2026-01-13")));
+    assert_eq!(start_finish(&s, 2), (date("2026-01-05"), date("2026-01-13")));
+    assert!(dates(&s, 2).constraint_conflict);
+}
