@@ -39,6 +39,8 @@ pub struct Tokens {
     pub deadline_missed: Color32,
     /// Behind the bars: a day that is not worked (a weekend day, a non-working exception).
     pub nonworking: Color32,
+    /// A selected row of the sheet.
+    pub row_selected: Color32,
 }
 
 impl Tokens {
@@ -67,6 +69,7 @@ impl Tokens {
             deadline: Color32::from_rgb(0x2E, 0x7D, 0x32),
             deadline_missed: Color32::from_rgb(0xA3, 0x15, 0x7A),
             nonworking: Color32::from_rgb(0xEB, 0xEB, 0xEE),
+            row_selected: Color32::from_rgb(0xD4, 0xE6, 0xF8),
         }
     }
 
@@ -95,6 +98,7 @@ impl Tokens {
             deadline: Color32::from_rgb(0x6C, 0xC0, 0x70),
             deadline_missed: Color32::from_rgb(0xF0, 0x6A, 0xC8),
             nonworking: Color32::from_rgb(0x31, 0x31, 0x36),
+            row_selected: Color32::from_rgb(0x23, 0x3F, 0x5C),
         }
     }
 

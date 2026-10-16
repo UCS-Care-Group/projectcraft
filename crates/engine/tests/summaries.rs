@@ -132,9 +132,9 @@ fn worked_example_13_a_summary_that_loses_its_last_subtask_keeps_its_rolled_up_d
     // Deleted: Phase {A (3d), B (2d)} rolls up to 5; delete both subtasks.
     let mut s = rows();
     s.run("task.indent", &json!({"ids": [2, 3]})).unwrap();
-    s.run("task.delete", &json!({"id": 3})).unwrap();
+    s.run("task.delete", &json!({"ids": [3]})).unwrap();
     assert_eq!(duration(&s, 1), 3, "rolled up from A alone");
-    s.run("task.delete", &json!({"id": 2})).unwrap();
+    s.run("task.delete", &json!({"ids": [2]})).unwrap();
     assert!(!s.project.is_summary(TaskId(1)));
     assert_eq!(duration(&s, 1), 3);
     assert_eq!(start_finish(&s, 1), (date("2026-01-05"), date("2026-01-07")));

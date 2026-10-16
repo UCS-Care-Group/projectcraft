@@ -2,9 +2,14 @@
 //!
 //! The UI is thin: it reads [`Session`] and changes it only through [`Session::run`].
 //! Colours come from [`theme::Tokens`] and text goes through [`tl!`] ([`i18n`]).
+//!
+//! The sheet works like a spreadsheet: click, Shift-click and Ctrl-click select rows; the arrows
+//! move the focused cell (Shift extends the selection); typing or F2 edits the focused cell and
+//! Enter commits and moves down, Escape cancels; Insert inserts a task above, Delete deletes the
+//! selected rows, Alt+Shift+→/← indent or outdent them.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use egui::{Key, RichText, Sense, Stroke, Vec2};
+use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{Outline, TaskId, parse_duration, preds_text};
 use projectcraft_engine::{Session, WEEKDAYS, time::Date};
 use serde_json::{Value, json};
@@ -25,9 +30,11 @@ use theme::Tokens;
 mod files;
 pub use files::{EXTENSION, FileRequest, MAX_RECENT, parse_recent, push_recent, recent_text};
 mod recovery;
+mod selection;
 pub use recovery::{AUTOSAVE_EVERY, RECOVERY_EVERY, UNTITLED_RECOVERY, recovery_path};
+use selection::Selection;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Field {
     Name,
     Duration,
@@ -36,6 +43,9 @@ enum Field {
     Preds,
     Deadline,
 }
+
+/// The editable columns, left to right.
+const FIELDS: [Field; 6] = [Field::Name, Field::Duration, Field::Start, Field::Finish, Field::Preds, Field::Deadline];
 
 /// The command a typed Start or Finish issues: Start No Earlier Than or Finish No Earlier Than
 /// that date. The cell keeps showing the scheduler's date, as in Microsoft Project. A typed
@@ -51,16 +61,30 @@ fn typed_date(field: Field, id: TaskId, text: &str) -> Option<(&'static str, Val
     Some(("task.setConstraint", json!({"id": id.0, "type": ty, "date": text.trim()})))
 }
 
-/// The command Alt+Shift+→ (indent) or Alt+Shift+← (outdent) issues for the selected row.
-/// ponytail: the selected row is the one whose cell has focus; multi-select comes with #10.
-fn outline_key(selected: Option<TaskId>, indent: bool, outdent: bool) -> Option<(&'static str, Value)> {
-    let id = selected?;
+/// The command Alt+Shift+→ (indent) or Alt+Shift+← (outdent) issues for the selected rows.
+fn outline_key(ids: &[TaskId], indent: bool, outdent: bool) -> Option<(&'static str, Value)> {
     let cmd = match (indent, outdent) {
+        _ if ids.is_empty() => return None,
         (true, false) => "task.indent",
         (false, true) => "task.outdent",
         _ => return None,
     };
-    Some((cmd, json!({"ids": [id.0]})))
+    Some((cmd, json!({"ids": ids.iter().map(|t| t.0).collect::<Vec<_>>()})))
+}
+
+/// The sheet keys pressed this frame, when no cell is being edited.
+#[derive(Default)]
+struct SheetKeys {
+    /// Rows to move the cursor (negative is up), and whether Shift extends the selection.
+    rows: isize,
+    extend: bool,
+    /// Columns to move the cursor.
+    cols: isize,
+    edit: bool,
+    insert: bool,
+    delete: bool,
+    /// Text typed into the focused cell, which starts editing it.
+    typed: String,
 }
 
 /// The Change Working Time dialog's own state: the exception being typed. Everything else it
@@ -75,8 +99,17 @@ pub struct App {
     pub session: Session,
     /// Where Save writes, if anywhere.
     pub path: Option<std::path::PathBuf>,
-    /// The cell being typed in and its text; committed as one command when focus leaves it.
+    /// The cell being typed in and its text; committed as one command when editing ends.
     editing: Option<(TaskId, Field, String)>,
+    /// The editor opened this frame and wants the keyboard focus.
+    focus_editor: bool,
+    /// Enter ended the edit: the cursor moves down once it's committed.
+    down_after_edit: bool,
+    /// The selected rows and the focused cell's row; `field` is its column.
+    sel: Selection,
+    field: Field,
+    /// A click on a cell this frame: its row, its column (none for the ID column), the modifiers, and whether it was a double click.
+    clicked: Option<(TaskId, Option<Field>, Modifiers, bool)>,
     status: String,
     /// Light, dark or the system's; put into egui on the next frame.
     pub appearance: egui::ThemePreference,
@@ -117,6 +150,11 @@ impl App {
             session,
             path,
             editing: None,
+            focus_editor: false,
+            down_after_edit: false,
+            sel: Selection::default(),
+            field: Field::Name,
+            clicked: None,
             status: String::new(),
             appearance: egui::ThemePreference::System,
             themed: None,
@@ -141,6 +179,11 @@ impl App {
             Err(e) => e.to_string(),
         };
         self.status.is_empty()
+    }
+
+    /// Every row's Unique ID, top to bottom.
+    fn order(&self) -> Vec<TaskId> {
+        self.session.project.tasks.iter().map(|t| t.id).collect()
     }
 
     /// The Gantt Chart's timescale preset (from the View menu).
@@ -168,11 +211,6 @@ impl App {
         self.intercept_close(&ctx);
         self.file_keys(&ctx);
         let (undo, redo) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::COMMAND, Key::Z), i.consume_key(egui::Modifiers::COMMAND, Key::Y)));
-        let alt_shift = egui::Modifiers::ALT | egui::Modifiers::SHIFT;
-        let (indent, outdent) = ctx.input_mut(|i| (i.consume_key(alt_shift, Key::ArrowRight), i.consume_key(alt_shift, Key::ArrowLeft)));
-        if let Some((id, params)) = outline_key(self.editing.as_ref().map(|(id, _, _)| *id), indent, outdent) {
-            self.run(id, params);
-        }
         let (zoom_in, zoom_out) = ctx.input_mut(|i| {
             let zoom_in = i.consume_key(egui::Modifiers::COMMAND, Key::Equals) | i.consume_key(egui::Modifiers::COMMAND, Key::Plus);
             (zoom_in, i.consume_key(egui::Modifiers::COMMAND, Key::Minus))
@@ -189,6 +227,10 @@ impl App {
         if redo {
             self.run("edit.redo", json!({}));
         }
+        // Undo, redo or a file opened can take rows away.
+        let order = self.order();
+        self.sel.prune(&order, None);
+        self.sheet_keys(&ctx);
 
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -239,6 +281,157 @@ impl App {
         self.unsaved_prompt(&ctx);
         self.recovery_prompt(&ctx);
         self.update_title(&ctx);
+    }
+
+    /// The sheet's keyboard: Alt+Shift+→/← always; the rest only while no cell is being edited
+    /// and no other text field has the keyboard.
+    fn sheet_keys(&mut self, ctx: &egui::Context) {
+        let order = self.order();
+        let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
+        let (indent, outdent) = ctx.input_mut(|i| (i.consume_key(alt_shift, Key::ArrowRight), i.consume_key(alt_shift, Key::ArrowLeft)));
+        let ids = match &self.editing {
+            Some((id, _, _)) => vec![*id],
+            None => self.sel.ids(&order),
+        };
+        if let Some((cmd, params)) = outline_key(&ids, indent, outdent) {
+            self.run(cmd, params);
+        }
+        let modal = self.prompt.is_some() || self.working_time.is_some() || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
+        if self.editing.is_some() || ctx.text_edit_focused() || modal {
+            return;
+        }
+        let k = ctx.input_mut(|i| {
+            let mut k = SheetKeys::default();
+            // Shift+arrow first: a plain-arrow shortcut would match it too.
+            for (key, by) in [(Key::ArrowUp, -1), (Key::ArrowDown, 1)] {
+                if i.consume_key(Modifiers::SHIFT, key) {
+                    (k.rows, k.extend) = (by, true);
+                } else if i.consume_key(Modifiers::NONE, key) {
+                    k.rows = by;
+                }
+            }
+            if i.consume_key(Modifiers::NONE, Key::Enter) {
+                k.rows = 1;
+            }
+            for (key, by) in [(Key::ArrowLeft, -1), (Key::ArrowRight, 1), (Key::Tab, 1)] {
+                if i.consume_key(Modifiers::NONE, key) {
+                    k.cols = by;
+                }
+            }
+            k.edit = i.consume_key(Modifiers::NONE, Key::F2);
+            k.insert = i.consume_key(Modifiers::NONE, Key::Insert);
+            k.delete = i.consume_key(Modifiers::NONE, Key::Delete);
+            if self.sel.cursor.is_some() && !i.modifiers.command && !i.modifiers.alt {
+                // Taken out of the input, so the editor this starts doesn't type it a second time.
+                i.events.retain(|e| match e {
+                    egui::Event::Text(t) => {
+                        k.typed.push_str(t);
+                        false
+                    }
+                    _ => true,
+                });
+            }
+            k
+        });
+        if k.rows != 0 {
+            self.sel.step(&order, k.rows, k.extend);
+        }
+        if k.cols != 0 {
+            let at = FIELDS.iter().position(|f| *f == self.field).unwrap_or(0);
+            self.field = FIELDS.get(at.saturating_add_signed(k.cols)).copied().unwrap_or(self.field);
+            if self.sel.cursor.is_none() {
+                self.sel.step(&order, 0, false);
+            }
+        }
+        if k.edit || !k.typed.trim().is_empty() {
+            self.begin_edit((!k.typed.is_empty()).then_some(k.typed));
+        }
+        if k.insert {
+            self.insert_row();
+        }
+        if k.delete {
+            self.delete_rows();
+        }
+    }
+
+    /// Starts editing the focused cell, with `typed` replacing its text, or (F2) its text as it is.
+    fn begin_edit(&mut self, typed: Option<String>) {
+        let Some(id) = self.sel.cursor else { return };
+        let Some(text) = self.cell_text(id, self.field) else { return };
+        self.editing = Some((id, self.field, typed.unwrap_or(text)));
+        self.focus_editor = true;
+    }
+
+    /// Insert: a new task above the focused row (at the end with none), which takes the focus.
+    fn insert_row(&mut self) {
+        let next = TaskId(self.session.project.next_id.max(1));
+        let params = match self.sel.cursor {
+            Some(c) => json!({"before": c.0}),
+            None => json!({}),
+        };
+        if self.run("task.insert", params) && self.session.project.row_of(next).is_some() {
+            self.sel.select_only(next);
+            self.field = Field::Name;
+        }
+    }
+
+    /// Delete: the selected rows (each with its subtasks). The focus stays on the same row number.
+    fn delete_rows(&mut self) {
+        let order = self.order();
+        let ids = self.sel.ids(&order);
+        if ids.is_empty() {
+            return;
+        }
+        let at = self.sel.cursor.and_then(|c| order.iter().position(|t| *t == c));
+        if self.run("task.delete", json!({"ids": ids.iter().map(|t| t.0).collect::<Vec<_>>()})) {
+            self.sel.prune(&self.order(), at);
+        }
+    }
+
+    /// A cell's text as the sheet shows it; `None` where it can't be edited (a summary's duration).
+    fn cell_text(&self, id: TaskId, field: Field) -> Option<String> {
+        let p = &self.session.project;
+        let t = p.task(id).ok()?;
+        let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
+        let date = |d: Option<Date>| d.map_or_else(String::new, |d| d.to_string());
+        Some(match field {
+            Field::Name => t.name.clone(),
+            Field::Duration if p.is_summary(id) => return None,
+            Field::Duration => format!("{}d", t.duration),
+            Field::Start => date(dates.map(|d| d.start)),
+            Field::Finish => date(dates.map(|d| d.finish)),
+            Field::Preds => p.preds_text_rows(&t.preds),
+            Field::Deadline => date(t.deadline),
+        })
+    }
+
+    /// Issues the command for a cell's new text.
+    fn commit(&mut self, id: TaskId, field: Field, text: String) {
+        if self.cell_text(id, field).as_deref() == Some(text.as_str()) {
+            return;
+        }
+        match field {
+            Field::Name => {
+                self.run("task.rename", json!({"id": id.0, "name": text}));
+            }
+            Field::Duration => match parse_duration(&text) {
+                Ok(d) => {
+                    self.run("task.setDuration", json!({"id": id.0, "duration": d}));
+                }
+                Err(e) => self.status = e.to_string(),
+            },
+            Field::Start | Field::Finish | Field::Deadline => {
+                if let Some((cmd, params)) = typed_date(field, id, &text) {
+                    self.run(cmd, params);
+                }
+            }
+            Field::Preds => match self.session.project.parse_preds_rows(&text) {
+                Ok(links) => {
+                    self.run("task.setPredecessors", json!({"id": id.0, "text": preds_text(&links)}));
+                }
+                Err(e) => self.status = e.to_string(),
+            },
+        }
     }
 
     /// View: the timescale presets and zoom.
@@ -377,8 +570,17 @@ impl App {
         // At least as wide as the view, so the shading reaches its right edge.
         let chart_w = timescale::chart_width(scale, finish, ui.clip_rect().width());
         let calendar = self.session.project.calendar.clone();
-        let mut commands: Vec<(&'static str, Value)> = Vec::new();
-        egui::Grid::new("sheet").striped(true).min_row_height(ROW_H).min_col_width(0.0).show(ui, |ui| {
+        let order = self.order();
+        let mut edits: Vec<(TaskId, Field, String)> = Vec::new();
+        let t = Tokens::get(ui.ctx());
+        // Grid row 0 is the header.
+        let picked: Vec<bool> = order.iter().map(|id| self.sel.is_selected(*id)).collect();
+        let row_colour = move |row: usize, _: &egui::Style| match row.checked_sub(1).and_then(|r| picked.get(r)) {
+            Some(true) => Some(t.row_selected),
+            _ if row % 2 == 1 => Some(t.stripe),
+            _ => None,
+        };
+        egui::Grid::new("sheet").with_row_color(row_colour).min_row_height(ROW_H).min_col_width(0.0).show(ui, |ui| {
             // The unnamed column after ID holds indicators, as Project's Indicators column.
             // ID and the indicators are narrow, fixed-width columns.
             ui.add_sized([ID_W, ROW_H], egui::Label::new(RichText::new(tl!("ID")).strong()));
@@ -389,46 +591,44 @@ impl App {
             let (header, _) = ui.allocate_exact_size(Vec2::new(chart_w, timescale::TIER_H * 2.0), Sense::hover());
             timescale::header(ui, header, scale);
             ui.end_row();
-            let p = &self.session.project;
-            let outline = Outline::of(p);
-            let rows: Vec<_> = p.tasks.iter().map(|t| (t.id, t.name.clone(), t.duration, p.preds_text_rows(&t.preds), t.deadline)).collect();
+            let outline = Outline::of(&self.session.project);
             // The ID column is the row number; commands get Unique IDs.
-            for (i, (id, name, duration, preds, deadline)) in rows.into_iter().enumerate() {
+            for (i, id) in order.iter().copied().enumerate() {
                 let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
                 let summary = outline.is_summary(i);
-                ui.add_sized([ID_W, ROW_H], egui::Label::new(i.saturating_add(1).to_string()));
+                let (duration, deadline) = self.session.project.task(id).map_or((0, None), |t| (t.duration, t.deadline));
+                let row_id = i.saturating_add(1).to_string();
+                // Laid out as the other cells are, so the row number sits on their baseline.
+                let r = ui
+                    .horizontal(|ui| {
+                        let (rect, r) = ui.allocate_exact_size(Vec2::new(ID_W, ROW_H), Sense::click());
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, &row_id, egui::TextStyle::Body.resolve(ui.style()), t.text);
+                        r
+                    })
+                    .inner;
+                r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &row_id));
+                self.take_click(ui, &r, id, None);
                 indicator(ui, dates);
                 let indent = (outline.level(i).saturating_sub(1).min(20) as f32) * INDENT_W;
-                let renamed = ui.horizontal(|ui| {
-                    ui.add_space(indent);
-                    self.cell(ui, id, Field::Name, &name, NAME_W - indent)
-                });
-                if let Some(c) = renamed.inner {
-                    commands.push(("task.rename", json!({"id": id.0, "name": c})));
-                }
-                let duration_text = format!("{duration}d");
-                if summary {
-                    // Rolled up from the subtasks; not editable while a summary.
-                    ui.label(&duration_text).on_hover_text(tl!("A summary task's duration is rolled up from its subtasks"));
-                } else if let Some(c) = self.cell(ui, id, Field::Duration, &duration_text, 60.0) {
-                    match parse_duration(&c) {
-                        Ok(d) => commands.push(("task.setDuration", json!({"id": id.0, "duration": d}))),
-                        Err(e) => self.status = e.to_string(),
+                for (field, width) in [
+                    (Field::Name, NAME_W),
+                    (Field::Duration, 60.0),
+                    (Field::Start, 80.0),
+                    (Field::Finish, 80.0),
+                    (Field::Preds, 100.0),
+                    (Field::Deadline, 80.0),
+                ] {
+                    let lead = if field == Field::Name { indent } else { 0.0 };
+                    let value = self.cell_text(id, field);
+                    let shown = value.clone().unwrap_or_else(|| format!("{duration}d"));
+                    let inner = ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.add_space(lead);
+                        self.cell(ui, id, field, &shown, width - lead, value.is_some())
+                    });
+                    if let Some(text) = inner.inner {
+                        edits.push((id, field, text));
                     }
-                }
-                for (field, shown) in [(Field::Start, dates.map(|d| d.start)), (Field::Finish, dates.map(|d| d.finish))] {
-                    if let Some(c) = self.cell(ui, id, field, &shown.map_or_else(String::new, |d| d.to_string()), 80.0) {
-                        commands.extend(typed_date(field, id, &c));
-                    }
-                }
-                if let Some(c) = self.cell(ui, id, Field::Preds, &preds, 100.0) {
-                    match self.session.project.parse_preds_rows(&c) {
-                        Ok(links) => commands.push(("task.setPredecessors", json!({"id": id.0, "text": preds_text(&links)}))),
-                        Err(e) => self.status = e.to_string(),
-                    }
-                }
-                if let Some(c) = self.cell(ui, id, Field::Deadline, &deadline.map_or_else(String::new, |d| d.to_string()), 80.0) {
-                    commands.extend(typed_date(Field::Deadline, id, &c));
                 }
                 let shape = match (summary, duration) {
                     (true, _) => Bar::Summary,
@@ -439,27 +639,71 @@ impl App {
                 ui.end_row();
             }
         });
-        for (id, params) in commands {
-            self.run(id, params);
+        for (id, field, text) in edits {
+            self.commit(id, field, text);
+        }
+        if std::mem::take(&mut self.down_after_edit) {
+            self.sel.step(&self.order(), 1, false);
+        }
+        if let Some((id, field, mods, double)) = self.clicked.take() {
+            // A click elsewhere ends an edit: commit it first.
+            if let Some((eid, efield, text)) = self.editing.take_if(|(e, f, _)| (*e, Some(*f)) != (id, field)) {
+                self.commit(eid, efield, text);
+            }
+            self.sel.click(id, &self.order(), mods.shift, mods.command);
+            if let Some(f) = field {
+                self.field = f;
+                if double {
+                    self.begin_edit(None);
+                }
+            }
         }
     }
 
-    /// A text cell: shows `value`, edits a copy, returns the new text once when editing ends with a change.
-    fn cell(&mut self, ui: &mut egui::Ui, id: TaskId, field: Field, value: &str, width: f32) -> Option<String> {
-        let mine = matches!(&self.editing, Some((i, f, _)) if *i == id && *f == field);
-        let mut text = match &self.editing {
-            Some((_, _, t)) if mine => t.clone(),
-            _ => value.to_owned(),
-        };
-        // `min_size`: a grid cell offers only last frame's column width, which `desired_width` would shrink to.
-        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(width).min_size(Vec2::new(width, 0.0)));
+    /// Notes a click on a cell, for the sheet to act on once it's drawn. Cells never keep egui's
+    /// keyboard focus, so the arrows, Enter and Space stay the sheet's.
+    fn take_click(&mut self, ui: &egui::Ui, r: &egui::Response, id: TaskId, field: Option<Field>) {
         if r.has_focus() {
-            self.editing = Some((id, field, text.clone()));
+            r.surrender_focus();
         }
-        if mine && r.lost_focus() {
-            self.editing = None;
-            return (text != value).then_some(text);
+        if r.clicked() || r.double_clicked() {
+            self.clicked = Some((id, field, ui.input(|i| i.modifiers), r.double_clicked()));
         }
+    }
+
+    /// A cell: its text, outlined when it has the focus; an editor while it's being edited, which
+    /// returns the new text once when editing ends (Escape cancels).
+    fn cell(&mut self, ui: &mut egui::Ui, id: TaskId, field: Field, value: &str, width: f32, editable: bool) -> Option<String> {
+        if let Some((_, _, text)) = self.editing.as_mut().filter(|(i, f, _)| *i == id && *f == field) {
+            // `min_size`: a grid cell offers only last frame's column width, which `desired_width` would shrink to.
+            let r = ui.add(egui::TextEdit::singleline(text).desired_width(width).min_size(Vec2::new(width, 0.0)));
+            let text = text.clone();
+            if std::mem::take(&mut self.focus_editor) {
+                r.request_focus();
+                return None;
+            }
+            let (enter, escape) = ui.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
+            if enter || escape || r.lost_focus() || !r.has_focus() {
+                self.editing = None;
+                r.surrender_focus();
+                self.down_after_edit = enter;
+                return (!escape).then_some(text);
+            }
+            return None;
+        }
+        let (rect, r) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click());
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, value));
+        let t = Tokens::get(ui.ctx());
+        let colour = if editable { t.text } else { t.text_dim };
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        ui.painter().with_clip_rect(rect).text(rect.left_center() + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, value, font, colour);
+        if self.sel.cursor == Some(id) && self.field == field {
+            ui.painter().rect_stroke(rect.shrink(1.0), 2.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+        }
+        if !editable {
+            r.clone().on_hover_text(tl!("A summary task's duration is rolled up from its subtasks"));
+        }
+        self.take_click(ui, &r, id, Some(field));
         None
     }
 }
@@ -578,6 +822,7 @@ mod tests {
             ("files.rs", include_str!("files.rs")),
             ("recovery.rs", include_str!("recovery.rs")),
             ("timescale.rs", include_str!("timescale.rs")),
+            ("selection.rs", include_str!("selection.rs")),
         ] {
             let code = src.split("#[cfg(test)]").next().unwrap_or(src);
             for needle in ["Color32", "from_rgb", "from_gray", "from_black_alpha", "from_white_alpha"] {
@@ -683,19 +928,159 @@ mod tests {
         assert_eq!(s.project.task(TaskId(4)).unwrap().deadline, None);
     }
 
-    /// Alt+Shift+→ / ← indent or outdent the selected row; with no row selected the keys do nothing.
+    /// Alt+Shift+→ / ← indent or outdent the selected rows; with none selected the keys do nothing.
     #[test]
-    fn alt_shift_arrows_indent_and_outdent_the_selected_row() {
-        assert_eq!(outline_key(Some(TaskId(3)), true, false), Some(("task.indent", json!({"ids": [3]}))));
-        assert_eq!(outline_key(Some(TaskId(3)), false, true), Some(("task.outdent", json!({"ids": [3]}))));
-        assert_eq!(outline_key(None, true, false), None);
-        assert_eq!(outline_key(Some(TaskId(3)), false, false), None);
-        assert_eq!(outline_key(Some(TaskId(3)), true, true), None);
-        let mut s = projectcraft_engine::sample();
-        s.run("task.setPredecessors", &json!({"id": 8, "text": ""})).unwrap();
-        s.run("task.add", &json!({"name": "Unlinked"})).unwrap();
-        let (cmd, params) = outline_key(Some(TaskId(9)), true, false).unwrap();
-        s.run(cmd, &params).unwrap();
-        assert!(s.project.is_summary(TaskId(8)));
+    fn alt_shift_arrows_indent_and_outdent_the_selected_rows() {
+        let ids = [TaskId(3), TaskId(4)];
+        assert_eq!(outline_key(&ids, true, false), Some(("task.indent", json!({"ids": [3, 4]}))));
+        assert_eq!(outline_key(&ids[..1], false, true), Some(("task.outdent", json!({"ids": [3]}))));
+        assert_eq!(outline_key(&[], true, false), None);
+        assert_eq!(outline_key(&ids, false, false), None);
+        assert_eq!(outline_key(&ids, true, true), None);
+    }
+
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    fn sheet(session: Session) -> Harness<'static, App> {
+        let mut h = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(|ui, app: &mut App| app.ui(ui), App::new(session, None));
+        h.run_steps(3);
+        h
+    }
+
+    fn click(h: &mut Harness<'static, App>, label: &str, mods: Modifiers) {
+        h.get_by_label(label).click_modifiers(mods);
+        h.run_steps(3);
+    }
+
+    fn key(h: &mut Harness<'static, App>, mods: Modifiers, k: Key) {
+        h.key_press_modifiers(mods, k);
+        h.run_steps(3);
+    }
+
+    fn typed(h: &mut Harness<'static, App>, text: &str) {
+        h.event(egui::Event::Text(text.into()));
+        h.run_steps(3);
+    }
+
+    fn order(h: &Harness<'static, App>) -> Vec<u32> {
+        h.state().order().iter().map(|t| t.0).collect()
+    }
+
+    fn picked(h: &Harness<'static, App>) -> Vec<u32> {
+        let app = h.state();
+        app.sel.ids(&app.order()).iter().map(|t| t.0).collect()
+    }
+
+    #[test]
+    fn click_shift_click_ctrl_click_and_delete_the_selection() {
+        let mut h = sheet(projectcraft_engine::sample());
+        click(&mut h, "Survey the new floor", Modifiers::NONE);
+        assert_eq!(picked(&h), [2]);
+        click(&mut h, "Network cabling", Modifiers::SHIFT);
+        assert_eq!(picked(&h), [2, 3, 4, 5]);
+        click(&mut h, "Order furniture", Modifiers::COMMAND);
+        assert_eq!(picked(&h), [2, 4, 5]);
+        key(&mut h, Modifiers::NONE, Key::Delete);
+        assert_eq!(order(&h), [1, 3, 6, 7, 8]);
+        // The focus stays on row 2, now Order furniture.
+        assert_eq!(picked(&h), [3]);
+        key(&mut h, Modifiers::COMMAND, Key::Z);
+        assert_eq!(order(&h), [1, 2, 3, 4, 5, 6, 7, 8], "one undo step brings all three back");
+    }
+
+    #[test]
+    fn arrows_move_the_focus_and_shift_extends_the_selection() {
+        let mut h = sheet(projectcraft_engine::sample());
+        key(&mut h, Modifiers::NONE, Key::ArrowDown);
+        assert_eq!(picked(&h), [1], "no focus yet: the first row");
+        key(&mut h, Modifiers::NONE, Key::ArrowDown);
+        key(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+        key(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+        assert_eq!(picked(&h), [2, 3, 4]);
+        key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        assert_eq!(picked(&h), [3]);
+        key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        assert_eq!(h.state().field, Field::Start);
+        key(&mut h, Modifiers::NONE, Key::ArrowLeft);
+        assert_eq!(h.state().field, Field::Duration);
+        assert_eq!(h.state().session.project.tasks.len(), 8, "moving about changes nothing");
+    }
+
+    #[test]
+    fn the_deadline_column_is_reached_by_the_arrows_and_typed_into() {
+        let mut h = sheet(projectcraft_engine::sample());
+        click(&mut h, "Order furniture", Modifiers::NONE);
+        for _ in 0..8 {
+            key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        }
+        assert_eq!(h.state().field, Field::Deadline, "the last column, and no further");
+        typed(&mut h, "2026-11-13");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        let d = h.state().session.project.task(TaskId(3)).unwrap().deadline;
+        assert_eq!(d.map(|d| d.to_string()).as_deref(), Some("2026-11-13"));
+        assert_eq!(picked(&h), [4]);
+    }
+
+    #[test]
+    fn f2_or_typing_edits_the_focused_cell_enter_commits_and_moves_down_escape_cancels() {
+        let mut h = sheet(projectcraft_engine::sample());
+        click(&mut h, "Agree the brief", Modifiers::NONE);
+        key(&mut h, Modifiers::NONE, Key::F2);
+        assert!(h.state().editing.is_some());
+        typed(&mut h, " today");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().session.project.tasks[0].name, "Agree the brief today");
+        assert_eq!(picked(&h), [2], "Enter moves down");
+        // Typing replaces the cell's text.
+        typed(&mut h, "Survey");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().session.project.tasks[1].name, "Survey");
+        assert_eq!(picked(&h), [3]);
+        typed(&mut h, "Nothing");
+        key(&mut h, Modifiers::NONE, Key::Escape);
+        assert!(h.state().editing.is_none());
+        assert_eq!(h.state().session.project.tasks[2].name, "Order furniture");
+        assert_eq!(picked(&h), [3]);
+        // The Duration column.
+        key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        typed(&mut h, "2w");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().session.project.tasks[2].duration, 10);
+        // Enter alone moves down too.
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(picked(&h), [5]);
+    }
+
+    #[test]
+    fn insert_puts_a_task_above_the_focused_row() {
+        let mut h = sheet(projectcraft_engine::sample());
+        click(&mut h, "Network cabling", Modifiers::NONE);
+        key(&mut h, Modifiers::NONE, Key::Insert);
+        assert_eq!(order(&h), [1, 2, 3, 4, 9, 5, 6, 7, 8]);
+        assert_eq!(picked(&h), [9], "the new task takes the focus");
+        assert_eq!(h.state().field, Field::Name);
+        typed(&mut h, "Book the lift");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().session.project.tasks[4].name, "Book the lift");
+    }
+
+    #[test]
+    fn alt_shift_arrows_indent_the_selection() {
+        let mut s = Session::new(projectcraft_engine::model::Project::new("t", Date::EPOCH));
+        for n in ["Phase", "A", "B"] {
+            s.run("task.add", &json!({"name": n})).unwrap();
+        }
+        let mut h = sheet(s);
+        click(&mut h, "A", Modifiers::NONE);
+        click(&mut h, "B", Modifiers::SHIFT);
+        key(&mut h, Modifiers::ALT | Modifiers::SHIFT, Key::ArrowRight);
+        let levels: Vec<u32> = h.state().session.project.tasks.iter().map(|t| t.outline_level).collect();
+        assert_eq!(levels, [1, 2, 2]);
+        key(&mut h, Modifiers::ALT | Modifiers::SHIFT, Key::ArrowLeft);
+        let levels: Vec<u32> = h.state().session.project.tasks.iter().map(|t| t.outline_level).collect();
+        assert_eq!(levels, [1, 1, 1]);
+        assert_eq!(picked(&h), [2, 3], "the selection stays");
     }
 }

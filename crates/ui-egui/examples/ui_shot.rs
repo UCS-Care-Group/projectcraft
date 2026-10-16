@@ -9,7 +9,9 @@
 //! `{"theme": "light" | "dark"}` switches the theme, `{"shot": "/abs/out.png"}` saves the window
 //! as PNG, `{"steps": n}` runs extra frames,
 //! `{"click": "label"}` clicks the first widget with that label (say `File`, or `Open` with
-//! unsaved changes for the Save changes? prompt), `{"recover": "/abs/dir"}` turns on the
+//! unsaved changes for the Save changes? prompt; a task's name selects its row), with
+//! `"mods": "shift" | "ctrl" | "alt+shift"` held, `{"key": "ArrowDown"}` presses a key (egui's key
+//! names, same `mods`), `{"recover": "/abs/dir"}` turns on the
 //! recovery copy with `dir` as the untitled folder (an `untitled.projectcraft.recovery` there is
 //! offered back). The window is 1280×720 pt at 2× (override with
 //! `{"width": w, "height": h}` and `{"scale": s}` on any line) and opens the sample project
@@ -64,12 +66,18 @@ fn run() -> Result<(), String> {
         } else if let Some(label) = l.get("click").and_then(Value::as_str) {
             // The first widget with this label (a toolbar button, a menu, a menu item).
             match harness.query_all_by_label(label).next() {
-                Some(node) => node.click(),
+                Some(node) => node.click_modifiers(mods(&l)),
                 None => println!("click: no `{label}`"),
             }
             harness.run_steps(4);
         } else if let Some(dir) = l.get("recover").and_then(Value::as_str) {
             harness.state_mut().keep_recovery(Some(dir.into()), true);
+            harness.run_steps(4);
+        } else if let Some(name) = l.get("key").and_then(Value::as_str) {
+            match egui::Key::from_name(name) {
+                Some(key) => harness.key_press_modifiers(mods(&l), key),
+                None => println!("key: no `{name}`"),
+            }
             harness.run_steps(4);
         } else if let Some(n) = l.get("steps").and_then(Value::as_u64) {
             harness.run_steps(n.min(10_000) as usize);
@@ -81,4 +89,19 @@ fn run() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The modifiers a script line holds: `"mods": "shift"`, `"ctrl"`, `"alt+shift"` and so on.
+fn mods(l: &Value) -> egui::Modifiers {
+    let text = l.get("mods").and_then(Value::as_str).unwrap_or("");
+    let mut m = egui::Modifiers::NONE;
+    for part in text.split('+') {
+        m |= match part.trim() {
+            "shift" => egui::Modifiers::SHIFT,
+            "ctrl" => egui::Modifiers::COMMAND,
+            "alt" => egui::Modifiers::ALT,
+            _ => egui::Modifiers::NONE,
+        };
+    }
+    m
 }
