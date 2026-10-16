@@ -13,7 +13,20 @@ use serde_json::{Value, json};
 enum Field {
     Name,
     Duration,
+    Start,
+    Finish,
     Preds,
+}
+
+/// The command a typed Start or Finish issues: Start No Earlier Than or Finish No Earlier Than
+/// that date. The cell keeps showing the scheduler's date, as in Microsoft Project.
+fn typed_date(field: Field, id: TaskId, text: &str) -> Option<(&'static str, Value)> {
+    let ty = match field {
+        Field::Start => "SNET",
+        Field::Finish => "FNET",
+        _ => return None,
+    };
+    Some(("task.setConstraint", json!({"id": id.0, "type": ty, "date": text.trim()})))
 }
 
 pub struct App {
@@ -124,8 +137,11 @@ impl App {
                         Err(e) => self.status = e.to_string(),
                     }
                 }
-                ui.label(dates.map_or_else(String::new, |d| d.start.to_string()));
-                ui.label(dates.map_or_else(String::new, |d| d.finish.to_string()));
+                for (field, shown) in [(Field::Start, dates.map(|d| d.start)), (Field::Finish, dates.map(|d| d.finish))] {
+                    if let Some(c) = self.cell(ui, id, field, &shown.map_or_else(String::new, |d| d.to_string()), 80.0) {
+                        commands.extend(typed_date(field, id, &c));
+                    }
+                }
                 if let Some(c) = self.cell(ui, id, Field::Preds, &preds, 100.0) {
                     match self.session.project.parse_preds_rows(&c) {
                         Ok(links) => commands.push(("task.setPredecessors", json!({"id": id.0, "text": preds_text(&links)}))),
@@ -182,5 +198,25 @@ fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::
     } else {
         let bar = egui::Rect::from_min_max(egui::pos2(rect.left() + x0, rect.top() + 5.0), egui::pos2(rect.left() + x1, rect.bottom() - 5.0));
         p.rect_filled(bar, 2.0, colour);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Worked example 15 (sheet side): a typed Start sets SNET, a typed Finish FNET. The
+    /// scheduling side is `crates/engine/tests/constraints.rs`.
+    #[test]
+    fn typing_a_start_or_finish_issues_snet_or_fnet() {
+        let mut s = projectcraft_engine::sample();
+        let (cmd, params) = typed_date(Field::Start, TaskId(5), " 2026-12-07 ").unwrap();
+        assert_eq!(params, json!({"id": 5, "type": "SNET", "date": "2026-12-07"}));
+        s.run(cmd, &params).unwrap();
+        assert_eq!(s.schedule.as_ref().unwrap().tasks[&TaskId(5)].start.to_string(), "2026-12-07");
+        let (_, params) = typed_date(Field::Finish, TaskId(5), "2026-12-18").unwrap();
+        assert_eq!(params["type"], "FNET");
+        assert!(typed_date(Field::Name, TaskId(5), "x").is_none());
+        assert!(s.run(cmd, &typed_date(Field::Start, TaskId(5), "next week").unwrap().1).is_err());
     }
 }

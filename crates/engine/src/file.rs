@@ -142,7 +142,7 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Date, Link, LinkKind, Task, TaskId};
+    use crate::model::{Constraint, Date, Link, LinkKind, Task, TaskId};
     use serde_json::json;
 
     fn tmp_dir(name: &str) -> PathBuf {
@@ -158,8 +158,14 @@ mod tests {
         p.calendar.working = [true, false, true, false, true, true, false];
         p.calendar.holidays.insert(Date::from_ymd(2026, 4, 3).unwrap());
         p.tasks = vec![
-            Task { id: TaskId(2), name: "Dig «foundations» ✓".into(), duration: 4, preds: vec![] },
-            Task { id: TaskId(5), name: "Pour".into(), duration: 0, preds: vec![Link { pred: TaskId(2), kind: LinkKind::SF, lag: -3 }] },
+            Task { id: TaskId(2), name: "Dig «foundations» ✓".into(), duration: 4, preds: vec![], constraint: Constraint::Asap },
+            Task {
+                id: TaskId(5),
+                name: "Pour".into(),
+                duration: 0,
+                preds: vec![Link { pred: TaskId(2), kind: LinkKind::SF, lag: -3 }],
+                constraint: Constraint::StartNoEarlierThan(Date::from_ymd(2026, 3, 9).unwrap()),
+            },
         ];
         p.next_id = 9;
         p
@@ -169,7 +175,10 @@ mod tests {
     fn every_field_round_trips_with_a_format_version() {
         let s = Session::new(full());
         let text = s.save_json().unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["format_version"], json!(FORMAT_VERSION));
+        let v = serde_json::from_str::<Value>(&text).unwrap();
+        assert_eq!(v["format_version"], json!(FORMAT_VERSION));
+        assert_eq!(v["tasks"][1]["constraint"], json!({"SNET": "2026-03-09"}));
+        assert!(v["tasks"][0].get("constraint").is_none(), "ASAP is not written");
         assert_eq!(Session::load_json(&text).unwrap().project, full());
     }
 
@@ -190,6 +199,9 @@ mod tests {
             "tasks":[{"id":1,"name":"A","duration":2,"preds":[]},{"id":2,"name":"B","duration":1,"preds":[{"pred":1,"kind":"FS","lag":0}]}],"next_id":3}"#;
         let s = Session::load_json(m0).unwrap();
         assert_eq!(s.project.tasks.len(), 2);
+        // No constraint field: As Soon As Possible, and none is written back.
+        assert!(s.project.tasks.iter().all(|t| t.constraint == Constraint::Asap));
+        assert!(!s.save_json().unwrap().contains("constraint"));
         assert!(s.schedule.is_ok());
     }
 

@@ -64,6 +64,98 @@ pub struct Link {
     pub lag: i64,
 }
 
+/// A date rule on a task's start or finish, as Microsoft Project's Constraint Type field.
+/// Constraints win over links. Written to the file as `"ASAP"` or `{"SNET": "2026-01-12"}`;
+/// a file without one is As Soon As Possible.
+///
+/// ponytail: the scheduler honours ASAP, SNET and FNET; the hard types (SNLT, FNLT, MSO, MFO)
+/// are modelled but ignored by [`schedule`] and refused by the command until #12.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Constraint {
+    /// No constraint: as early as the links allow.
+    #[default]
+    #[serde(rename = "ASAP")]
+    Asap,
+    #[serde(rename = "SNET")]
+    StartNoEarlierThan(Date),
+    #[serde(rename = "FNET")]
+    FinishNoEarlierThan(Date),
+    #[serde(rename = "SNLT")]
+    StartNoLaterThan(Date),
+    #[serde(rename = "FNLT")]
+    FinishNoLaterThan(Date),
+    #[serde(rename = "MSO")]
+    MustStartOn(Date),
+    #[serde(rename = "MFO")]
+    MustFinishOn(Date),
+}
+
+impl Constraint {
+    /// Every type's short code, ASAP first.
+    pub const CODES: [&'static str; 7] = ["ASAP", "SNET", "FNET", "SNLT", "FNLT", "MSO", "MFO"];
+
+    /// Builds a constraint from its short code (any case) and date. ASAP takes no date and ignores one given.
+    pub fn from_code(code: &str, date: Option<Date>) -> Result<Constraint, ModelError> {
+        let code = code.trim().to_ascii_uppercase();
+        let make: fn(Date) -> Constraint = match code.as_str() {
+            "ASAP" => return Ok(Constraint::Asap),
+            "SNET" => Constraint::StartNoEarlierThan,
+            "FNET" => Constraint::FinishNoEarlierThan,
+            "SNLT" => Constraint::StartNoLaterThan,
+            "FNLT" => Constraint::FinishNoLaterThan,
+            "MSO" => Constraint::MustStartOn,
+            "MFO" => Constraint::MustFinishOn,
+            _ => {
+                let code: String = code.chars().take(20).collect();
+                return Err(ModelError::Invalid(format!("unknown constraint type `{code}`; expected one of {}", Constraint::CODES.join(", "))));
+            }
+        };
+        date.map(make).ok_or_else(|| ModelError::Invalid(format!("{} needs a date", make(Date::EPOCH).name())))
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Constraint::Asap => "ASAP",
+            Constraint::StartNoEarlierThan(_) => "SNET",
+            Constraint::FinishNoEarlierThan(_) => "FNET",
+            Constraint::StartNoLaterThan(_) => "SNLT",
+            Constraint::FinishNoLaterThan(_) => "FNLT",
+            Constraint::MustStartOn(_) => "MSO",
+            Constraint::MustFinishOn(_) => "MFO",
+        }
+    }
+
+    /// The name Microsoft Project's Constraint Type field shows.
+    pub fn name(self) -> &'static str {
+        match self {
+            Constraint::Asap => "As Soon As Possible",
+            Constraint::StartNoEarlierThan(_) => "Start No Earlier Than",
+            Constraint::FinishNoEarlierThan(_) => "Finish No Earlier Than",
+            Constraint::StartNoLaterThan(_) => "Start No Later Than",
+            Constraint::FinishNoLaterThan(_) => "Finish No Later Than",
+            Constraint::MustStartOn(_) => "Must Start On",
+            Constraint::MustFinishOn(_) => "Must Finish On",
+        }
+    }
+
+    /// The constraint date; `None` for ASAP.
+    pub fn date(self) -> Option<Date> {
+        match self {
+            Constraint::Asap => None,
+            Constraint::StartNoEarlierThan(d)
+            | Constraint::FinishNoEarlierThan(d)
+            | Constraint::StartNoLaterThan(d)
+            | Constraint::FinishNoLaterThan(d)
+            | Constraint::MustStartOn(d)
+            | Constraint::MustFinishOn(d) => Some(d),
+        }
+    }
+
+    pub fn is_asap(&self) -> bool {
+        *self == Constraint::Asap
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
     pub id: TaskId,
@@ -72,6 +164,8 @@ pub struct Task {
     pub duration: i64,
     #[serde(default)]
     pub preds: Vec<Link>,
+    #[serde(default, skip_serializing_if = "Constraint::is_asap")]
+    pub constraint: Constraint,
 }
 
 /// Which days are worked. ponytail: one project calendar; resource and task calendars come with resources.
@@ -91,7 +185,25 @@ impl Default for Calendar {
 
 impl Calendar {
     pub fn is_workday(&self, d: Date) -> bool {
-        self.working.get(usize::from(d.weekday())).copied().unwrap_or(false) && !self.holidays.contains(&d)
+        self.works_weekday(d) && !self.holidays.contains(&d)
+    }
+
+    fn works_weekday(&self, d: Date) -> bool {
+        self.working.get(usize::from(d.weekday())).copied().unwrap_or(false)
+    }
+
+    /// Working days on or after `from` and before `to`; 0 when `to` is not after `from`. Whole
+    /// weeks are counted arithmetically, so any range in years 1–9999 is quick.
+    pub fn workdays_between(&self, from: Date, to: Date) -> i64 {
+        let n = to.days_since(from);
+        if n <= 0 {
+            return 0;
+        }
+        let per_week = self.working.iter().filter(|w| **w).count() as i64;
+        let (weeks, rest) = (n / 7, n % 7);
+        let tail = (0..rest).filter(|k| from.add_days(weeks * 7 + k).is_some_and(|d| self.works_weekday(d))).count() as i64;
+        let holidays = self.holidays.range(from..to).filter(|h| self.works_weekday(**h)).count() as i64;
+        weeks * per_week + tail - holidays
     }
 
     /// The first `count` working days on or after `from`; `None` with no working weekday, or past year 9999.
@@ -143,7 +255,7 @@ impl Project {
         }
         let id = TaskId(self.next_id.max(1));
         self.next_id = id.0.checked_add(1).ok_or_else(|| ModelError::Invalid("out of task ids".into()))?;
-        self.tasks.push(Task { id, name: name.into(), duration: check_days(duration)?, preds: Vec::new() });
+        self.tasks.push(Task { id, name: name.into(), duration: check_days(duration)?, preds: Vec::new(), constraint: Constraint::Asap });
         Ok(id)
     }
 
@@ -298,6 +410,40 @@ mod tests {
         assert_eq!(p.preds_text_rows(&[Link { pred: TaskId(99), kind: LinkKind::FF, lag: -1 }]), "?FF-1");
         // A deleted Unique ID is never handed out again.
         assert_eq!(p.add_task("d", 1).unwrap(), TaskId(4));
+    }
+
+    #[test]
+    fn workdays_between_counts_working_days_and_skips_holidays() {
+        let mut c = Calendar::default();
+        let d = |s: &str| s.parse::<Date>().unwrap();
+        // Mon 5 .. Sun 18 January 2026: ten working days.
+        assert_eq!(c.workdays_between(d("2026-01-05"), d("2026-01-19")), 10);
+        assert_eq!(c.workdays_between(d("2026-01-10"), d("2026-01-12")), 0);
+        assert_eq!(c.workdays_between(d("2026-01-12"), d("2026-01-05")), 0);
+        c.holidays.insert(d("2026-01-07"));
+        c.holidays.insert(d("2026-01-10")); // a Saturday: not worked anyway
+        assert_eq!(c.workdays_between(d("2026-01-05"), d("2026-01-19")), 9);
+        // Agrees with a day-by-day walk.
+        let from = d("2025-12-29");
+        let walk = c.workdays(from, 40).unwrap();
+        for (i, day) in walk.iter().enumerate() {
+            assert_eq!(c.workdays_between(from, *day), i as i64);
+        }
+        assert!(c.workdays_between(d("0001-01-01"), d("9999-12-31")) > 2_000_000);
+    }
+
+    #[test]
+    fn constraints_from_codes() {
+        let d = Date::from_ymd(2026, 1, 12);
+        assert_eq!(Constraint::from_code("asap", None).unwrap(), Constraint::Asap);
+        assert_eq!(Constraint::from_code("ASAP", d).unwrap(), Constraint::Asap);
+        for code in Constraint::CODES {
+            let c = Constraint::from_code(code, d).unwrap();
+            assert_eq!(c.code(), code);
+            assert_eq!(c.date(), if code == "ASAP" { None } else { d });
+        }
+        assert!(Constraint::from_code("SNET", None).unwrap_err().to_string().contains("Start No Earlier Than needs a date"));
+        assert!(Constraint::from_code("ALAP", d).is_err());
     }
 
     proptest::proptest! {

@@ -157,7 +157,7 @@ fn days() -> Value {
 
 /// Checks params against a command schema. Supports the subset our schemas use: an object with
 /// `properties`, `required` and `additionalProperties: false`; property `type` integer, number,
-/// string, boolean, array or object; `minimum`/`maximum`. `null` params count as `{}`.
+/// string, boolean, array or object; `minimum`/`maximum`; `enum` of strings. `null` params count as `{}`.
 pub fn check_params(schema: &Value, params: &Value) -> Result<(), CmdError> {
     let empty = serde_json::Map::new();
     let given = match params {
@@ -204,6 +204,12 @@ fn check_value(k: &str, p: &Value, v: &Value) -> Result<(), CmdError> {
             _ => ty,
         };
         return Err(CmdError::Params(format!("`{k}` must be {what}")));
+    }
+    if let Some(allowed) = p.get("enum").and_then(Value::as_array)
+        && !allowed.contains(v)
+    {
+        let names: Vec<&str> = allowed.iter().filter_map(Value::as_str).collect();
+        return Err(CmdError::Params(format!("`{k}` must be one of {}", names.join(", "))));
     }
     if let Some(n) = v.as_f64() {
         let min = p.get("minimum").and_then(Value::as_f64);
@@ -300,6 +306,34 @@ const COMMANDS: &[CommandSpec] = &[
         },
     },
     CommandSpec {
+        id: "task.setConstraint",
+        label: "Constraint",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "id": task_id(),
+                    "type": {"type": "string", "enum": model::Constraint::CODES, "description": "ASAP clears; SNET Start No Earlier Than; FNET Finish No Earlier Than"},
+                    "date": {"type": "string", "format": "date", "description": "YYYY-MM-DD; required except for ASAP"},
+                }),
+                &["id", "type"],
+            )
+        },
+        run: |p, v| {
+            let date = match v.get("date").and_then(Value::as_str) {
+                Some(d) => Some(d.parse::<Date>().map_err(|e| CmdError::Params(e.to_string()))?),
+                None => None,
+            };
+            let c = model::Constraint::from_code(str_param(v, "type")?, date)?;
+            // ponytail: the hard types are modelled; scheduling them (with negative slack) is #12.
+            if !matches!(c, model::Constraint::Asap | model::Constraint::StartNoEarlierThan(_) | model::Constraint::FinishNoEarlierThan(_)) {
+                return Err(CmdError::Params(format!("{} constraints are not yet supported", c.name())));
+            }
+            p.task_mut(id_param(v)?)?.constraint = c;
+            Ok(())
+        },
+    },
+    CommandSpec {
         id: "task.delete",
         label: "Delete Task",
         effect: Effect::Destructive,
@@ -380,6 +414,8 @@ mod tests {
         assert!(s.run("task.setDuration", &json!({"id": 1})).unwrap_err().to_string().contains("`duration` is required"));
         assert!(s.run("task.setDuration", &json!({"id": 1, "duration": "5"})).is_err());
         assert!(s.run("task.setDuration", &json!({"id": 1, "duration": model::MAX_DAYS + 1})).is_err());
+        let e = s.run("task.setConstraint", &json!({"id": 1, "type": "SOON"})).unwrap_err().to_string();
+        assert!(e.contains("must be one of ASAP, SNET"), "{e}");
         assert_eq!(s.project, before);
         s.run("task.add", &json!(null)).unwrap();
         s.run("task.add", &json!({"name": "Snag list", "duration": 3})).unwrap();
@@ -413,6 +449,7 @@ mod tests {
     fn junk_from(schema: &Value) -> Vec<Value> {
         let props = schema["properties"].as_object().cloned().unwrap_or_default();
         let good = |p: &Value| match p["type"].as_str() {
+            _ if p["enum"].is_array() => p["enum"][1].clone(),
             Some("integer") | Some("number") => p["minimum"].clone(),
             Some("string") if p["format"] == "date" => json!("2026-11-02"),
             _ => json!("1"),

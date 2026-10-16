@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (M1.4 duration units)
+> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (M1.3 soft constraints)
 
 Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -37,3 +37,4 @@ Each roadmap milestone has a pass/fail checklist; it is reached when every item 
 | 2026-10-16 | M1.0: `format_version` in the file (refuse newer, migrate M0), validation on load, atomic save with `.bak` (#6) |
 | 2026-10-16 | M1.4: duration entry takes `d`, `w` (×5) and `mo` (×20), clamped to `MAX_DAYS`; `h`, `m` and elapsed units refused with a clear message (#16) |
 | 2026-10-16 | M1.2: the ID column is the row number; Predecessors shows and reads row IDs, links stay by Unique ID; commands documented as taking Unique IDs (#9) |
+| 2026-10-16 | M1.3: Start/Finish No Earlier Than constraints (`task.setConstraint`); typing a Start or Finish sets SNET or FNET; worked examples 5, 11, 14, 15 (#11) |
