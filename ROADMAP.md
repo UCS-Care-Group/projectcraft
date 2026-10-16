@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (all 16 M1 tickets landed; headline numbers refreshed; three follow-ups open before M1 is called reached) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M1 reached: all tickets and follow-ups landed) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -8,7 +8,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 
 | Number | Value | Kind |
 |---|---|---|
-| M1 tickets done | **16 / 16**; 3 follow-ups open (#26, #28, #39) | measured (GitHub issues) |
+| M1 tickets done | **16 / 16**, plus follow-ups #26, #28, #37, #39 | measured (GitHub issues) |
 | Commands / crates | 18 commands · 4 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
 | Tests | 161 `#[test]`s; 6 property-test suites; property tests on the file reader, the duration and predecessor parsers, outline changes and the scheduler (summaries with any links and constraints) | measured (source) |
 | Builds verified | Windows, macOS and Linux (CI on each), the browser build (wasm) | measured |
@@ -22,9 +22,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] Command registry, undo/redo, failed commands change nothing, hostile-params test
 - [x] Gantt Chart view (task sheet + bars), `.projectcraft` JSON, CLI
 
-## M1 — A plan you can run a real project on
-Every item below has landed. M1 is reached once the follow-ups #26 (milestone with a Start No Earlier Than date), #39 (exact finish holds from a summary) and #28 (file dialogs without a portal on Linux) are fixed.
-
+## M1 — A plan you can run a real project on ✅ (2026-10-16)
 - [x] Command param schemas and effects; `format_version`
 - [x] Summary tasks (outline levels, indent/outdent, rolled-up dates; summary links and constraints hold their subtasks; circular outline changes refused)
 - [x] ID as row number, Unique ID stable; insert, move and delete rows; selection and keyboard
@@ -80,3 +78,4 @@ Every item below has landed. M1 is reached once the follow-ups #26 (milestone wi
 | 2026-10-16 | minor | M1.4 calendar exceptions |
 | 2026-10-16 | minor | M1.1 summary links |
 | 2026-10-16 | minor | All M1 tickets landed; headline numbers refreshed; reschedule timings added |
+| 2026-10-16 | minor | M1 reached |
