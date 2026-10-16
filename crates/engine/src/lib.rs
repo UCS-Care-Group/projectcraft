@@ -79,7 +79,24 @@ const UNDO_DEPTH: usize = 200;
 impl Session {
     pub fn new(project: Project) -> Self {
         let schedule = model::schedule(&project);
-        Session { project, schedule, undo: Vec::new(), redo: Vec::new() }
+        let mut s = Session { project, schedule, undo: Vec::new(), redo: Vec::new() };
+        s.reschedule();
+        s
+    }
+
+    /// Schedules the project, after keeping its outline to the rule. Each summary task stores its
+    /// rolled-up duration, so one that stops being a summary keeps its last rolled-up duration
+    /// (worked example 13); the scheduler never reads a summary's own duration.
+    fn reschedule(&mut self) {
+        self.project.normalize_outline();
+        self.schedule = model::schedule(&self.project);
+        if let Ok(s) = &self.schedule {
+            for (id, d) in &s.rolled_up {
+                if let Ok(t) = self.project.task_mut(*id) {
+                    t.duration = *d;
+                }
+            }
+        }
     }
 
     pub fn can_undo(&self) -> bool {
@@ -100,8 +117,12 @@ impl Session {
             _ => {}
         }
         let before = self.project.clone();
-        let result = catch_unwind(AssertUnwindSafe(|| (spec.run)(&mut self.project, params)))
-            .unwrap_or_else(|_| Err(CmdError::Params(format!("{id} failed unexpectedly; nothing was changed"))));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            (spec.run)(&mut self.project, params)?;
+            self.reschedule();
+            Ok(())
+        }))
+        .unwrap_or_else(|_| Err(CmdError::Params(format!("{id} failed unexpectedly; nothing was changed"))));
         match result {
             Ok(()) if self.project != before => {
                 self.undo.push(before);
@@ -109,12 +130,12 @@ impl Session {
                     self.undo.remove(0);
                 }
                 self.redo.clear();
-                self.schedule = model::schedule(&self.project);
                 Ok(())
             }
             Ok(()) => Ok(()),
             Err(e) => {
                 self.project = before;
+                self.schedule = model::schedule(&self.project);
                 Err(e)
             }
         }
@@ -230,6 +251,26 @@ fn int_param(v: &Value, k: &str) -> Result<i64, CmdError> {
     v.get(k).and_then(Value::as_i64).ok_or_else(|| CmdError::Params(format!("`{k}` (whole number) is required")))
 }
 
+/// The `ids` param: a list of Unique IDs.
+fn ids_param(v: &Value) -> Result<Vec<TaskId>, CmdError> {
+    let list = v.get("ids").and_then(Value::as_array).ok_or_else(|| CmdError::Params("`ids` (a list of Unique IDs) is required".into()))?;
+    if list.len() > model::MAX_TASKS {
+        return Err(CmdError::Params(format!("`ids` lists more than {} tasks", model::MAX_TASKS)));
+    }
+    list.iter()
+        .map(|n| {
+            n.as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .map(TaskId)
+                .ok_or_else(|| CmdError::Params("`ids` must be Unique IDs (whole numbers)".into()))
+        })
+        .collect()
+}
+
+fn ids() -> Value {
+    json!({"type": "array", "items": task_id(), "description": "the tasks' Unique IDs (not their row IDs); each moves with its subtasks"})
+}
+
 fn id_param(v: &Value) -> Result<TaskId, CmdError> {
     let n = int_param(v, "id")?;
     u32::try_from(n).map(TaskId).map_err(|_| CmdError::Params(format!("no task {n}")))
@@ -288,7 +329,11 @@ const COMMANDS: &[CommandSpec] = &[
         effect: Effect::Edit,
         schema: || object(json!({"id": task_id(), "duration": days()}), &["id", "duration"]),
         run: |p, v| {
-            p.task_mut(id_param(v)?)?.duration = model::check_days(int_param(v, "duration")?)?;
+            let id = id_param(v)?;
+            if p.is_summary(id) {
+                return Err(CmdError::Params("a summary task's duration is rolled up from its subtasks and can't be set".into()));
+            }
+            p.task_mut(id)?.duration = model::check_days(int_param(v, "duration")?)?;
             Ok(())
         },
     },
@@ -325,7 +370,29 @@ const COMMANDS: &[CommandSpec] = &[
                 None => None,
             };
             let c = model::Constraint::from_code(str_param(v, "type")?, date)?;
-            p.task_mut(id_param(v)?)?.constraint = c;
+            let id = id_param(v)?;
+            p.check_summary_constraint(id, c)?;
+            p.task_mut(id)?.constraint = c;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.indent",
+        label: "Indent Task",
+        effect: Effect::Edit,
+        schema: || object(json!({"ids": ids()}), &["ids"]),
+        run: |p, v| {
+            p.indent(&ids_param(v)?)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.outdent",
+        label: "Outdent Task",
+        effect: Effect::Edit,
+        schema: || object(json!({"ids": ids()}), &["ids"]),
+        run: |p, v| {
+            p.outdent(&ids_param(v)?)?;
             Ok(())
         },
     },
@@ -421,7 +488,7 @@ mod tests {
     fn commands_take_unique_ids_that_survive_deletes_and_save() {
         for c in commands() {
             for (k, p) in (c.schema)()["properties"].as_object().unwrap() {
-                if k == "id" || k == "text" {
+                if k == "id" || k == "ids" || k == "text" {
                     assert!(p["description"].as_str().unwrap().contains("Unique ID"), "{}.{k}", c.id);
                 }
             }
@@ -448,6 +515,7 @@ mod tests {
             _ if p["enum"].is_array() => p["enum"][1].clone(),
             Some("integer") | Some("number") => p["minimum"].clone(),
             Some("string") if p["format"] == "date" => json!("2026-11-02"),
+            Some("array") => json!([2]),
             _ => json!("1"),
         };
         let valid: serde_json::Map<String, Value> = props.iter().map(|(k, p)| (k.clone(), good(p))).collect();
@@ -467,6 +535,8 @@ mod tests {
             json!("0000-00-00"),
             json!("1,,x"),
             json!("9999SS+999999"),
+            json!([0, -1, 1.5, "1", null]),
+            json!([u32::MAX, 1, 1, 2]),
         ];
         for (k, p) in &props {
             let mut edge = wrong.to_vec();

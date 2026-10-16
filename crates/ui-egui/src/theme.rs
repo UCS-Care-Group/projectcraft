@@ -31,6 +31,8 @@ pub struct Tokens {
     pub bar_critical: Color32,
     /// A warning indicator: a link that a constraint overrides.
     pub warning: Color32,
+    /// A summary task's bar and its end points.
+    pub bar_summary: Color32,
 }
 
 impl Tokens {
@@ -55,6 +57,7 @@ impl Tokens {
             bar: Color32::from_rgb(0x3C, 0x78, 0xC8),
             bar_critical: Color32::from_rgb(0xC8, 0x3C, 0x3C),
             warning: Color32::from_rgb(0xB0, 0x5A, 0x00),
+            bar_summary: Color32::from_rgb(0x30, 0x30, 0x30),
         }
     }
 
@@ -79,6 +82,7 @@ impl Tokens {
             bar: Color32::from_rgb(0x5A, 0x96, 0xE6),
             bar_critical: Color32::from_rgb(0xE8, 0x62, 0x62),
             warning: Color32::from_rgb(0xF2, 0xA6, 0x3B),
+            bar_summary: Color32::from_rgb(0xD2, 0xD2, 0xD2),
         }
     }
 

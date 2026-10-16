@@ -71,6 +71,9 @@ impl Session {
 
 /// Brings a file of an older `version` up to [`FORMAT_VERSION`], one step at a time.
 /// Migration code stays forever for every released version.
+///
+/// A new field with a default (`constraint`, `outline_level`) needs no new version: older files
+/// read as the default, and the outline is kept to its rule on load ([`Session::new`]).
 fn migrate(_v: &mut Value, version: u64) {
     if version == 0 {
         // M0 → 1: same fields; only `format_version` is new.
@@ -156,13 +159,18 @@ mod tests {
         p.calendar.working = [true, false, true, false, true, true, false];
         p.calendar.holidays.insert(Date::from_ymd(2026, 4, 3).unwrap());
         p.tasks = vec![
-            Task { id: TaskId(2), name: "Dig «foundations» ✓".into(), duration: 4, preds: vec![], constraint: Constraint::Asap },
+            Task {
+                id: TaskId(2), name: "Dig «foundations» ✓".into(), duration: 4, preds: vec![], constraint: Constraint::Asap, outline_level: 1
+            },
+            // A subtask of task 2, which is a summary storing its rolled-up duration.
+            Task { id: TaskId(7), name: "Excavate".into(), duration: 4, preds: vec![], constraint: Constraint::Asap, outline_level: 2 },
             Task {
                 id: TaskId(5),
                 name: "Pour".into(),
                 duration: 0,
                 preds: vec![Link { pred: TaskId(2), kind: LinkKind::SF, lag: -3 }],
                 constraint: Constraint::StartNoEarlierThan(Date::from_ymd(2026, 3, 9).unwrap()),
+                outline_level: 1,
             },
         ];
         p.next_id = 9;
@@ -175,8 +183,10 @@ mod tests {
         let text = s.save_json().unwrap();
         let v = serde_json::from_str::<Value>(&text).unwrap();
         assert_eq!(v["format_version"], json!(FORMAT_VERSION));
-        assert_eq!(v["tasks"][1]["constraint"], json!({"SNET": "2026-03-09"}));
+        assert_eq!(v["tasks"][2]["constraint"], json!({"SNET": "2026-03-09"}));
         assert!(v["tasks"][0].get("constraint").is_none(), "ASAP is not written");
+        assert_eq!(v["tasks"][1]["outline_level"], json!(2));
+        assert!(v["tasks"][0].get("outline_level").is_none(), "level 1 is not written");
         assert_eq!(Session::load_json(&text).unwrap().project, full());
     }
 
@@ -208,7 +218,7 @@ mod tests {
         let mut p = full();
         p.next_id = 1;
         let s = Session::load_json(&Session::new(p).save_json().unwrap()).unwrap();
-        assert_eq!(s.project.next_id, 6, "a deleted or existing id is never reused");
+        assert_eq!(s.project.next_id, 8, "a deleted or existing id is never reused");
         for broken in [
             json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 1, "name": "a", "duration": 1}, {"id": 1, "name": "b", "duration": 1}]}),
             json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 0, "name": "a", "duration": 1}]}),
