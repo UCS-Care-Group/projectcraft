@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M2.5 costs) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (currency exchange gap; M2 checklist ticked) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -33,8 +33,8 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] Theme tokens (light/dark), `tl!` translation, look checked in screenshots (`ui_shot`)
 
 ## M2 — Resources and assignments
-- [ ] Working time in hours and minutes: part-day durations, working hours in calendars, files from M1 open with the same dates
-- [ ] Resource Sheet: work, material and cost resources
+- [x] Working time in hours and minutes: part-day durations, working hours in calendars, files from M1 open with the same dates
+- [x] Resource Sheet: work, material and cost resources
 - [x] Assignments: Resource Names column, Assign Resources dialog, material quantities
 - [ ] Task types (Fixed Units, Fixed Duration, Fixed Work) and effort-driven scheduling, as Microsoft Project documents them
 - [ ] Resource calendars (leave and part-time working)
@@ -48,6 +48,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - M4 — Microsoft Project XML (MSPDI) and CSV in and out; XER
 - M5 — Control channel and MCP server; web build (`apps/projectcraft-web`)
 - M6 — Packaging and releases (as MailCraft: msi, AppImage, deb, rpm, flatpak, dmg)
+- Gap: currency exchange. Changing a project's currency keeps each amount's number (£12.50 becomes $12.50; rounded half to even when the new currency has fewer decimal places); converting amounts at an exchange rate is not done yet
 
 ## Progress log
 | Date | What landed |
@@ -104,3 +105,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | FF after a milestone at the start of a day (#74) |
 | 2026-10-16 | minor | M2.2 assignments |
 | 2026-10-16 | minor | M2.5 costs |
+| 2026-10-16 | minor | Currency exchange listed as a gap; working time and Resource Sheet ticked |
