@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (duration edit on assignments of different lengths) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M4 import gaps listed) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -47,7 +47,13 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 
 ## Later
 - M3 — Baselines, % complete, actuals, tracking Gantt
-- M4 — Microsoft Project XML (MSPDI) and CSV in and out; XER
+- M4 — Microsoft Project XML (MSPDI) and CSV in and out. Imports open as a new project, dates recomputed by ProjectCraft's scheduler, with an import report of what was converted or dropped and which tasks' dates differ from the file's. Gaps on import, until later work closes them:
+  - Converted: elapsed durations and lags become working time; percent lags become working time from the predecessor's duration; manually scheduled tasks become auto-scheduled; contours other than flat become flat
+  - Dropped: base calendars other than the project calendar, task calendars, resource calendars (until resource calendars land), rate tables B–E
+  - Dropped until tracking (M3): baselines, actuals, % complete
+  - Dropped for now: notes, hyperlinks, custom fields, priority, task splits, recurring tasks
+  - Not yet: appending or merging into the open project; a CSV column-mapping wizard
+- XER (Primavera) import — moved after M4
 - M5 — Control channel and MCP server; web build (`apps/projectcraft-web`)
 - M6 — Packaging and releases (as MailCraft: msi, AppImage, deb, rpm, flatpak, dmg)
 - Gap: currency exchange. Changing a project's currency keeps each amount's number (£12.50 becomes $12.50; rounded half to even when the new currency has fewer decimal places); converting amounts at an exchange rate is not done yet
@@ -115,3 +121,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | Headline numbers refreshed for M2 |
 | 2026-10-16 | minor | CLI sweeps stale save temp files (#87) |
 | 2026-10-16 | minor | Duration edit on assignments of different lengths (#88) |
+| 2026-10-16 | minor | M4 scope and import gaps listed; XER moved after M4 |
