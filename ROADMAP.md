@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (Assign Resources on the selection; asking before deleting an assigned resource) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (resource-calendar gap listed) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -56,6 +56,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - XER (Primavera) import — moved after M4
 - M5 — Control channel and MCP server; web build (`apps/projectcraft-web`)
 - M6 — Packaging and releases (as MailCraft: msi, AppImage, deb, rpm, flatpak, dmg)
+- Gap: resource calendars work only within the project calendar's working time. A resource's own Saturday, a working day on a project holiday, or hours outside the project's day are not worked yet (Change Working Time says so); Microsoft Project works them (#95)
 - Gap: currency exchange. Changing a project's currency keeps each amount's number (£12.50 becomes $12.50; rounded half to even when the new currency has fewer decimal places); converting amounts at an exchange rate is not done yet
 
 ## Progress log
@@ -128,3 +129,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | Task sheet column chooser (#86) |
 | 2026-10-16 | minor | Assign Resources on every selected task (#82) |
 | 2026-10-16 | minor | Asking before deleting an assigned resource (#83) |
+| 2026-10-17 | minor | Resource-calendar gap listed (#95) |
