@@ -3,10 +3,11 @@
 use std::process::ExitCode;
 
 use projectcraft_engine::{Session, model::preds_text};
+use serde_json::Value;
 
 const USAGE: &str = "\
 usage:
-  projectcraft-cli commands                                  list every command
+  projectcraft-cli commands [--json]                         list every command, its effect and params
   projectcraft-cli run (--sample | FILE) [--cmd ID[=JSON]]... [--save OUT]
   projectcraft-cli schedule (--sample | FILE)                print the task sheet with its dates
 ";
@@ -31,9 +32,14 @@ fn open(source: Option<&String>) -> Result<Session, String> {
 
 fn run(args: Vec<String>) -> Result<(), String> {
     match args.first().map(String::as_str) {
+        Some("commands") if args.get(1).is_some_and(|a| a == "--json") => {
+            println!("{}", serde_json::to_string_pretty(&projectcraft_engine::describe()).map_err(|e| e.to_string())?);
+            Ok(())
+        }
         Some("commands") => {
             for c in projectcraft_engine::describe().as_array().into_iter().flatten() {
-                println!("{:<24} {:<20} {}", c["id"].as_str().unwrap_or(""), c["label"].as_str().unwrap_or(""), c["params"].as_str().unwrap_or(""));
+                let s = |v: &Value| v.as_str().unwrap_or("").to_owned();
+                println!("{:<22} {:<20} {:<12} {}", s(&c["id"]), s(&c["label"]), s(&c["effect"]), params_summary(&c["params"]));
             }
             Ok(())
         }
@@ -68,4 +74,22 @@ fn run(args: Vec<String>) -> Result<(), String> {
         }
         _ => Err(USAGE.into()),
     }
+}
+
+/// `id: integer 1..4294967295, name?: string` from a params schema; `--json` gives the full schema.
+fn params_summary(schema: &Value) -> String {
+    let required: Vec<&str> = schema["required"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let props = schema["properties"].as_object().into_iter().flatten();
+    let parts: Vec<String> = props
+        .map(|(k, p)| {
+            let opt = if required.contains(&k.as_str()) { "" } else { "?" };
+            let ty = p["description"].as_str().or(p["type"].as_str()).unwrap_or("any");
+            let range = match (p["minimum"].as_i64(), p["maximum"].as_i64()) {
+                (Some(a), Some(b)) => format!(" {a}..{b}"),
+                _ => String::new(),
+            };
+            format!("{k}{opt}: {ty}{range}")
+        })
+        .collect();
+    format!("{{{}}}", parts.join(", "))
 }

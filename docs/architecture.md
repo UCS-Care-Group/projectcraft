@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** current · **Written:** 2026-10-15 · **Change:** major (first version)
+> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (command schemas and effects)
 
 ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCS-Care-Group/mailcraft/blob/main/docs/architecture.md) (see [ADR 0001](adr/0001-follow-the-craft-architecture.md)).
 
@@ -17,7 +17,7 @@ ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://g
 `cargo xtask layers` enforces that a crate depends only on lower layers and that nothing below L6 uses a UI toolkit. `cargo xtask wasm` checks that every crate up to L5 and `ui-egui` builds for `wasm32-unknown-unknown`.
 
 ## Data flow
-1. The UI or CLI calls `Session::run(id, params)`.
+1. The UI or CLI calls `Session::run(id, params)`. Each `CommandSpec` declares a params JSON Schema and an effect (`read`/`edit`/`destructive`/`file`, ADR 0004); params are checked against the schema first, so unknown or mistyped fields are refused.
 2. The command edits a clone-protected `Project`; on error (or panic) the project is restored.
 3. On a change, the old project goes on the undo stack and `model::schedule` recomputes `Session::schedule`.
 4. The UI draws the task sheet and bars from `Session::project` and `Session::schedule`.
