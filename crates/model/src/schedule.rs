@@ -60,9 +60,11 @@
 //! levelling; each is its own step on the roadmap. A Must Start On before the project start is
 //! held at the project start.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{Constraint, Date, LinkKind, MAX_MINUTES, ModelError, Outline, Project, Task, TaskId};
+use crate::resource_calendar::{Counted, OnProject, ResView, Work, count_to, counts_to, moment_at, moment_from};
+use crate::{Constraint, Date, LinkKind, MAX_MINUTES, ModelError, Outline, Project, ResourceId, Task, TaskId, Units};
 
 /// A point in time on the calendar: a date and a minute of that day (0 is midnight, 1440 the
 /// midnight after). A task starts at the start of a working minute and finishes at the end of one.
@@ -116,6 +118,10 @@ pub struct Schedule {
     pub finish: Date,
     /// Each summary task's duration in working minutes, rolled up from its subtasks.
     pub rolled_up: BTreeMap<TaskId, i64>,
+    /// When each work assignment of a task worked on its resources' calendars starts and
+    /// finishes. Other tasks' assignments run from the task's start for their own duration on the
+    /// project calendar, so they aren't listed.
+    pub assignments: BTreeMap<(TaskId, ResourceId), (Moment, Moment)>,
 }
 
 /// The outline as the scheduler uses it: each row's direct subtasks, its summary, and where its
@@ -226,11 +232,13 @@ struct Days {
 }
 
 impl Days {
-    fn of(p: &Project) -> Days {
+    /// Counted on `base`, the project calendar indexed once, so each date costs a binary search
+    /// however many exceptions the calendar has.
+    fn of(p: &Project, base: &Counted<'_>) -> Days {
         let mut at = HashMap::new();
         for cd in p.tasks.iter().flat_map(|t| t.constraint.date().into_iter().chain(t.deadline)).filter(|cd| *cd >= p.start) {
             at.entry(cd).or_insert_with(|| {
-                let start = p.calendar.minutes_between(p.start, cd);
+                let start = base.minutes_between(p.start, cd);
                 (start, start + p.calendar.minutes_on(cd))
             });
         }
@@ -258,10 +266,13 @@ struct Forward {
     early: Vec<i64>,
     conflict: Vec<bool>,
     driver: Vec<Driver>,
+    /// Where it is held to start: a task on its resources' calendars is worked from here.
+    held: Vec<i64>,
 }
 
-/// Where a task's links put its start, given its duration `dur`, and which link did it.
-fn link_start(t: &Task, index: &HashMap<TaskId, usize>, es: &[i64], ef: &[i64], dur: i64) -> (i64, Driver) {
+/// Where a task's links put its start, and which link did it. `back` is where it starts to finish
+/// at an offset: the offset less its duration, or worked back on its resources' calendars.
+fn link_start(t: &Task, index: &HashMap<TaskId, usize>, es: &[i64], ef: &[i64], back: &impl Fn(i64) -> i64) -> (i64, Driver) {
     let mut start = 0i64;
     let mut why = Driver::ProjectStart;
     for l in &t.preds {
@@ -271,8 +282,8 @@ fn link_start(t: &Task, index: &HashMap<TaskId, usize>, es: &[i64], ef: &[i64], 
         let s = match l.kind {
             LinkKind::FS => pef + lag,
             LinkKind::SS => pes + lag,
-            LinkKind::FF => pef + lag - dur,
-            LinkKind::SF => pes + lag - dur,
+            LinkKind::FF => back(pef + lag),
+            LinkKind::SF => back(pes + lag),
         };
         if s > start || (s == start && why == Driver::ProjectStart) {
             (start, why) = (s, Driver::Link(l.pred));
@@ -281,22 +292,22 @@ fn link_start(t: &Task, index: &HashMap<TaskId, usize>, es: &[i64], ef: &[i64], 
     (start, why)
 }
 
-/// What a constraint makes of a start the links put at `start` (driven by `why`), for a task of
-/// `dur` days: the start it is held at, its early start for slack, what drove it, and whether a
-/// link can't be honoured.
-fn constrain(o: &Days, c: Constraint, start: i64, why: Driver, dur: i64) -> (i64, i64, Driver, bool) {
+/// What a constraint makes of a start the links put at `start` (driven by `why`), for a task that
+/// starts at `back(f)` to finish at `f`: the start it is held at, its early start for slack, what
+/// drove it, and whether a link can't be honoured.
+fn constrain(o: &Days, c: Constraint, start: i64, why: Driver, back: &impl Fn(i64) -> i64) -> (i64, i64, Driver, bool) {
     // Where the links (and a No Earlier Than date) put it; then what a hard constraint makes of it.
     let natural = match c {
         Constraint::StartNoEarlierThan(cd) => start.max(start_offset(o, cd)),
-        Constraint::FinishNoEarlierThan(cd) => start.max(finish_offset(o, cd) - dur),
+        Constraint::FinishNoEarlierThan(cd) => start.max(back(finish_offset(o, cd))),
         _ => start,
     };
     let must = matches!(c, Constraint::MustStartOn(_) | Constraint::MustFinishOn(_));
     let held = match c {
         Constraint::StartNoLaterThan(cd) => natural.min(start_offset(o, cd)),
-        Constraint::FinishNoLaterThan(cd) => natural.min(finish_offset(o, cd) - dur),
+        Constraint::FinishNoLaterThan(cd) => natural.min(back(finish_offset(o, cd))),
         Constraint::MustStartOn(cd) => start_offset(o, cd),
-        Constraint::MustFinishOn(cd) => finish_offset(o, cd) - dur,
+        Constraint::MustFinishOn(cd) => back(finish_offset(o, cd)),
         _ => natural,
     }
     .max(0);
@@ -316,6 +327,9 @@ fn constrain(o: &Days, c: Constraint, start: i64, why: Driver, dur: i64) -> (i64
 const HOLD_DEPTH: u32 = 8;
 const HOLD_NESTED_STEPS: u64 = 2_000_000;
 const HOLD_STEPS: u64 = 8_000_000;
+/// What walking one assignment on its resource's calendar counts for, in steps: a few dozen
+/// binary searches, against one step for a link.
+const WALK_STEPS: u64 = 48;
 /// Jumps straight to the earliest hold the finish allows, before halving what range is left.
 const HOLD_JUMPS: u32 = 8;
 
@@ -329,6 +343,7 @@ struct Pass<'a> {
     at: Vec<usize>,
     index: HashMap<TaskId, usize>,
     dur: &'a [i64],
+    crews: &'a Crews<'a>,
     f: Forward,
     /// Each summary's hold, and the summary whose own link or constraint set it (none: the
     /// project start).
@@ -339,7 +354,7 @@ struct Pass<'a> {
 }
 
 /// One forward pass.
-fn forward(p: &Project, o: &Days, tree: &Tree, order: &[usize], dur: &[i64]) -> Forward {
+fn forward<'a>(p: &'a Project, o: &'a Days, tree: &'a Tree, order: &'a [usize], dur: &'a [i64], crews: &'a Crews<'a>) -> Forward {
     let n = p.tasks.len();
     let mut at = vec![0usize; 2 * n];
     for (k, &node) in order.iter().enumerate() {
@@ -348,9 +363,16 @@ fn forward(p: &Project, o: &Days, tree: &Tree, order: &[usize], dur: &[i64]) -> 
         }
     }
     // Offsets stay small: at most MAX_TASKS chains of MAX_MINUTES-bounded steps fit in i64.
-    let f = Forward { es: vec![0; n], ef: vec![0; n], early: vec![0; n], conflict: vec![false; n], driver: vec![Driver::ProjectStart; n] };
+    let f = Forward {
+        es: vec![0; n],
+        ef: vec![0; n],
+        early: vec![0; n],
+        conflict: vec![false; n],
+        driver: vec![Driver::ProjectStart; n],
+        held: vec![0; n],
+    };
     let index = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
-    let mut pass = Pass { p, o, tree, order, at, index, dur, f, hold: vec![0; n], source: vec![None; n], steps: 0 };
+    let mut pass = Pass { p, o, tree, order, at, index, dur, crews, f, hold: vec![0; n], source: vec![None; n], steps: 0 };
     pass.run(0, order.len(), 0);
     pass.f
 }
@@ -362,7 +384,10 @@ impl Pass<'_> {
             let Some(&node) = self.order.get(k) else { break };
             let row = node.checked_sub(self.p.tasks.len()).unwrap_or(node);
             let links = self.p.tasks.get(row).map_or(0, |t| t.preds.len());
-            self.steps = self.steps.saturating_add(1).saturating_add(u64::try_from(links).unwrap_or(u64::MAX));
+            // A task on its resources' calendars costs a walk of each assignment as well.
+            let crew = if node < self.p.tasks.len() { self.crews.crew(node).map_or(0, <[_]>::len) } else { 0 };
+            let walks = u64::try_from(crew).unwrap_or(u64::MAX).saturating_mul(WALK_STEPS);
+            self.steps = self.steps.saturating_add(1).saturating_add(u64::try_from(links).unwrap_or(u64::MAX)).saturating_add(walks);
             self.step(node, depth);
         }
     }
@@ -405,21 +430,28 @@ impl Pass<'_> {
             return;
         }
         let d = self.dur.get(i).copied().unwrap_or(0);
-        let (mut start, mut why) = link_start(t, &self.index, &self.f.es, &self.f.ef, d);
+        let crews = self.crews;
+        let back = |f: i64| crews.back(i, f).unwrap_or(f - d);
+        let (mut start, mut why) = link_start(t, &self.index, &self.f.es, &self.f.ef, &back);
         if let Some((h, src)) = self.held_by(i, start) {
             start = h;
             why = src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(self.id(u)));
         }
-        let (held, soft_early, why, conflict) = constrain(self.o, t.constraint, start, why, d);
+        let (held, soft_early, why, conflict) = constrain(self.o, t.constraint, start, why, &back);
+        // On its resources' calendars it may start later than it is held (one on leave).
+        let (es, ef) = crews.fwd(i, held).unwrap_or((held, held + d));
         let f = &mut self.f;
         if let (Some(a), Some(b), Some(e), Some(c), Some(w)) =
             (f.es.get_mut(i), f.ef.get_mut(i), f.early.get_mut(i), f.conflict.get_mut(i), f.driver.get_mut(i))
         {
-            *a = held;
-            *b = held + d;
-            *e = soft_early;
+            *a = es;
+            *b = ef;
+            *e = soft_early.max(es);
             *c = conflict;
             *w = why;
+        }
+        if let Some(h) = f.held.get_mut(i) {
+            *h = held;
         }
     }
 
@@ -657,31 +689,233 @@ fn moments(p: &Project, o: &Days, tree: &Tree, order: &[usize], es: &[i64], ef: 
     (start, finish)
 }
 
+/// The tasks worked on resource calendars: those with a work assignment whose resource has a
+/// calendar of its own ([`crate::ResourceCalendar`]). Each assignment of such a task is worked
+/// on its resource's calendar from the task's start, for its own duration; the task spans its
+/// earliest assignment's start to its latest's finish, as Microsoft Project schedules tasks
+/// without a task calendar (its Ignore Resource Calendar field is No by default:
+/// <https://support.microsoft.com/en-us/project/ignore-resource-calendar-task-field>). A resource
+/// works only within the project calendar's working time, so the forward and backward passes see
+/// the span as the project-calendar working time it covers, never less than its work's. Other
+/// tasks, those without resources included, are worked on the project calendar.
+///
+/// No calendar is copied: the project calendar is indexed once ([`Counted`]) and each resource
+/// on such a task adds only its own days ([`ResView`]). A resource left with no working weekday
+/// (a project-calendar edit refuses that, but a file may hold it) is worked on the project
+/// calendar instead, so the plan keeps its dates.
+struct Crews<'a> {
+    /// The project start: counts of working minutes run from it.
+    r: Date,
+    base: &'a Counted<'a>,
+    /// The resource calendars in use.
+    views: Vec<ResView<'a>>,
+    /// By row: each work assignment's calendar (an index into `views`, `None` for the project
+    /// calendar), its duration and its resource; `None` for a task on the project calendar.
+    rows: Vec<Option<Vec<(Option<usize>, i64, ResourceId)>>>,
+    /// What `fwd` and `back` worked out, by row and offset: the finish-type hold searches ask
+    /// the same again and again. Only looked up, never iterated, so the dates stay the same.
+    fwd_memo: RefCell<HashMap<(usize, i64), Option<(i64, i64)>>>,
+    back_memo: RefCell<HashMap<(usize, i64), Option<i64>>>,
+    /// Each row's latest walk and the offset it started from: the final dates reuse it rather
+    /// than walking the task again.
+    last: RefCell<Vec<Option<(i64, Walk)>>>,
+}
+
+/// Most walks remembered, each way: a hostile plan's hold searches can't grow the memo without
+/// bound. Past it walks are worked out again, to the same answer.
+const MAX_MEMO: usize = 200_000;
+
+/// A task worked on its resources' calendars: when it starts and finishes, and each assignment.
+struct Walk {
+    start: Moment,
+    finish: Moment,
+    each: Vec<(ResourceId, Moment, Moment)>,
+}
+
+impl<'a> Crews<'a> {
+    fn of(p: &'a Project, tree: &Tree, base: &'a Counted<'a>) -> Crews<'a> {
+        let n = p.tasks.len();
+        let mut rows: Vec<Option<Vec<(Option<usize>, i64, ResourceId)>>> = vec![None; n];
+        let mut views = Vec::new();
+        let own: HashMap<ResourceId, &crate::ResourceCalendar> =
+            p.resources.iter().filter(|r| r.kind == crate::ResourceType::Work && !r.calendar.is_empty()).map(|r| (r.id, &r.calendar)).collect();
+        if !own.is_empty() {
+            let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+            // Each resource's view, made the first time one of its assignments needs it.
+            let mut made: HashMap<ResourceId, Option<usize>> = HashMap::new();
+            // One doing no work (at 0%) holds nothing, as for the task's duration.
+            for a in p.assignments.iter().filter(|a| matches!(a.units, Units::Work(_)) && a.work > 0 && a.duration > 0) {
+                let Some(&i) = index.get(&a.task) else { continue };
+                if tree.summary(i).is_some() {
+                    continue;
+                }
+                let cal = *made.entry(a.resource).or_insert_with(|| {
+                    let view = ResView::new(base, own.get(&a.resource)?);
+                    (view.per_week() > 0).then(|| {
+                        views.push(view);
+                        views.len() - 1
+                    })
+                });
+                if let Some(row) = rows.get_mut(i) {
+                    row.get_or_insert_with(Vec::new).push((cal, a.duration.clamp(0, MAX_MINUTES), a.resource));
+                }
+            }
+            for row in &mut rows {
+                if row.as_ref().is_some_and(|crew| crew.iter().all(|(c, _, _)| c.is_none())) {
+                    *row = None;
+                }
+            }
+        }
+        let last = RefCell::new(rows.iter().map(|_| None).collect());
+        Crews { r: p.start, base, views, rows, fwd_memo: RefCell::default(), back_memo: RefCell::default(), last }
+    }
+
+    fn has(&self, i: usize) -> bool {
+        self.rows.get(i).is_some_and(Option::is_some)
+    }
+
+    fn crew(&self, i: usize) -> Option<&[(Option<usize>, i64, ResourceId)]> {
+        self.rows.get(i)?.as_deref()
+    }
+
+    /// `f` on calendar `c`: a resource's view, or the project calendar.
+    fn on<R>(&self, c: Option<usize>, f: impl FnOnce(&dyn Work) -> R) -> R {
+        match c.and_then(|k| self.views.get(k)) {
+            Some(view) => f(&OnProject { base: self.base, view }),
+            None => f(self.base),
+        }
+    }
+
+    /// Row `i` from offset `s` on its resources' calendars: `None` for a task on the project
+    /// calendar; an error naming the resource whose calendar has no working time left (`None`:
+    /// the project calendar's).
+    fn walk(&self, i: usize, s: i64) -> Option<Result<Walk, Option<ResourceId>>> {
+        let crew = self.crew(i)?;
+        let Some(from) = moment_at(self.base, self.r, s, true) else { return Some(Err(None)) };
+        let mut w = Walk { start: from, finish: from, each: Vec::with_capacity(crew.len()) };
+        for (k, &(c, dur, r)) in crew.iter().enumerate() {
+            let span = self.on(c, |cal| {
+                // One count to the day it starts from; the rest is a few days' scan.
+                let (day, at) = counts_to(cal, self.r, from);
+                let a = moment_from(cal, self.r, from.date, day, at, true)?;
+                Some((a, moment_from(cal, self.r, from.date, day, at.saturating_add(dur), false)?))
+            });
+            let Some((a, b)) = span else { return Some(Err(Some(r))) };
+            if k == 0 {
+                (w.start, w.finish) = (a, b);
+            }
+            w.start = w.start.min(a);
+            w.finish = w.finish.max(b);
+            w.each.push((r, a, b));
+        }
+        Some(Ok(w))
+    }
+
+    /// Row `i`'s early start and finish offsets from `s`, if it is on its resources' calendars.
+    fn fwd(&self, i: usize, s: i64) -> Option<(i64, i64)> {
+        self.crew(i)?;
+        if let Some(known) = self.fwd_memo.borrow().get(&(i, s)) {
+            return *known;
+        }
+        let worked = self.fwd_walk(i, s);
+        let mut memo = self.fwd_memo.borrow_mut();
+        if memo.len() < MAX_MEMO {
+            memo.insert((i, s), worked);
+        }
+        worked
+    }
+
+    fn fwd_walk(&self, i: usize, s: i64) -> Option<(i64, i64)> {
+        let w = self.walk(i, s)?.ok()?;
+        let es = count_to(self.base, self.r, w.start).max(s);
+        let ef = count_to(self.base, self.r, w.finish).max(es);
+        if let Some(slot) = self.last.borrow_mut().get_mut(i) {
+            *slot = Some((s, w));
+        }
+        Some((es, ef))
+    }
+
+    /// Row `i`'s walk from offset `s` for its final dates: the one the forward pass made from
+    /// there, if it was the last it made, or a new one.
+    fn final_walk(&self, i: usize, s: i64) -> Option<Result<Walk, Option<ResourceId>>> {
+        self.crew(i)?;
+        let kept = self.last.borrow_mut().get_mut(i).and_then(Option::take);
+        match kept {
+            Some((from, w)) if from == s => Some(Ok(w)),
+            _ => self.walk(i, s),
+        }
+    }
+
+    /// Where row `i` starts to finish at offset `f`, worked back on its resources' calendars:
+    /// each assignment ends by then, and the earliest start is the task's.
+    fn back(&self, i: usize, f: i64) -> Option<i64> {
+        self.crew(i)?;
+        if let Some(known) = self.back_memo.borrow().get(&(i, f)) {
+            return *known;
+        }
+        let worked = self.back_walk(i, f);
+        let mut memo = self.back_memo.borrow_mut();
+        if memo.len() < MAX_MEMO {
+            memo.insert((i, f), worked);
+        }
+        worked
+    }
+
+    fn back_walk(&self, i: usize, f: i64) -> Option<i64> {
+        let crew = self.crew(i)?;
+        let to = moment_at(self.base, self.r, f, false)?;
+        let mut start: Option<Moment> = None;
+        for &(c, dur, _) in crew {
+            let a = self.on(c, |cal| {
+                let (day, at) = counts_to(cal, self.r, to);
+                moment_from(cal, self.r, to.date, day, at.saturating_sub(dur), true)
+            })?;
+            start = Some(start.map_or(a, |s| s.min(a)));
+        }
+        Some(count_to(self.base, self.r, start?))
+    }
+}
+
+/// The error for a schedule that runs off a resource's calendar.
+fn off_calendar(p: &Project, r: ResourceId) -> ModelError {
+    let name = p.resource(r).map_or_else(|_| r.to_string(), |r| r.name.clone());
+    ModelError::Invalid(format!("{name}'s calendar has no working time left for its work (no working days, or past year 9999)"))
+}
+
 pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     let tree = Tree::of(p);
     let order = order_with(p, &tree)?;
-    let o = Days::of(p);
+    let base = Counted::new(&p.calendar);
+    let o = Days::of(p, &base);
     let o = &o;
     let n = p.tasks.len();
     let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
     let summary = |i: usize| tree.summary(i);
     let dur: Vec<i64> = p.tasks.iter().map(|t| t.duration.clamp(0, MAX_MINUTES)).collect();
+    let crews = Crews::of(p, &tree, &base);
 
     // Forward pass.
-    let Forward { es, ef, early, conflict, driver } = forward(p, o, &tree, &order, &dur);
+    let Forward { es, ef, early, conflict, driver, held } = forward(p, o, &tree, &order, &dur, &crews);
     let end = ef.iter().copied().max().unwrap_or(0);
-    // Roll-up: from here on a summary's duration is its rolled-up one.
-    let dur: Vec<i64> =
-        (0..n)
-            .map(|i| {
-                if summary(i).is_some() {
-                    ef.get(i).copied().unwrap_or(0) - es.get(i).copied().unwrap_or(0)
-                } else {
-                    dur.get(i).copied().unwrap_or(0)
-                }
-            })
-            .collect();
+    // Roll-up: from here on a summary's duration is its rolled-up one, and a task on its
+    // resources' calendars spans the working time it takes there.
+    let dur: Vec<i64> = (0..n)
+        .map(|i| {
+            if summary(i).is_some() || crews.has(i) {
+                ef.get(i).copied().unwrap_or(0) - es.get(i).copied().unwrap_or(0)
+            } else {
+                dur.get(i).copied().unwrap_or(0)
+            }
+        })
+        .collect();
     let d = |i: usize| dur.get(i).copied().unwrap_or(0);
+    // Where a task starts to finish at `lf`: worked back on its resources' calendars, if it has any.
+    // A task on its resources' calendars that must finish when it does starts when it does: no
+    // walk back needed.
+    let late_start = |i: usize, lf: i64| match (es.get(i), ef.get(i)) {
+        (Some(&s), Some(&f)) if crews.has(i) && lf == f => s,
+        _ => crews.back(i, lf).unwrap_or(lf - d(i)),
+    };
 
     // Backward pass.
     let mut lf = vec![end; n];
@@ -694,7 +928,7 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
                 continue;
             }
             let my_lf = tree.leaves(s).filter_map(|r| lf.get(r).copied()).max().unwrap_or(end);
-            let my_ls = tree.leaves(s).filter_map(|r| lf.get(r).map(|x| x - d(r))).min().unwrap_or(my_lf);
+            let my_ls = tree.leaves(s).filter_map(|r| lf.get(r).map(|x| late_start(r, *x))).min().unwrap_or(my_lf);
             bound_preds(t, &index, &mut lf, my_ls, my_lf, &d);
             continue;
         }
@@ -723,10 +957,10 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
         if let Some(x) = lf.get_mut(i) {
             *x = my_lf;
         }
-        bound_preds(t, &index, &mut lf, my_lf - d(i), my_lf, &d);
+        bound_preds(t, &index, &mut lf, late_start(i, my_lf), my_lf, &d);
     }
 
-    let mut ls: Vec<i64> = (0..n).map(|i| lf.get(i).copied().unwrap_or(end) - d(i)).collect();
+    let mut ls: Vec<i64> = (0..n).map(|i| late_start(i, lf.get(i).copied().unwrap_or(end))).collect();
     // Roll-up of the late dates: inner summaries sit lower in the outline, so go bottom-up.
     for i in (0..n).rev() {
         if let Some(k) = summary(i) {
@@ -744,6 +978,7 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     let last = |s: i64, f: i64| day(if f > s { f - 1 } else { s - 1 });
     let (start_m, finish_m) = moments(p, o, &tree, &order, &es, &ef, &d);
     let mut tasks = HashMap::with_capacity(n);
+    let mut assignments = BTreeMap::new();
     let mut finish_all = last(0, end)?;
     for (i, t) in p.tasks.iter().enumerate() {
         let (s, f, lfi) = (es.get(i).copied().unwrap_or(0), ef.get(i).copied().unwrap_or(0), lf.get(i).copied().unwrap_or(end));
@@ -752,7 +987,18 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
         let slack = if summary(i).is_some() { (ls - s).min(lfi - f) } else { ls - early.get(i).copied().unwrap_or(s) };
         let first = |o: i64| if d(i) == 0 { day(o - 1) } else { day(o) };
         let (sm, fm) = (start_m.get(i).copied().unwrap_or((s, d(i) > 0)), finish_m.get(i).copied().unwrap_or((f, false)));
-        let (start_at, finish_at) = (clock.moment(sm).ok_or_else(bad)?, clock.moment(fm).ok_or_else(bad)?);
+        let (start_at, finish_at) = match crews.final_walk(i, held.get(i).copied().unwrap_or(s)) {
+            // On its resources' calendars: its earliest assignment's start to its latest's finish.
+            Some(Ok(w)) => {
+                for (r, a, b) in w.each {
+                    assignments.insert((t.id, r), (a, b));
+                }
+                (w.start, w.finish)
+            }
+            Some(Err(Some(r))) => return Err(off_calendar(p, r)),
+            Some(Err(None)) => return Err(bad()),
+            None => (clock.moment(sm).ok_or_else(bad)?, clock.moment(fm).ok_or_else(bad)?),
+        };
         let finish = finish_at.date;
         finish_all = finish_all.max(finish);
         // A milestone at the start of its day has its late dates there too when they are its
@@ -779,7 +1025,7 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
         );
     }
     let rolled_up = (0..n).filter(|&i| summary(i).is_some()).filter_map(|i| p.tasks.get(i).map(|t| (t.id, d(i)))).collect();
-    Ok(Schedule { tasks, finish: finish_all, rolled_up })
+    Ok(Schedule { tasks, finish: finish_all, rolled_up, assignments })
 }
 
 /// Most working days a schedule spans: past year 9999 from any start, so only a calendar of a
@@ -1082,6 +1328,84 @@ mod tests {
             }
             let first = schedule(&p);
             proptest::prop_assert_eq!(&first, &schedule(&p));
+        }
+    }
+
+    proptest::proptest! {
+        /// Plans with links, constraints and summaries whose tasks have work resources on calendars
+        /// of their own (leave, short and non-working weekdays, worked Saturdays): never a panic,
+        /// the same dates twice, and every task spans its assignments, which each work as long as
+        /// they should on their resource's calendar.
+        #[test]
+        fn resource_calendars_never_panic_and_tasks_span_their_assignments(
+            levels in proptest::collection::vec(0u32..3, 1..10),
+            durations in proptest::collection::vec(0i64..2000, 10),
+            links in proptest::collection::vec((0usize..10, 0u32..12, 0u8..4, -2i64..3), 0..10),
+            constraints in proptest::collection::vec((0usize..10, 0u8..7, 0i64..30), 0..4),
+            leave in proptest::collection::vec((0usize..3, 0i64..40, 0u8..3), 0..12),
+            weeks in proptest::collection::vec((0usize..3, 0usize..7, 0u8..3), 0..6),
+            assigned in proptest::collection::vec((0usize..10, 0usize..3, 1u32..30_000), 0..14),
+        ) {
+            let mut p = Project::new("t", date("2026-01-05"));
+            for (i, l) in levels.iter().enumerate() {
+                let id = p.add_task(format!("T{i}"), durations[i]).unwrap();
+                p.task_mut(id).unwrap().outline_level = *l;
+            }
+            let ids: Vec<TaskId> = p.tasks.iter().map(|t| t.id).collect();
+            let kinds = [LinkKind::FS, LinkKind::SS, LinkKind::FF, LinkKind::SF];
+            for (succ, pred, kind, lag) in links {
+                if let Some(&id) = ids.get(succ) {
+                    let _ = p.set_preds(id, vec![crate::Link { pred: TaskId(pred), kind: kinds[usize::from(kind)], lag: lag * D, lag_unit: crate::DurationUnit::Days }]);
+                }
+            }
+            for (row, ty, day) in constraints {
+                let d = date("2026-01-01").add_days(day).unwrap();
+                let c = [Constraint::Asap, Constraint::StartNoEarlierThan(d), Constraint::FinishNoEarlierThan(d), Constraint::StartNoLaterThan(d),
+                    Constraint::FinishNoLaterThan(d), Constraint::MustStartOn(d), Constraint::MustFinishOn(d)][usize::from(ty)];
+                if let Some(&id) = ids.get(row) {
+                    p.task_mut(id).unwrap().constraint = c;
+                }
+            }
+            let people: Vec<crate::ResourceId> =
+                ["Ann", "Bob", "Cat"].iter().map(|n| p.add_resource(Some(n), crate::ResourceType::Work, None).unwrap()).collect();
+            let morning = vec![crate::parse_working_time("8:00-12:00").unwrap()];
+            for (r, day, kind) in leave {
+                let times = [vec![], morning.clone(), vec![crate::parse_working_time("9:00-13:00").unwrap()]][usize::from(kind)].clone();
+                let _ = p.set_resource_exception(people[r], date("2026-01-05").add_days(day).unwrap(), times);
+            }
+            for (r, weekday, kind) in weeks {
+                let times = [None, Some(vec![]), Some(morning.clone())][usize::from(kind)].clone();
+                let _ = p.set_resource_weekday_times(people[r], weekday, times);
+            }
+            for (row, r, units) in assigned {
+                if let Some(&id) = ids.get(row) {
+                    let _ = p.assign(id, people[r], Some(crate::Units::Work(units)));
+                }
+            }
+            let first = schedule(&p);
+            proptest::prop_assert_eq!(&first, &schedule(&p));
+            let Ok(sch) = first else { return Ok(()) };
+            // Every summary spans its subtasks; nothing with slack to spare starts late before it starts.
+            let outline = Outline::of(&p);
+            for (row, t) in p.tasks.iter().enumerate() {
+                let me = sch.tasks[&t.id];
+                if me.slack >= 0 {
+                    proptest::prop_assert!(me.late_start >= me.start, "{} late start {:?} before start {:?}", t.name, me.late_start, me.start);
+                }
+                if outline.is_summary(row) {
+                    for sub in p.tasks.get(row + 1..outline.subtree_end(row)).into_iter().flatten() {
+                        let s = sch.tasks[&sub.id];
+                        proptest::prop_assert!(me.start_at <= s.start_at && s.finish_at <= me.finish_at, "{} doesn't span {}", t.name, sub.name);
+                    }
+                }
+            }
+            for ((task, r), (a, b)) in &sch.assignments {
+                let t = sch.tasks[task];
+                proptest::prop_assert!(t.start_at <= *a && *b <= t.finish_at, "{task:?} doesn't span {r:?}");
+                let x = p.assignments_of(*task).find(|x| x.resource == *r).unwrap();
+                let cal = p.resource_calendar(*r).unwrap();
+                proptest::prop_assert_eq!(cal.count_to(p.start, *b) - cal.count_to(p.start, *a), x.duration, "{:?} on {:?}", r, task);
+            }
         }
     }
 

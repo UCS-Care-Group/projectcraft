@@ -119,6 +119,9 @@ impl App {
                 self.sel = Selection::default();
                 self.resources = crate::resource_sheet::ResourceSheet::default();
                 self.status = i18n::fmt(tl!("Opened {path}"), &[("path", &path.display().to_string())]);
+                if let Some(notice) = crate::calendar_notice(&self.session.project) {
+                    self.status = format!("{} · {notice}", self.status);
+                }
                 self.sweep_temps(path);
                 push_recent(&mut self.recent, path);
                 self.recent_changed = true;

@@ -403,6 +403,13 @@ fn resource_ids(what: &str) -> Value {
     json!({"type": "array", "items": resource_id(""), "description": format!("the resources' Unique IDs (not their row IDs); {what}")})
 }
 
+/// The `resource` param of a `calendar.*` command: which calendar it changes.
+fn calendar_resource() -> Value {
+    resource_id(
+        ": a work resource whose own calendar to change (based on the project calendar: leave, part-time working); absent, the project calendar",
+    )
+}
+
 fn money(what: &str) -> Value {
     json!({"type": "integer", "minimum": 0, "maximum": model::MAX_MONEY, "description": format!("{what}, in whole minor units of the project currency (pence: 1250 is £12.50)")})
 }
@@ -856,16 +863,25 @@ const COMMANDS: &[CommandSpec] = &[
         effect: Effect::Edit,
         schema: || {
             object(
-                json!({"weekdays": {
-                    "type": "array",
-                    "items": {"type": "string", "enum": WEEKDAYS},
-                    "description": "the weekdays worked, e.g. [\"Mon\", \"Tue\", \"Wed\", \"Thu\", \"Fri\"]; at least one (a week with none is refused)",
-                }}),
+                json!({
+                    "weekdays": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": WEEKDAYS},
+                        "description": "the weekdays worked, e.g. [\"Mon\", \"Tue\", \"Wed\", \"Thu\", \"Fri\"]; at least one (a week with none is refused)",
+                    },
+                    "resource": calendar_resource(),
+                }),
                 &["weekdays"],
             )
         },
         run: |p, v| {
-            p.calendar.set_working(weekdays_param(v)?)?;
+            match opt_resource_param(v, "resource")? {
+                Some(r) => p.set_resource_working(r, weekdays_param(v)?)?,
+                None => {
+                    p.calendar.set_working(weekdays_param(v)?)?;
+                    p.check_resource_weeks()?;
+                }
+            }
             Ok(())
         },
     },
@@ -877,9 +893,11 @@ const COMMANDS: &[CommandSpec] = &[
             object(
                 json!({
                     "weekday": {"type": "string", "enum": WEEKDAYS},
-                    "times": times("the weekday's working times, e.g. [\"8:00-12:00\", \"13:00-17:00\"]; none makes it non-working (a week with no working day is refused)"),
+                    "times": times("the weekday's working times, e.g. [\"8:00-12:00\", \"13:00-17:00\"]; none makes it non-working (a week with no working day is refused). Required unless `fromProject`"),
+                    "resource": calendar_resource(),
+                    "fromProject": {"type": "boolean", "description": "with `resource` and without `times`: the weekday follows the project calendar's working times again"},
                 }),
-                &["weekday", "times"],
+                &["weekday"],
             )
         },
         run: |p, v| {
@@ -888,7 +906,17 @@ const COMMANDS: &[CommandSpec] = &[
                 .iter()
                 .position(|w| *w == day)
                 .ok_or_else(|| CmdError::Params(format!("`weekday` must be one of {}", WEEKDAYS.join(", "))))?;
-            p.calendar.set_weekday_times(i, times_param(v)?)?;
+            let from_project = v.get("fromProject").and_then(Value::as_bool).unwrap_or(false);
+            match (opt_resource_param(v, "resource")?, from_project, v.get("times").is_some()) {
+                (_, true, true) => return Err(CmdError::Params("give `times` or `fromProject`, not both".into())),
+                (Some(r), true, false) => p.set_resource_weekday_times(r, i, None)?,
+                (None, true, false) => return Err(CmdError::Params("`fromProject` is for a resource's calendar".into())),
+                (Some(r), false, _) => p.set_resource_weekday_times(r, i, Some(times_param(v)?))?,
+                (None, false, _) => {
+                    p.calendar.set_weekday_times(i, times_param(v)?)?;
+                    p.check_resource_weeks()?;
+                }
+            }
             Ok(())
         },
     },
@@ -902,6 +930,7 @@ const COMMANDS: &[CommandSpec] = &[
                     "date": date(),
                     "working": {"type": "boolean", "description": "true makes the day worked (an overtime Saturday); false makes it non-working (a holiday); absent, the day is worked if it has times"},
                     "times": times("a working day's times, e.g. [\"9:00-13:00\"]; absent, the default 8:00-12:00 and 13:00-17:00"),
+                    "resource": calendar_resource(),
                 }),
                 &["date"],
             )
@@ -910,21 +939,30 @@ const COMMANDS: &[CommandSpec] = &[
             let date = date_param(v, "date")?;
             let times = if v.get("times").is_some() { Some(times_param(v)?) } else { None };
             let working = v.get("working").and_then(Value::as_bool).unwrap_or_else(|| times.as_ref().is_some_and(|t| !t.is_empty()));
-            match (working, times) {
-                (false, Some(t)) if !t.is_empty() => Err(CmdError::Params("a non-working exception has no working times".into())),
-                (true, Some(t)) if t.is_empty() => Err(CmdError::Params("a working exception needs working times".into())),
-                (true, Some(t)) => Ok(p.calendar.set_exception(date, t)?),
-                (w, _) => Ok(p.calendar.add_exception(date, w)?),
+            let times = match (working, times) {
+                (false, Some(t)) if !t.is_empty() => return Err(CmdError::Params("a non-working exception has no working times".into())),
+                (true, Some(t)) if t.is_empty() => return Err(CmdError::Params("a working exception needs working times".into())),
+                (true, Some(t)) => t,
+                (true, None) => model::DEFAULT_WORKING_TIMES.to_vec(),
+                (false, _) => Vec::new(),
+            };
+            match opt_resource_param(v, "resource")? {
+                Some(r) => p.set_resource_exception(r, date, times)?,
+                None => p.calendar.set_exception(date, times)?,
             }
+            Ok(())
         },
     },
     CommandSpec {
         id: "calendar.removeException",
         label: "Remove Exception",
         effect: Effect::Edit,
-        schema: || object(json!({"date": date()}), &["date"]),
+        schema: || object(json!({"date": date(), "resource": calendar_resource()}), &["date"]),
         run: |p, v| {
-            p.calendar.remove_exception(date_param(v, "date")?)?;
+            match opt_resource_param(v, "resource")? {
+                Some(r) => p.remove_resource_exception(r, date_param(v, "date")?)?,
+                None => p.calendar.remove_exception(date_param(v, "date")?)?,
+            }
             Ok(())
         },
     },

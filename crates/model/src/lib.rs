@@ -9,6 +9,7 @@ mod cost;
 mod duration;
 mod outline;
 mod resource;
+mod resource_calendar;
 mod rows;
 mod schedule;
 mod task_type;
@@ -33,6 +34,7 @@ pub use resource::{
     ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_money, check_name, format_money, material_rate_text, parse_material_rate,
     parse_money, parse_units, parse_units_as, units_text, units_text_as,
 };
+pub use resource_calendar::ResourceCalendar;
 pub use schedule::{Driver, Moment, Schedule, TaskDates, schedule};
 pub use task_type::{MAX_WORK, TaskType};
 pub use view::{Column, Columns};
@@ -256,7 +258,9 @@ pub const MAX_EXCEPTIONS: usize = 100_000;
 /// times on every working day. Files from before exceptions held `"holidays": ["2026-12-25"]`;
 /// those load as non-working exceptions and are written back as exceptions.
 ///
-/// ponytail: one project calendar; work weeks, resource and task calendars come later.
+/// Work resources have calendars of their own on top of this one ([`ResourceCalendar`]).
+///
+/// ponytail: work weeks and task calendars come later.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(into = "CalendarFile", try_from = "CalendarFile")]
 pub struct Calendar {
@@ -455,7 +459,7 @@ impl Calendar {
     }
 
     /// Working minutes of weekday `i` (0 is Monday), ignoring exceptions.
-    fn weekday_minutes(&self, i: usize) -> i64 {
+    pub(crate) fn weekday_minutes(&self, i: usize) -> i64 {
         i64::from(minutes_of(self.weekday_times(i)))
     }
 
