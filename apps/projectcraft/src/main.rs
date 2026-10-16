@@ -16,15 +16,13 @@ fn main() -> eframe::Result {
     let path = args.iter().find(|a| !a.starts_with("--")).map(std::path::PathBuf::from);
     let session = match &path {
         _ if args.iter().any(|a| a == "--sample") => projectcraft_engine::sample(),
-        Some(p) if p.exists() => {
-            match std::fs::read_to_string(p).map_err(|e| e.to_string()).and_then(|t| Session::load_json(&t).map_err(|e| e.to_string())) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("{}: {e}", p.display());
-                    std::process::exit(1);
-                }
+        Some(p) if p.exists() => match Session::open(p) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{}: {e}", p.display());
+                std::process::exit(1);
             }
-        }
+        },
         _ => Session::new(projectcraft_engine::model::Project::new("New project", today())),
     };
     eframe::run_native("ProjectCraft", eframe::NativeOptions::default(), Box::new(|_| Ok(Box::new(Shell(App::new(session, path))))))

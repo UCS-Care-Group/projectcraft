@@ -33,4 +33,5 @@ Each roadmap milestone has a pass/fail checklist; it is reached when every item 
 |---|---|
 | 2026-10-15 | M0: repository set up; scheduler, engine, Gantt view, CLI |
 | 2026-10-15 | M1 spec and plan grilled and agreed; ADRs 0003 (native JSON) and 0004 (agent access) |
-| 2026-10-16 | M1.0: every command has a params JSON Schema and an effect; unknown params refused; `commands` lists both (#4). `format_version` still to do |
+| 2026-10-16 | M1.0: every command has a params JSON Schema and an effect; unknown params refused; `commands` lists both (#4) |
+| 2026-10-16 | M1.0: `format_version` in the file (refuse newer, migrate M0), validation on load, atomic save with `.bak` (#6) |

@@ -45,9 +45,8 @@ impl App {
             self.status = "Start ProjectCraft with a file name to save (projectcraft plan.projectcraft)".into();
             return;
         };
-        self.status = match self.session.save_json().map(|t| std::fs::write(&path, t)) {
-            Ok(Ok(())) => format!("Saved {}", path.display()),
-            Ok(Err(e)) => format!("Couldn't save: {e}"),
+        self.status = match self.session.save_to(&path) {
+            Ok(()) => format!("Saved {}", path.display()),
             Err(e) => format!("Couldn't save: {e}"),
         };
     }
