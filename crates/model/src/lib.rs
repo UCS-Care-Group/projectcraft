@@ -8,7 +8,7 @@ mod duration;
 mod outline;
 mod schedule;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -178,32 +178,105 @@ fn is_top_level(l: &u32) -> bool {
     *l == 1
 }
 
-/// Which days are worked. ponytail: one project calendar; resource and task calendars come with resources.
+/// Most exceptions one calendar holds: about 270 years of one a day. Keeps a hostile file or
+/// command from growing the calendar without bound.
+pub const MAX_EXCEPTIONS: usize = 100_000;
+
+/// Which days are worked: working weekdays, and **exceptions** (whole days made non-working, a
+/// holiday, or working, an overtime Saturday), as Microsoft Project's Change Working Time.
+/// An exception wins over its weekday.
+///
+/// Written to the file as `{"working": [Mon…Sun], "exceptions": [{"date": "2026-12-25",
+/// "working": false}]}`. Files from before exceptions held `"holidays": ["2026-12-25"]`; those
+/// load as non-working exceptions and are written back as exceptions.
+///
+/// ponytail: one project calendar of whole days; work weeks, hours, resource and task calendars
+/// come later.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(into = "CalendarFile", from = "CalendarFile")]
 pub struct Calendar {
     /// Monday first.
     pub working: [bool; 7],
+    /// Exception days: `true` worked, `false` not worked, whatever the weekday says.
+    pub exceptions: BTreeMap<Date, bool>,
+}
+
+/// The calendar as the file holds it.
+#[derive(Serialize, Deserialize)]
+struct CalendarFile {
+    working: [bool; 7],
     #[serde(default)]
-    pub holidays: BTreeSet<Date>,
+    exceptions: Vec<ExceptionFile>,
+    /// Before exceptions: non-working days. Read, never written.
+    #[serde(default, skip_serializing)]
+    holidays: BTreeSet<Date>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ExceptionFile {
+    date: Date,
+    #[serde(default)]
+    working: bool,
+}
+
+impl From<CalendarFile> for Calendar {
+    fn from(f: CalendarFile) -> Calendar {
+        let mut exceptions: BTreeMap<Date, bool> = f.holidays.into_iter().map(|d| (d, false)).collect();
+        exceptions.extend(f.exceptions.into_iter().map(|e| (e.date, e.working)));
+        Calendar { working: f.working, exceptions }
+    }
+}
+
+impl From<Calendar> for CalendarFile {
+    fn from(c: Calendar) -> CalendarFile {
+        let exceptions = c.exceptions.into_iter().map(|(date, working)| ExceptionFile { date, working }).collect();
+        CalendarFile { working: c.working, exceptions, holidays: BTreeSet::new() }
+    }
 }
 
 impl Default for Calendar {
     fn default() -> Self {
-        Calendar { working: [true, true, true, true, true, false, false], holidays: BTreeSet::new() }
+        Calendar { working: [true, true, true, true, true, false, false], exceptions: BTreeMap::new() }
     }
 }
 
 impl Calendar {
     pub fn is_workday(&self, d: Date) -> bool {
-        self.works_weekday(d) && !self.holidays.contains(&d)
+        self.exceptions.get(&d).copied().unwrap_or_else(|| self.works_weekday(d))
     }
 
-    fn works_weekday(&self, d: Date) -> bool {
+    /// Whether `d`'s weekday is worked, ignoring exceptions.
+    pub fn works_weekday(&self, d: Date) -> bool {
         self.working.get(usize::from(d.weekday())).copied().unwrap_or(false)
     }
 
+    /// Sets the working weekdays (Monday first). Refuses a week with no working day, even when
+    /// working exceptions exist: such a calendar would run out of days after its last exception.
+    pub fn set_working(&mut self, working: [bool; 7]) -> Result<(), ModelError> {
+        if !working.contains(&true) {
+            return Err(ModelError::Invalid("a calendar needs at least one working weekday".into()));
+        }
+        self.working = working;
+        Ok(())
+    }
+
+    /// Makes `date` a working (`true`) or non-working day, replacing any exception already on it.
+    pub fn add_exception(&mut self, date: Date, working: bool) -> Result<(), ModelError> {
+        if self.exceptions.len() >= MAX_EXCEPTIONS && !self.exceptions.contains_key(&date) {
+            return Err(ModelError::Invalid(format!("a calendar holds at most {MAX_EXCEPTIONS} exceptions")));
+        }
+        self.exceptions.insert(date, working);
+        Ok(())
+    }
+
+    /// Removes the exception on `date`; the day goes back to its weekday.
+    pub fn remove_exception(&mut self, date: Date) -> Result<(), ModelError> {
+        self.exceptions.remove(&date).map(|_| ()).ok_or_else(|| ModelError::Invalid(format!("there is no exception on {date}")))
+    }
+
     /// Working days on or after `from` and before `to`; 0 when `to` is not after `from`. Whole
-    /// weeks are counted arithmetically, so any range in years 1–9999 is quick.
+    /// weeks are counted arithmetically, then each exception in the range corrects its day, so
+    /// any range in years 1–9999 is quick.
     pub fn workdays_between(&self, from: Date, to: Date) -> i64 {
         let n = to.days_since(from);
         if n <= 0 {
@@ -212,17 +285,20 @@ impl Calendar {
         let per_week = self.working.iter().filter(|w| **w).count() as i64;
         let (weeks, rest) = (n / 7, n % 7);
         let tail = (0..rest).filter(|k| from.add_days(weeks * 7 + k).is_some_and(|d| self.works_weekday(d))).count() as i64;
-        let holidays = self.holidays.range(from..to).filter(|h| self.works_weekday(**h)).count() as i64;
-        weeks * per_week + tail - holidays
+        let correction: i64 = self.exceptions.range(from..to).map(|(d, w)| i64::from(*w) - i64::from(self.works_weekday(*d))).sum();
+        weeks * per_week + tail + correction
     }
 
-    /// The first `count` working days on or after `from`; `None` with no working weekday, or past year 9999.
+    /// The first `count` working days on or after `from`; `None` when the calendar runs out of
+    /// working days, or past year 9999.
     pub fn workdays(&self, from: Date, count: usize) -> Option<Vec<Date>> {
         if !self.working.contains(&true) {
-            return None;
+            // Only the working exceptions are worked (a damaged file; commands refuse this week).
+            let out: Vec<Date> = self.exceptions.range(from..).filter(|(_, w)| **w).map(|(d, _)| *d).take(count).collect();
+            return (out.len() == count).then_some(out);
         }
         let (mut d, mut out) = (from, Vec::with_capacity(count));
-        // Terminates: at least one weekday is worked, holidays are finite, and add_days stops at year 9999.
+        // Terminates: at least one weekday is worked, exceptions are finite, and add_days stops at year 9999.
         while out.len() < count {
             if self.is_workday(d) {
                 out.push(d);
@@ -432,16 +508,19 @@ mod tests {
     }
 
     #[test]
-    fn workdays_between_counts_working_days_and_skips_holidays() {
+    fn workdays_between_counts_working_days_and_honours_exceptions() {
         let mut c = Calendar::default();
         let d = |s: &str| s.parse::<Date>().unwrap();
         // Mon 5 .. Sun 18 January 2026: ten working days.
         assert_eq!(c.workdays_between(d("2026-01-05"), d("2026-01-19")), 10);
         assert_eq!(c.workdays_between(d("2026-01-10"), d("2026-01-12")), 0);
         assert_eq!(c.workdays_between(d("2026-01-12"), d("2026-01-05")), 0);
-        c.holidays.insert(d("2026-01-07"));
-        c.holidays.insert(d("2026-01-10")); // a Saturday: not worked anyway
+        c.add_exception(d("2026-01-07"), false).unwrap();
+        c.add_exception(d("2026-01-10"), false).unwrap(); // a Saturday: not worked anyway
         assert_eq!(c.workdays_between(d("2026-01-05"), d("2026-01-19")), 9);
+        c.add_exception(d("2026-01-17"), true).unwrap(); // an overtime Saturday
+        c.add_exception(d("2026-01-14"), true).unwrap(); // a Wednesday: worked anyway
+        assert_eq!(c.workdays_between(d("2026-01-05"), d("2026-01-19")), 10);
         // Agrees with a day-by-day walk.
         let from = d("2025-12-29");
         let walk = c.workdays(from, 40).unwrap();
@@ -449,6 +528,29 @@ mod tests {
             assert_eq!(c.workdays_between(from, *day), i as i64);
         }
         assert!(c.workdays_between(d("0001-01-01"), d("9999-12-31")) > 2_000_000);
+    }
+
+    #[test]
+    fn a_week_with_no_working_day_is_refused_and_exceptions_replace_each_other() {
+        let mut c = Calendar::default();
+        let d = |s: &str| s.parse::<Date>().unwrap();
+        assert!(c.set_working([false; 7]).is_err());
+        assert_eq!(c, Calendar::default());
+        c.set_working([false, false, false, false, false, true, true]).unwrap();
+        assert!(c.is_workday(d("2026-01-10")) && !c.is_workday(d("2026-01-12")));
+        c.add_exception(d("2026-01-12"), true).unwrap();
+        c.add_exception(d("2026-01-12"), false).unwrap();
+        assert_eq!(c.exceptions.len(), 1);
+        assert!(!c.is_workday(d("2026-01-12")));
+        c.remove_exception(d("2026-01-12")).unwrap();
+        assert!(c.remove_exception(d("2026-01-12")).is_err());
+        // A damaged file's week with no working day: only working exceptions are worked, and
+        // asking for more than there are is None, not a walk to year 9999.
+        c.working = [false; 7];
+        c.add_exception(d("2026-01-14"), true).unwrap();
+        assert_eq!(c.workdays(d("2026-01-01"), 1), Some(vec![d("2026-01-14")]));
+        assert_eq!(c.workdays(d("2026-01-01"), 2), None);
+        assert_eq!(c.workdays_between(d("2026-01-01"), d("2026-02-01")), 1);
     }
 
     #[test]

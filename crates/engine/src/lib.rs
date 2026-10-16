@@ -276,6 +276,38 @@ fn id_param(v: &Value) -> Result<TaskId, CmdError> {
     u32::try_from(n).map(TaskId).map_err(|_| CmdError::Params(format!("no task {n}")))
 }
 
+fn date_param(v: &Value, k: &str) -> Result<Date, CmdError> {
+    str_param(v, k)?.parse::<Date>().map_err(|e| CmdError::Params(e.to_string()))
+}
+
+fn date() -> Value {
+    json!({"type": "string", "format": "date", "description": "YYYY-MM-DD"})
+}
+
+/// Weekday names as `calendar.setWorking` takes them, Monday first.
+pub const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAY_NAMES: [&str; 7] = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+/// Working weekdays (Monday first) from a list of names: `Mon` or `Monday`, any case.
+fn weekdays_param(v: &Value) -> Result<[bool; 7], CmdError> {
+    let list = v.get("weekdays").and_then(Value::as_array).ok_or_else(|| CmdError::Params("`weekdays` (a list) is required".into()))?;
+    let mut working = [false; 7];
+    for item in list {
+        let text = item.as_str().ok_or_else(|| CmdError::Params("`weekdays` holds weekday names, e.g. \"Mon\"".into()))?;
+        let lower = text.trim().to_lowercase();
+        let i = (0..7)
+            .find(|&i| WEEKDAYS.get(i).is_some_and(|w| w.to_lowercase() == lower) || WEEKDAY_NAMES.get(i).is_some_and(|w| *w == lower))
+            .ok_or_else(|| {
+                let text: String = text.chars().take(20).collect();
+                CmdError::Params(format!("`{text}` is not a weekday; expected one of {}", WEEKDAYS.join(", ")))
+            })?;
+        if let Some(w) = working.get_mut(i) {
+            *w = true;
+        }
+    }
+    Ok(working)
+}
+
 /// Names are one line and of a sensible length.
 fn name(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(255).collect()
@@ -296,9 +328,9 @@ const COMMANDS: &[CommandSpec] = &[
         id: "project.setStart",
         label: "Project Start Date",
         effect: Effect::Edit,
-        schema: || object(json!({"date": {"type": "string", "format": "date", "description": "YYYY-MM-DD"}}), &["date"]),
+        schema: || object(json!({"date": date()}), &["date"]),
         run: |p, v| {
-            p.start = str_param(v, "date")?.parse::<Date>().map_err(|e| CmdError::Params(e.to_string()))?;
+            p.start = date_param(v, "date")?;
             Ok(())
         },
     },
@@ -406,6 +438,54 @@ const COMMANDS: &[CommandSpec] = &[
             Ok(())
         },
     },
+    CommandSpec {
+        id: "calendar.setWorking",
+        label: "Working Days",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({"weekdays": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": WEEKDAYS},
+                    "description": "the weekdays worked, e.g. [\"Mon\", \"Tue\", \"Wed\", \"Thu\", \"Fri\"]; at least one (a week with none is refused)",
+                }}),
+                &["weekdays"],
+            )
+        },
+        run: |p, v| {
+            p.calendar.set_working(weekdays_param(v)?)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "calendar.addException",
+        label: "Add Exception",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "date": date(),
+                    "working": {"type": "boolean", "description": "true makes the day worked (an overtime Saturday); false or absent makes it non-working (a holiday)"},
+                }),
+                &["date"],
+            )
+        },
+        run: |p, v| {
+            let working = v.get("working").and_then(Value::as_bool).unwrap_or(false);
+            p.calendar.add_exception(date_param(v, "date")?, working)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "calendar.removeException",
+        label: "Remove Exception",
+        effect: Effect::Edit,
+        schema: || object(json!({"date": date()}), &["date"]),
+        run: |p, v| {
+            p.calendar.remove_exception(date_param(v, "date")?)?;
+            Ok(())
+        },
+    },
     // Undo and redo are handled by `Session::run`; they're here for their metadata.
     CommandSpec { id: "edit.undo", label: "Undo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
     CommandSpec { id: "edit.redo", label: "Redo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
@@ -507,6 +587,29 @@ mod tests {
         assert_eq!(round.project.tasks.last().unwrap().id, TaskId(10));
     }
 
+    #[test]
+    fn calendar_commands_set_weekdays_and_exceptions_and_refuse_a_week_with_none() {
+        let mut s = sample();
+        let before = s.project.clone();
+        s.run("calendar.setWorking", &json!({"weekdays": ["Mon", "tuesday", "WED", "Thu", "Fri", "Sat"]})).unwrap();
+        assert_eq!(s.project.calendar.working, [true, true, true, true, true, true, false]);
+        for bad in [json!([]), json!(["Funday"]), json!([1]), json!("Mon")] {
+            assert!(s.run("calendar.setWorking", &json!({"weekdays": bad})).is_err(), "{bad}");
+        }
+        let e = s.run("calendar.setWorking", &json!({"weekdays": []})).unwrap_err().to_string();
+        assert!(e.contains("at least one working weekday"), "{e}");
+        s.run("calendar.addException", &json!({"date": "2026-11-04"})).unwrap();
+        s.run("calendar.addException", &json!({"date": "2026-11-08", "working": true})).unwrap();
+        assert_eq!(s.project.calendar.exceptions.len(), 2);
+        assert!(s.run("calendar.addException", &json!({"date": "2026-02-30"})).is_err());
+        s.run("calendar.removeException", &json!({"date": "2026-11-04"})).unwrap();
+        assert!(s.run("calendar.removeException", &json!({"date": "2026-11-04"})).unwrap_err().to_string().contains("no exception"));
+        for _ in 0..4 {
+            s.run("edit.undo", &json!({})).unwrap();
+        }
+        assert_eq!(s.project, before);
+    }
+
     /// Valid params from a schema, then junk built from it: each property wrong-typed, out of
     /// range or huge, each required one missing, an unknown one added, and non-object params.
     fn junk_from(schema: &Value) -> Vec<Value> {
@@ -515,7 +618,9 @@ mod tests {
             _ if p["enum"].is_array() => p["enum"][1].clone(),
             Some("integer") | Some("number") => p["minimum"].clone(),
             Some("string") if p["format"] == "date" => json!("2026-11-02"),
+            Some("array") if p["items"]["enum"].is_array() => json!([p["items"]["enum"][0].clone()]),
             Some("array") => json!([2]),
+            Some("boolean") => json!(true),
             _ => json!("1"),
         };
         let valid: serde_json::Map<String, Value> = props.iter().map(|(k, p)| (k.clone(), good(p))).collect();
@@ -537,6 +642,10 @@ mod tests {
             json!("9999SS+999999"),
             json!([0, -1, 1.5, "1", null]),
             json!([u32::MAX, 1, 1, 2]),
+            Value::Array(vec![json!("Mon"); 10_000]),
+            json!([[], {}, null]),
+            json!("9999-12-31"),
+            json!("0001-01-01"),
         ];
         for (k, p) in &props {
             let mut edge = wrong.to_vec();

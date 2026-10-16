@@ -84,6 +84,8 @@ fn migrate(_v: &mut Value, version: u64) {
     if version == 0 {
         // M0 → 1: same fields; only `format_version` is new.
     }
+    // Calendar `holidays` (M0 and early version 1) became `exceptions` without a version bump:
+    // the calendar reads both (`model::Calendar`), and writes only `exceptions`.
 }
 
 /// Refuses what the editing commands could never have produced; repairs `next_id` so ids are never reused.
@@ -91,6 +93,9 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
     let bad = |e: String| CmdError::Io(format!("not a valid ProjectCraft project: {e}"));
     if p.tasks.len() > model::MAX_TASKS {
         return Err(bad(format!("more than {} tasks", model::MAX_TASKS)));
+    }
+    if p.calendar.exceptions.len() > model::MAX_EXCEPTIONS {
+        return Err(bad(format!("more than {} calendar exceptions", model::MAX_EXCEPTIONS)));
     }
     let mut ids = HashSet::with_capacity(p.tasks.len());
     for t in &p.tasks {
@@ -164,7 +169,8 @@ mod tests {
     fn full() -> Project {
         let mut p = Project::new("Every field", Date::from_ymd(2026, 3, 2).unwrap());
         p.calendar.working = [true, false, true, false, true, true, false];
-        p.calendar.holidays.insert(Date::from_ymd(2026, 4, 3).unwrap());
+        p.calendar.exceptions.insert(Date::from_ymd(2026, 4, 3).unwrap(), false);
+        p.calendar.exceptions.insert(Date::from_ymd(2026, 4, 4).unwrap(), true);
         p.tasks = vec![
             Task {
                 id: TaskId(2), name: "Dig «foundations» ✓".into(), duration: 4, preds: vec![], constraint: Constraint::Asap, outline_level: 1
@@ -218,6 +224,36 @@ mod tests {
         assert!(s.project.tasks.iter().all(|t| t.constraint == Constraint::Asap));
         assert!(!s.save_json().unwrap().contains("constraint"));
         assert!(s.schedule.is_ok());
+    }
+
+    #[test]
+    fn calendar_exceptions_are_written_as_such_and_old_holidays_load_as_non_working() {
+        let text = Session::new(full()).save_json().unwrap();
+        let v = serde_json::from_str::<Value>(&text).unwrap();
+        assert_eq!(v["calendar"]["exceptions"], json!([{"date": "2026-04-03", "working": false}, {"date": "2026-04-04", "working": true}]));
+        assert!(v["calendar"].get("holidays").is_none());
+        // M0 and early version 1 files wrote non-working days as `holidays`.
+        for version in [json!(null), json!(1)] {
+            let mut old = json!({"name": "Old", "start": "2026-01-05", "calendar": {"working": [true, true, true, true, true, false, false], "holidays": ["2026-01-07"]},
+                "tasks": [{"id": 1, "name": "A", "duration": 3}], "next_id": 2});
+            if !version.is_null() {
+                old["format_version"] = version;
+            }
+            let s = Session::load_json(&old.to_string()).unwrap();
+            assert_eq!(s.project.calendar.exceptions.get(&Date::from_ymd(2026, 1, 7).unwrap()), Some(&false));
+            // Mon 5, Tue 6, (Wed 7 off), Thu 8.
+            assert_eq!(s.schedule.as_ref().unwrap().tasks[&TaskId(1)].finish, Date::from_ymd(2026, 1, 8).unwrap());
+            assert!(!s.save_json().unwrap().contains("holidays"));
+        }
+        // Too many exceptions, or a bad exception date, is refused.
+        let many: Vec<Value> = (0..=model::MAX_EXCEPTIONS as i64)
+            .map(|n| json!({"date": Date::from_ymd(2000, 1, 1).unwrap().add_days(n).unwrap().to_string(), "working": true}))
+            .collect();
+        let big =
+            json!({"name": "x", "start": "2026-01-05", "calendar": {"working": [true, true, true, true, true, true, true], "exceptions": many}});
+        assert!(Session::load_json(&big.to_string()).is_err());
+        let junk = json!({"name": "x", "start": "2026-01-05", "calendar": {"working": [true, true, true, true, true, true, true], "exceptions": [{"date": "2026-02-30"}]}});
+        assert!(Session::load_json(&junk.to_string()).is_err());
     }
 
     #[test]

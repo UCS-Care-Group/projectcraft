@@ -6,7 +6,7 @@
 
 use egui::{Key, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{Outline, TaskId, parse_duration, preds_text};
-use projectcraft_engine::{Session, time::Date};
+use projectcraft_engine::{Session, WEEKDAYS, time::Date};
 use serde_json::{Value, json};
 
 /// An English UI string in the current interface language ([`i18n::t`]).
@@ -58,6 +58,14 @@ fn outline_key(selected: Option<TaskId>, indent: bool, outdent: bool) -> Option<
     Some((cmd, json!({"ids": [id.0]})))
 }
 
+/// The Change Working Time dialog's own state: the exception being typed. Everything else it
+/// shows is the project calendar, and every change it makes is a `calendar.*` command.
+#[derive(Default)]
+struct WorkingTime {
+    date: String,
+    working: bool,
+}
+
 pub struct App {
     pub session: Session,
     /// Where Save writes, if anywhere.
@@ -84,6 +92,8 @@ pub struct App {
     title: String,
     /// Autosave and the recovery copy; `None` keeps nothing (the sample, screenshots).
     keeper: Option<recovery::Keeper>,
+    /// The Change Working Time dialog, while it is open.
+    working_time: Option<WorkingTime>,
 }
 
 const ROW_H: f32 = 22.0;
@@ -113,14 +123,23 @@ impl App {
             closing: false,
             title: String::new(),
             keeper: None,
+            working_time: None,
         }
     }
 
-    fn run(&mut self, id: &str, params: Value) {
+    /// Runs a command; an error goes to the status bar. True when it ran.
+    fn run(&mut self, id: &str, params: Value) -> bool {
         self.status = match self.session.run(id, &params) {
             Ok(()) => String::new(),
             Err(e) => e.to_string(),
         };
+        self.status.is_empty()
+    }
+
+    /// Opens the Change Working Time dialog on the project calendar.
+    pub fn open_change_working_time(&mut self) {
+        self.working_time = Some(WorkingTime::default());
+        self.status.clear();
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -147,6 +166,11 @@ impl App {
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 self.file_menu(ui);
+                ui.menu_button(tl!("Project"), |ui| {
+                    if ui.button(tl!("Change Working Time…")).clicked() {
+                        self.open_change_working_time();
+                    }
+                });
                 ui.separator();
                 ui.heading(&self.session.project.name);
                 ui.separator();
@@ -181,9 +205,94 @@ impl App {
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::both().show(ui, |ui| self.sheet(ui));
         });
+        self.change_working_time(&ctx);
         self.unsaved_prompt(&ctx);
         self.recovery_prompt(&ctx);
         self.update_title(&ctx);
+    }
+
+    /// Change Working Time: tick the working weekdays, add and remove exceptions. Every change is
+    /// a command, so each is one undo step and a refused one (no working weekday) changes nothing.
+    fn change_working_time(&mut self, ctx: &egui::Context) {
+        let Some(mut form) = self.working_time.take() else { return };
+        let calendar = self.session.project.calendar.clone();
+        let error = self.status.clone();
+        let t = Tokens::get(ctx);
+        let mut commands: Vec<(&'static str, Value)> = Vec::new();
+        let (mut add, mut close) = (false, false);
+        let modal = egui::Modal::new(egui::Id::new("change_working_time")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.heading(tl!("Change Working Time"));
+            ui.label(RichText::new(tl!("Project calendar")).color(t.text_dim));
+            ui.add_space(10.0);
+
+            ui.label(RichText::new(tl!("Working days")).strong());
+            let mut working = calendar.working;
+            ui.horizontal(|ui| {
+                for (w, name) in working.iter_mut().zip(WEEKDAYS) {
+                    ui.checkbox(w, tl!(name));
+                }
+            });
+            if working != calendar.working {
+                let weekdays: Vec<&str> = WEEKDAYS.iter().zip(working).filter(|(_, w)| *w).map(|(n, _)| *n).collect();
+                commands.push(("calendar.setWorking", json!({ "weekdays": weekdays })));
+            }
+            ui.add_space(10.0);
+
+            ui.label(RichText::new(tl!("Exceptions")).strong());
+            if calendar.exceptions.is_empty() {
+                ui.label(RichText::new(tl!("None: every day follows its weekday.")).color(t.text_dim));
+            } else {
+                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                    egui::Grid::new("exceptions").striped(true).num_columns(4).spacing([16.0, 4.0]).show(ui, |ui| {
+                        for (date, worked) in &calendar.exceptions {
+                            ui.label(date.to_string());
+                            let weekday = WEEKDAYS.get(usize::from(date.weekday())).copied().unwrap_or("");
+                            ui.label(RichText::new(tl!(weekday)).color(t.text_dim));
+                            ui.label(if *worked { tl!("Working") } else { tl!("Non-working") });
+                            if ui.small_button(tl!("Remove")).clicked() {
+                                commands.push(("calendar.removeException", json!({"date": date.to_string()})));
+                            }
+                            ui.end_row();
+                        }
+                    });
+                });
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let label = ui.label(tl!("Date"));
+                let r = ui.add(egui::TextEdit::singleline(&mut form.date).hint_text(tl!("YYYY-MM-DD")).desired_width(96.0)).labelled_by(label.id);
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                ui.radio_value(&mut form.working, false, tl!("Non-working"));
+                ui.radio_value(&mut form.working, true, tl!("Working"));
+                let typed = !form.date.trim().is_empty();
+                if (ui.add_enabled(typed, egui::Button::new(tl!("Add Exception"))).clicked() || enter) && typed {
+                    commands.push(("calendar.addException", json!({"date": form.date.trim(), "working": form.working})));
+                    add = true;
+                }
+            });
+
+            if !error.is_empty() {
+                ui.add_space(6.0);
+                ui.label(error.as_str());
+            }
+            ui.add_space(10.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(tl!("Close")).clicked() {
+                    close = true;
+                }
+            });
+        });
+        let mut ran = true;
+        for (id, params) in commands {
+            ran &= self.run(id, params);
+        }
+        if add && ran {
+            form.date.clear();
+        }
+        if !(close || modal.should_close()) {
+            self.working_time = Some(form);
+        }
     }
 
     fn sheet(&mut self, ui: &mut egui::Ui) {
@@ -346,6 +455,45 @@ mod tests {
                 assert!(!code.contains(needle), "{file} names a colour ({needle}); add a token in theme.rs");
             }
         }
+    }
+
+    /// The Change Working Time dialog changes the calendar only through commands: ticking a
+    /// weekday, adding and removing an exception are each one undo step; unticking the last
+    /// working weekday is refused, says why, and leaves the dialog open.
+    #[test]
+    fn change_working_time_edits_the_calendar_through_commands() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = App::new(projectcraft_engine::sample(), None);
+        app.open_change_working_time();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        h.run_steps(3);
+        h.get_by_label("Sat").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.project.calendar.working, [true, true, true, true, true, true, false]);
+
+        h.get_by_label("Date").focus();
+        h.run_steps(1);
+        h.get_by_label("Date").type_text("2026-11-04");
+        h.run_steps(2);
+        h.get_by_label("Add Exception").click();
+        h.run_steps(3);
+        let d = Date::from_ymd(2026, 11, 4).unwrap();
+        assert_eq!(h.state().session.project.calendar.exceptions.get(&d), Some(&false));
+        h.get_by_label("Remove").click();
+        h.run_steps(3);
+        assert!(h.state().session.project.calendar.exceptions.is_empty());
+
+        h.state_mut().session.run("calendar.setWorking", &json!({"weekdays": ["Mon"]})).unwrap();
+        h.run_steps(2);
+        let before = h.state().session.project.clone();
+        h.get_by_label("Mon").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.project, before);
+        assert!(h.state().status.contains("at least one working weekday"), "{}", h.state().status);
+        assert!(h.state().working_time.is_some());
+        h.get_by_label("Close").click();
+        h.run_steps(2);
+        assert!(h.state().working_time.is_none());
     }
 
     /// Worked example 15 (sheet side): a typed Start sets SNET, a typed Finish FNET. The

@@ -55,6 +55,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | SEC: cargo-deny (`deny.toml`, `cargo xtask deny`, a CI job); every action pinned to a commit SHA; zizmor and OpenSSF Scorecard workflows; Dependabot with a week's cooldown; CodeQL config; `SECURITY.md`, threat model and release rules |
 | 2026-10-16 | M1.1: summary tasks: `outline_level`, `task.indent`/`task.outdent` (one undo step, subtree moves), roll-up of start, finish and duration, summary bar, Alt+Shift+→/←; worked example 13; links and constraints on summaries wait for #8 (#7) |
 | 2026-10-16 | M1.5: autosave on by default (every 2 minutes while dirty, File > Autosave to turn off; saving never clears undo); recovery copy `<name>.projectcraft.recovery` (untitled: in the settings folder) at most every 30 s while dirty, deleted on clean save or close, offered back with Restore / Discard when newer than the file; `--sample` keeps nothing (#18) |
+| 2026-10-16 | M1.4: calendar exceptions (non-working and working days); `calendar.setWorking`, `calendar.addException`, `calendar.removeException`; a week with no working weekday refused; old `holidays` load as exceptions; Project ▸ Change Working Time dialog; worked example 7 (#14) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -64,3 +65,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | Security hardening in the progress log |
 | 2026-10-16 | minor | M1.1 summary tasks |
 | 2026-10-16 | minor | M1.5 autosave and recovery copy |
+| 2026-10-16 | minor | M1.4 calendar exceptions |

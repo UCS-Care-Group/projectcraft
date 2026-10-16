@@ -91,7 +91,7 @@ fn worked_example_14_a_constraint_date_on_a_non_working_day_moves_to_a_working_d
     let mut p = Project::new("t", date("2026-01-05"));
     p.add_task("C", 2).unwrap();
     // Monday 2026-01-19 is a holiday.
-    p.calendar.holidays.insert(date("2026-01-19"));
+    p.calendar.exceptions.insert(date("2026-01-19"), false);
     let mut s = Session::new(p);
 
     // SNET Saturday 10 → Monday 12.
