@@ -129,6 +129,44 @@ pub struct Options {
     /// unless changed.
     #[serde(skip_serializing_if = "is_false")]
     pub effort_driven: bool,
+    /// How work assignment units and Max Units show, as Project's "Show assignment units as a"
+    /// schedule option: a percentage (`50%`) unless changed. A file from before it has none.
+    #[serde(skip_serializing_if = "UnitsFormat::is_percentage")]
+    pub units_format: UnitsFormat,
+}
+
+/// How a work resource's units show and how a bare number typed for them reads, as Microsoft
+/// Project's "Show assignment units as a" option ("Change the default unit format for
+/// assignments", <https://support.microsoft.com/en-us/office/change-the-default-unit-format-for-assignments-d1490024-3ce2-4552-8327-6c1cb6e7ca07>):
+/// a percentage (`50%`, `100%`) or a decimal (`0.5`, `1`). A number typed with `%` is always a
+/// percentage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum UnitsFormat {
+    #[default]
+    Percentage,
+    Decimal,
+}
+
+impl UnitsFormat {
+    pub const ALL: [UnitsFormat; 2] = [UnitsFormat::Percentage, UnitsFormat::Decimal];
+    /// The names, as the option's list shows them.
+    pub const NAMES: [&'static str; 2] = ["Percentage", "Decimal"];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            UnitsFormat::Percentage => "Percentage",
+            UnitsFormat::Decimal => "Decimal",
+        }
+    }
+
+    /// Reads a format by name, any case, or a prefix of one (`dec`).
+    pub fn from_name(text: &str) -> Result<UnitsFormat, ModelError> {
+        crate::resource::pick(text, &UnitsFormat::ALL, UnitsFormat::name, "units format")
+    }
+
+    fn is_percentage(&self) -> bool {
+        *self == UnitsFormat::Percentage
+    }
 }
 
 fn is_false(b: &bool) -> bool {
@@ -142,7 +180,14 @@ pub const MAX_DAYS_PER_MONTH: u32 = 31;
 
 impl Default for Options {
     fn default() -> Self {
-        Options { minutes_per_day: 8 * 60, minutes_per_week: 40 * 60, days_per_month: 20, task_type: TaskType::FixedUnits, effort_driven: false }
+        Options {
+            minutes_per_day: 8 * 60,
+            minutes_per_week: 40 * 60,
+            days_per_month: 20,
+            task_type: TaskType::FixedUnits,
+            effort_driven: false,
+            units_format: UnitsFormat::Percentage,
+        }
     }
 }
 

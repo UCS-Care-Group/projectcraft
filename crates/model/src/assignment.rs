@@ -26,7 +26,7 @@ use crate::resource::{check_money, fixed_text, parse_fixed};
 use crate::task_type::Crew;
 use crate::{
     Currency, DurationUnit, FULL_TIME, MAX_MINUTES, MAX_UNITS, MAX_WORK, ModelError, Options, Outline, Project, ResourceId, ResourceType, TaskId,
-    check_name, parse_units, units_text,
+    UnitsFormat, check_name, parse_units_as, units_text_as,
 };
 
 /// Most assignments in one project. ponytail: a cap, not a measured limit.
@@ -145,13 +145,13 @@ pub fn assignment_work(a: &Assignment, duration: i64, options: &Options) -> Assi
     }
 }
 
-/// Reads the text between an assignment's brackets for a resource of `kind`: a percentage for a
-/// work resource (`50%`, `50`), a quantity with an optional label and rate for a material
+/// Reads the text between an assignment's brackets for a resource of `kind`: units for a work
+/// resource (`50%`, or a bare number read as the project's `format` says: `50` or `0.5`), a quantity with an optional label and rate for a material
 /// (`5 tons`, `5`, `2 tons/d`, `2/day`), an amount in the project `currency` for a cost resource
 /// (`£200`).
-pub fn parse_assignment_units(kind: ResourceType, text: &str, currency: &Currency) -> Result<Units, ModelError> {
+pub fn parse_assignment_units(kind: ResourceType, text: &str, currency: &Currency, format: UnitsFormat) -> Result<Units, ModelError> {
     match kind {
-        ResourceType::Work => Ok(Units::Work(parse_units(text)?)),
+        ResourceType::Work => Ok(Units::Work(parse_units_as(text, format)?)),
         ResourceType::Cost => Ok(Units::Cost(currency.parse(text)?)),
         ResourceType::Material => {
             let bad = || {
@@ -236,25 +236,25 @@ impl Project {
         self.assignments.iter().any(|a| a.resource == resource)
     }
 
-    /// An assignment's units as the brackets show them, without the brackets: `50%`, `5 tons`,
-    /// `2 tons/d`, `£200.00`; empty when Project leaves the brackets off (100% of a work
+    /// An assignment's units as the brackets show them, without the brackets: `50%` (or `0.5`, as
+    /// the project's units format says), `5 tons`, `2 tons/d`, `£200.00`; empty when Project leaves the brackets off (100% of a work
     /// resource, no cost).
     pub fn units_text(&self, a: &Assignment) -> String {
         let label = self.resource(a.resource).map(|r| r.material_label.clone()).unwrap_or_default();
         let with_label = |q: i64| if label.is_empty() { quantity_text(q) } else { format!("{} {label}", quantity_text(q)) };
         match a.units {
             Units::Work(FULL_TIME) | Units::Cost(0) => String::new(),
-            Units::Work(u) => units_text(u),
+            Units::Work(u) => units_text_as(u, self.options.units_format),
             Units::Fixed(q) => with_label(q),
             Units::Rate { quantity, per } => format!("{}/{}", with_label(quantity), per.suffix()),
             Units::Cost(m) => self.currency.format(m),
         }
     }
 
-    /// The units as an editor shows them: as [`Project::units_text`], but never empty (`100%`).
+    /// The units as an editor shows them: as [`Project::units_text`], but never empty (`100%`, `1`).
     pub fn units_text_full(&self, a: &Assignment) -> String {
         match a.units {
-            Units::Work(u) => units_text(u),
+            Units::Work(u) => units_text_as(u, self.options.units_format),
             Units::Cost(m) => self.currency.format(m),
             _ => self.units_text(a),
         }
@@ -380,7 +380,8 @@ impl Project {
             }
             let r = p.resource(id)?;
             let units = match units {
-                Some(u) => parse_assignment_units(r.kind, &u, &p.currency).map_err(|e| ModelError::Invalid(format!("{}: {e}", r.name)))?,
+                Some(u) => parse_assignment_units(r.kind, &u, &p.currency, p.options.units_format)
+                    .map_err(|e| ModelError::Invalid(format!("{}: {e}", r.name)))?,
                 // Unchanged when it was already assigned with units Project leaves unshown.
                 None => p
                     .assignments_of(task)
@@ -619,6 +620,25 @@ mod tests {
         assert_eq!(p.resource_names(t), "Ann, Sam Reid[25%], Pat");
     }
 
+    /// With units shown as decimals (Project's "Show assignment units as a: Decimal",
+    /// <https://support.microsoft.com/en-us/office/change-the-default-unit-format-for-assignments-d1490024-3ce2-4552-8327-6c1cb6e7ca07>)
+    /// the column writes `Ann[0.5]` and reads a bare number as a decimal; `50%` still reads.
+    #[test]
+    fn resource_names_follow_the_units_format() {
+        let (mut p, t) = project();
+        p.options.units_format = UnitsFormat::Decimal;
+        p.set_resource_names(t, "Ann[0.5], Bob[25%], Concrete[2 tons/d]").unwrap();
+        assert_eq!(p.resource_names(t), "Ann[0.5], Bob[0.25], Concrete[2 tons/d]");
+        let ann = p.assignments_of(t).next().copied().unwrap();
+        assert_eq!(ann.units, Units::Work(5_000));
+        assert_eq!(p.units_text_full(&ann), "0.5");
+        p.set_resource_names(t, "Ann[1], Bob[0.25]").unwrap();
+        assert_eq!(p.resource_names(t), "Ann, Bob[0.25]", "full time leaves the brackets off");
+        assert!(p.set_resource_names(t, "Ann[150]").is_err(), "more than 100");
+        p.options.units_format = UnitsFormat::Percentage;
+        assert_eq!(p.resource_names(t), "Ann, Bob[25%]");
+    }
+
     #[test]
     fn assign_change_and_remove_by_unique_id() {
         let (mut p, t) = project();
@@ -649,14 +669,14 @@ mod tests {
         let (mut p, t) = project();
         p.task_mut(t).unwrap().duration = 2 * D;
         let o = p.options;
-        let fixed = parse_assignment_units(ResourceType::Material, "80 tons", &Currency::default()).unwrap();
-        let variable = parse_assignment_units(ResourceType::Material, "80 tons/day", &Currency::default()).unwrap();
+        let fixed = parse_assignment_units(ResourceType::Material, "80 tons", &Currency::default(), UnitsFormat::Percentage).unwrap();
+        let variable = parse_assignment_units(ResourceType::Material, "80 tons/day", &Currency::default(), UnitsFormat::Percentage).unwrap();
         assert_eq!(assignment_work(&of(fixed), 2 * D, &o), AssignmentWork::Quantity(8_000));
         assert_eq!(assignment_work(&of(variable), 2 * D, &o), AssignmentWork::Quantity(16_000));
         assert_eq!(assignment_work(&of(fixed), 4 * D, &o), AssignmentWork::Quantity(8_000), "fixed: the same whatever the duration");
         assert_eq!(assignment_work(&of(variable), 4 * D, &o), AssignmentWork::Quantity(32_000), "variable: in proportion");
         // A rate per hour over half a day: 4 hours × 2.5 = 10.
-        let hourly = parse_assignment_units(ResourceType::Material, "2.5/h", &Currency::default()).unwrap();
+        let hourly = parse_assignment_units(ResourceType::Material, "2.5/h", &Currency::default(), UnitsFormat::Percentage).unwrap();
         assert_eq!(assignment_work(&of(hourly), 240, &o), AssignmentWork::Quantity(1_000));
         assert_eq!(assignment_work(&of(Units::Cost(500)), 2 * D, &o), AssignmentWork::None);
     }
@@ -724,8 +744,10 @@ mod tests {
     proptest::proptest! {
         /// Any text: never a panic; what is read writes back to the same assignments.
         #[test]
-        fn resource_names_never_panic_and_round_trip(s in "\\PC{0,60}") {
+        fn resource_names_never_panic_and_round_trip(s in "\\PC{0,60}", decimal in proptest::bool::ANY) {
             let (mut p, t) = project();
+            let format = if decimal { UnitsFormat::Decimal } else { UnitsFormat::Percentage };
+            p.options.units_format = format;
             if p.set_resource_names(t, &s).is_ok() {
                 let text = p.resource_names(t);
                 let before = p.clone();
@@ -733,19 +755,23 @@ mod tests {
                 proptest::prop_assert_eq!(&p, &before);
             }
             for kind in ResourceType::ALL {
-                let _ = parse_assignment_units(kind, &s, &Currency::default());
+                let _ = parse_assignment_units(kind, &s, &Currency::default(), format);
             }
         }
 
         #[test]
         fn typed_names_from_the_grammar_round_trip(
-            parts in proptest::collection::vec(("[A-Za-z][A-Za-z ]{0,8}", proptest::option::of("[0-9]{1,3}(\\.[0-9]{1,2})?%?")), 0..6)
+            parts in proptest::collection::vec(("[A-Za-z][A-Za-z ]{0,8}", proptest::option::of("[0-9]{1,3}(\\.[0-9]{1,4})?%?")), 0..6),
+            decimal in proptest::bool::ANY,
         ) {
             let text = parts.iter().map(|(n, u)| match u {
                 Some(u) => format!("{n}[{u}]"),
                 None => n.clone(),
             }).collect::<Vec<_>>().join(", ");
             let (mut p, t) = project();
+            if decimal {
+                p.options.units_format = UnitsFormat::Decimal;
+            }
             if p.set_resource_names(t, &text).is_ok() {
                 let shown = p.resource_names(t);
                 let before = p.clone();

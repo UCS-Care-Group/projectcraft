@@ -5,7 +5,7 @@
 //! change is a `resource.*` command.
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
-use projectcraft_engine::model::{self, AccrueAt, Currency, Resource, ResourceId, ResourceType, parse_units, units_text};
+use projectcraft_engine::model::{self, AccrueAt, Project, Resource, ResourceId, ResourceType, parse_units_as, units_text_as};
 use serde_json::{Value, json};
 
 use crate::selection::Selection;
@@ -59,10 +59,11 @@ pub(crate) struct ResourceSheet {
 }
 
 /// A cell's text; `None` where the field doesn't apply to the resource's type (Max Units of a
-/// material), which shows empty and can't be edited.
-pub(crate) fn cell_text(r: &Resource, field: RField, currency: &Currency) -> Option<String> {
+/// material), which shows empty and can't be edited. Amounts are in the project's currency and
+/// Max Units in its units format.
+pub(crate) fn cell_text(r: &Resource, field: RField, p: &Project) -> Option<String> {
     let work = r.kind == ResourceType::Work;
-    let money = |n: i64| currency.format(n);
+    let money = |n: i64| p.currency.format(n);
     let per_hour = |n: i64| format!("{}{}", money(n), tl!("/hr"));
     Some(match field {
         RField::Name => r.name.clone(),
@@ -70,7 +71,7 @@ pub(crate) fn cell_text(r: &Resource, field: RField, currency: &Currency) -> Opt
         RField::Material if r.kind == ResourceType::Material => r.material_label.clone(),
         RField::Initials => r.initials.clone(),
         RField::Group => r.group.clone(),
-        RField::MaxUnits if work => units_text(r.max_units),
+        RField::MaxUnits if work => units_text_as(r.max_units, p.options.units_format),
         RField::StandardRate if work => per_hour(r.standard_rate),
         RField::StandardRate if r.kind == ResourceType::Material => money(r.standard_rate),
         RField::OvertimeRate if work => per_hour(r.overtime_rate),
@@ -81,9 +82,9 @@ pub(crate) fn cell_text(r: &Resource, field: RField, currency: &Currency) -> Opt
 }
 
 /// The command a cell's new text issues, or why the text can't be read.
-pub(crate) fn typed(id: ResourceId, field: RField, text: &str, currency: &Currency) -> Result<(&'static str, Value), String> {
+pub(crate) fn typed(id: ResourceId, field: RField, text: &str, p: &Project) -> Result<(&'static str, Value), String> {
     let set = |k: &str, v: Value| Ok(("resource.set", json!({"id": id.0, k: v})));
-    let amount = |t: &str| currency.parse(t).map_err(|e| e.to_string());
+    let amount = |t: &str| p.currency.parse(t).map_err(|e| e.to_string());
     match field {
         RField::Name => Ok(("resource.rename", json!({"id": id.0, "name": text}))),
         RField::Type => set("type", json!(ResourceType::from_name(text).map_err(|e| e.to_string())?.name())),
@@ -91,7 +92,7 @@ pub(crate) fn typed(id: ResourceId, field: RField, text: &str, currency: &Curren
         RField::Initials => set("initials", json!(text)),
         RField::Group => set("group", json!(text)),
         RField::MaxUnits => {
-            let u = parse_units(text).map_err(|e| e.to_string())?;
+            let u = parse_units_as(text, p.options.units_format).map_err(|e| e.to_string())?;
             // Exact: the percent as a decimal number (`37.50`), read back without a float.
             let percent = format!("{}.{:02}", u / model::UNITS_PER_PERCENT, u % model::UNITS_PER_PERCENT);
             set("maxUnits", serde_json::from_str::<Value>(&percent).map_err(|e| e.to_string())?)
@@ -137,7 +138,7 @@ impl App {
     fn begin_resource_edit(&mut self, typed: Option<String>) {
         let rs = &mut self.resources;
         let Some(id) = rs.sel.cursor else { return };
-        let Some(text) = self.session.project.resource(id).ok().and_then(|r| cell_text(r, rs.field, &self.session.project.currency)) else { return };
+        let Some(text) = self.session.project.resource(id).ok().and_then(|r| cell_text(r, rs.field, &self.session.project)) else { return };
         rs.editing = Some((id, rs.field, typed.unwrap_or(text)));
         rs.focus_editor = true;
     }
@@ -219,11 +220,11 @@ impl App {
     }
 
     pub(crate) fn commit_resource(&mut self, id: ResourceId, field: RField, text: String) {
-        let now = self.session.project.resource(id).ok().and_then(|r| cell_text(r, field, &self.session.project.currency));
+        let now = self.session.project.resource(id).ok().and_then(|r| cell_text(r, field, &self.session.project));
         if now.as_deref() == Some(text.as_str()) {
             return;
         }
-        match typed(id, field, &text, &self.session.project.currency) {
+        match typed(id, field, &text, &self.session.project) {
             // As Microsoft Project, a new type loses the resource's assignments: ask first.
             Ok((_, params)) if field == RField::Type && self.session.project.is_assigned(id) => {
                 let new = params.get("type").and_then(Value::as_str).unwrap_or("");
@@ -368,7 +369,7 @@ impl App {
             }
             return None;
         }
-        let value = cell_text(r, field, &self.session.project.currency);
+        let value = cell_text(r, field, &self.session.project);
         let shown = value.clone().unwrap_or_default();
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &shown));
@@ -464,20 +465,35 @@ mod tests {
             (RField::Initials, "PS"),
             (RField::Name, "Priya S."),
         ] {
-            let (cmd, params) = typed(id, field, text, &Currency::default()).unwrap();
+            let (cmd, params) = typed(id, field, text, &s.project).unwrap();
             s.run(cmd, &params).unwrap();
         }
         let r = s.project.resource(id).unwrap();
         assert_eq!((r.max_units, r.standard_rate, r.overtime_rate, r.cost_per_use), (3_750, 125_050, 6_000, 99));
         assert_eq!((r.accrue_at, r.group.as_str(), r.initials.as_str(), r.name.as_str()), (AccrueAt::Start, "Site", "PS", "Priya S."));
-        assert_eq!(cell_text(r, RField::MaxUnits, &Currency::default()).as_deref(), Some("37.5%"));
-        assert_eq!(cell_text(r, RField::StandardRate, &Currency::default()).as_deref(), Some("£1,250.50/hr"));
-        assert_eq!(cell_text(r, RField::Material, &Currency::default()), None, "a work resource has no material label");
+        assert_eq!(cell_text(r, RField::MaxUnits, &s.project).as_deref(), Some("37.5%"));
+        assert_eq!(cell_text(r, RField::StandardRate, &s.project).as_deref(), Some("£1,250.50/hr"));
+        assert_eq!(cell_text(r, RField::Material, &s.project), None, "a work resource has no material label");
         for (field, text) in [(RField::MaxUnits, "lots"), (RField::StandardRate, "-5"), (RField::Type, "Person"), (RField::AccrueAt, "")] {
-            assert!(typed(id, field, text, &Currency::default()).is_err(), "{text}");
+            assert!(typed(id, field, text, &s.project).is_err(), "{text}");
         }
         let boxes = s.project.resource(ResourceId(4)).unwrap();
-        assert_eq!(cell_text(boxes, RField::StandardRate, &Currency::default()).as_deref(), Some("£2.50"));
-        assert_eq!(cell_text(boxes, RField::MaxUnits, &Currency::default()), None);
+        assert_eq!(cell_text(boxes, RField::StandardRate, &s.project).as_deref(), Some("£2.50"));
+        assert_eq!(cell_text(boxes, RField::MaxUnits, &s.project), None);
+    }
+
+    /// Max Units follow the project's units format: `0.5` as a decimal, `50%` still read.
+    #[test]
+    fn max_units_follow_the_units_format() {
+        let mut s = projectcraft_engine::sample();
+        s.run("project.setOptions", &json!({"assignmentUnitsAs": "Decimal"})).unwrap();
+        let crew = ResourceId(3);
+        assert_eq!(cell_text(s.project.resource(crew).unwrap(), RField::MaxUnits, &s.project).as_deref(), Some("3"));
+        for (text, units) in [("2.5", 25_000), ("50%", 5_000), ("1", 10_000)] {
+            let (cmd, params) = typed(crew, RField::MaxUnits, text, &s.project).unwrap();
+            s.run(cmd, &params).unwrap();
+            assert_eq!(s.project.resource(crew).unwrap().max_units, units, "{text}");
+        }
+        assert!(typed(crew, RField::MaxUnits, "101", &s.project).is_err());
     }
 }

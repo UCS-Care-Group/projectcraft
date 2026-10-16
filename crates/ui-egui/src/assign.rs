@@ -12,7 +12,8 @@ use std::collections::BTreeMap;
 
 use egui::{Key, RichText};
 use projectcraft_engine::model::{
-    Assignment, AssignmentWork, DurationUnit, Project, ResourceId, ResourceType, TaskId, assignment_work, default_units, duration_text, quantity_text,
+    Assignment, AssignmentWork, DurationUnit, Project, ResourceId, ResourceType, TaskId, UnitsFormat, assignment_work, default_units, duration_text,
+    quantity_text,
 };
 use serde_json::{Value, json};
 
@@ -256,9 +257,14 @@ impl App {
                 });
             });
             ui.add_space(6.0);
-            let hint = match p.resources.iter().any(|r| r.kind == ResourceType::Material) {
-                true => tl!("Units: a percentage for people and equipment (50%); for materials a quantity (5 tons) or a rate (2 tons/d)."),
-                false => tl!("Units: the share of each resource's working time (50% is half its day)."),
+            let decimal = p.options.units_format == UnitsFormat::Decimal;
+            let hint = match (p.resources.iter().any(|r| r.kind == ResourceType::Material), decimal) {
+                (true, false) => tl!("Units: a percentage for people and equipment (50%); for materials a quantity (5 tons) or a rate (2 tons/d)."),
+                (true, true) => {
+                    tl!("Units: a decimal for people and equipment (0.5, or 50%); for materials a quantity (5 tons) or a rate (2 tons/d).")
+                }
+                (false, false) => tl!("Units: the share of each resource's working time (50% is half its day)."),
+                (false, true) => tl!("Units: the share of each resource's working time (0.5 is half its day; 50% works too)."),
             };
             ui.label(RichText::new(hint).color(t.text_dim));
             if !error.is_empty() {

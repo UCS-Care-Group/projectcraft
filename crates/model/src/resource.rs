@@ -12,7 +12,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ModelError, Project, TaskId};
+use crate::{ModelError, Project, TaskId, UnitsFormat};
 
 /// Most resources in one project. ponytail: a cap, not a measured limit.
 pub const MAX_RESOURCES: usize = 100_000;
@@ -318,23 +318,46 @@ pub(crate) fn fixed_text(n: i64, digits: u32) -> String {
 
 /// Max Units typed as Microsoft Project's percent format: `50%` or `50`, up to two decimal places.
 pub fn parse_units(text: &str) -> Result<u32, ModelError> {
-    let bad = || {
-        let text: String = text.chars().take(20).collect();
-        ModelError::Invalid(format!("`{text}` is not a percentage between 0% and {}%", MAX_UNITS / UNITS_PER_PERCENT))
-    };
+    parse_units_as(text, UnitsFormat::Percentage)
+}
+
+/// Units as typed when the project shows them in `format`: a number with `%` is always a
+/// percentage (`50%`, up to two decimal places); a bare number is a percentage (`50`) or, as a
+/// decimal, a share of full time (`0.5`, `1`, up to four decimal places).
+pub fn parse_units_as(text: &str, format: UnitsFormat) -> Result<u32, ModelError> {
+    let max = i64::from(MAX_UNITS);
     let t = text.trim();
-    let t = t.strip_suffix('%').unwrap_or(t).trim();
-    let n = parse_fixed(t, 2, i64::from(MAX_UNITS)).ok_or_else(bad)?;
-    u32::try_from(n).map_err(|_| bad())
+    let n = match t.strip_suffix('%') {
+        Some(percent) => parse_fixed(percent.trim(), 2, max),
+        None if format == UnitsFormat::Decimal => parse_fixed(t, 4, max),
+        None => parse_fixed(t, 2, max),
+    };
+    n.and_then(|n| u32::try_from(n).ok()).ok_or_else(|| {
+        let text: String = text.chars().take(20).collect();
+        let most = MAX_UNITS / UNITS_PER_PERCENT;
+        ModelError::Invalid(match format {
+            UnitsFormat::Percentage => format!("`{text}` is not a percentage between 0% and {most}%"),
+            UnitsFormat::Decimal => format!("`{text}` is not units between 0 and {} (1 is full time) or a percentage", most / 100),
+        })
+    })
 }
 
 /// Max Units as the sheet shows it: `100%`, `50%`, `37.5%`.
 pub fn units_text(units: u32) -> String {
-    let (whole, hundredths) = (units / UNITS_PER_PERCENT, units % UNITS_PER_PERCENT);
-    match hundredths {
-        0 => format!("{whole}%"),
-        h if h % 10 == 0 => format!("{whole}.{}%", h / 10),
-        h => format!("{whole}.{h:02}%"),
+    units_text_as(units, UnitsFormat::Percentage)
+}
+
+/// Units as shown in `format`: `100%`, `37.5%` or `1`, `0.375`.
+pub fn units_text_as(units: u32, format: UnitsFormat) -> String {
+    match format {
+        UnitsFormat::Percentage => {
+            let text = fixed_text(i64::from(units), 2);
+            format!("{}%", text.trim_end_matches('0').trim_end_matches('.'))
+        }
+        UnitsFormat::Decimal => {
+            let text = fixed_text(i64::from(units), 4);
+            text.trim_end_matches('0').trim_end_matches('.').to_owned()
+        }
     }
 }
 
@@ -625,6 +648,30 @@ mod tests {
         assert_eq!(units_text(3750), "37.5%");
         assert_eq!(units_text(3725), "37.25%");
         assert_eq!(units_text(5), "0.05%");
+        assert_eq!(units_text(0), "0%");
+    }
+
+    /// Units as decimals, as Project's "Show assignment units as a: Decimal" option
+    /// (<https://support.microsoft.com/en-us/office/change-the-default-unit-format-for-assignments-d1490024-3ce2-4552-8327-6c1cb6e7ca07>):
+    /// full time is 1; a number with `%` is still a percentage.
+    #[test]
+    fn units_read_and_write_as_decimals() {
+        let d = UnitsFormat::Decimal;
+        assert_eq!(units_text_as(FULL_TIME, d), "1");
+        assert_eq!(units_text_as(5000, d), "0.5");
+        assert_eq!(units_text_as(3750, d), "0.375");
+        assert_eq!(units_text_as(5, d), "0.0005");
+        assert_eq!(units_text_as(0, d), "0");
+        assert_eq!(units_text_as(MAX_UNITS, d), "100");
+        assert_eq!(parse_units_as("0.5", d).unwrap(), 5000);
+        assert_eq!(parse_units_as(" 1 ", d).unwrap(), FULL_TIME);
+        assert_eq!(parse_units_as(".375", d).unwrap(), 3750);
+        assert_eq!(parse_units_as("50%", d).unwrap(), 5000, "a percentage either way");
+        assert_eq!(parse_units_as("50", UnitsFormat::Percentage).unwrap(), 5000);
+        for bad in ["", "%", "-1", "100.0001", "0.00001", "1e2", "lots", "0.5%%", "101"] {
+            assert!(parse_units_as(bad, d).is_err(), "{bad}");
+        }
+        assert!(parse_units_as("x", d).unwrap_err().to_string().contains("1 is full time"));
 
         assert_eq!(parse_money("£12.50/hr", "£", 2).unwrap(), 1250);
         assert_eq!(parse_money("1,234", "£", 2).unwrap(), 123_400);
@@ -671,8 +718,13 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn typed_units_and_money_never_panic(s in "\\PC{0,40}") {
-            if let Ok(u) = parse_units(&s) {
-                proptest::prop_assert_eq!(parse_units(&units_text(u)).ok(), Some(u));
+            for format in UnitsFormat::ALL {
+                if let Ok(u) = parse_units_as(&s, format) {
+                    // Whichever format it was typed in, each writes it back exactly.
+                    for shown in UnitsFormat::ALL {
+                        proptest::prop_assert_eq!(parse_units_as(&units_text_as(u, shown), shown).ok(), Some(u));
+                    }
+                }
             }
             if let Ok(m) = parse_money(&s, "£", 2) {
                 proptest::prop_assert_eq!(parse_money(&format_money(m, "£", 2), "£", 2).ok(), Some(m));

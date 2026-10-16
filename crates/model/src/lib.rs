@@ -30,13 +30,14 @@ pub use outline::{CIRCULAR_OUTLINE, MAX_OUTLINE_LEVEL, Outline};
 pub use projectcraft_time::Date;
 pub use resource::{
     AccrueAt, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS, FULL_TIME, MAX_MONEY, MAX_RESOURCE_TEXT, MAX_RESOURCES, MAX_UNITS, Resource,
-    ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_money, check_name, format_money, parse_money, parse_units, units_text,
+    ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_money, check_name, format_money, parse_money, parse_units, parse_units_as,
+    units_text, units_text_as,
 };
 pub use schedule::{Driver, Moment, Schedule, TaskDates, schedule};
 pub use task_type::{MAX_WORK, TaskType};
 pub use view::{Column, Columns};
 pub use working_time::{
-    DEFAULT_WORKING_TIMES, MAX_WORKING_TIMES, MINUTES_IN_DAY, Options, WorkingTime, check_working_times, clock, minutes_of, parse_clock,
+    DEFAULT_WORKING_TIMES, MAX_WORKING_TIMES, MINUTES_IN_DAY, Options, UnitsFormat, WorkingTime, check_working_times, clock, minutes_of, parse_clock,
     parse_working_time,
 };
 
@@ -728,8 +729,14 @@ mod tests {
     const D: i64 = 480;
 
     /// The default options: 8 hours a day, 40 a week, 20 days a month.
-    const O: Options =
-        Options { minutes_per_day: 480, minutes_per_week: 2400, days_per_month: 20, task_type: crate::TaskType::FixedUnits, effort_driven: false };
+    const O: Options = Options {
+        minutes_per_day: 480,
+        minutes_per_week: 2400,
+        days_per_month: 20,
+        task_type: crate::TaskType::FixedUnits,
+        effort_driven: false,
+        units_format: crate::UnitsFormat::Percentage,
+    };
 
     fn link(pred: u32, kind: LinkKind, lag: i64, lag_unit: DurationUnit) -> Link {
         Link { pred: TaskId(pred), kind, lag, lag_unit }
