@@ -172,13 +172,34 @@ fn task_id() -> Value {
     json!({"type": "integer", "minimum": 1, "maximum": u32::MAX, "description": "the task's Unique ID (not its row ID)"})
 }
 
-fn days() -> Value {
-    json!({"type": "integer", "minimum": 0, "maximum": model::MAX_DAYS, "description": "working days, at the project's hours per day"})
+fn duration() -> Value {
+    json!({
+        "type": ["integer", "string"],
+        "minimum": 0,
+        "maximum": model::MAX_DAYS,
+        "description": "working days as a whole number (3), or text with a unit: 30m, 4h, 1.5d, 2w, 1mo (d, w and mo at the project's hours per day, hours per week and days per month; rounded to the minute; elapsed units are refused). Shown in the unit given.",
+    })
+}
+
+/// The `duration` param in working minutes, and the unit to show it in: a whole number of days,
+/// or text such as `4h` or `1.5d`; `default_days` when absent.
+fn duration_param(p: &Project, v: &Value, default_days: Option<i64>) -> Result<(i64, model::DurationUnit), CmdError> {
+    match v.get("duration") {
+        Some(Value::String(text)) => Ok(model::parse_duration(text, &p.options)?),
+        Some(n) => {
+            let days = n.as_i64().ok_or_else(|| CmdError::Params("`duration` must be a whole number of days or text such as 4h".into()))?;
+            Ok((p.days_to_minutes(days)?, model::DurationUnit::Days))
+        }
+        None => match default_days {
+            Some(d) => Ok((p.days_to_minutes(d)?, model::DurationUnit::Days)),
+            None => Err(CmdError::Params("`duration` is required".into())),
+        },
+    }
 }
 
 /// Checks params against a command schema. Supports the subset our schemas use: an object with
 /// `properties`, `required` and `additionalProperties: false`; property `type` integer, number,
-/// string, boolean, array or object; `minimum`/`maximum`; `enum` of strings. `null` params count as `{}`.
+/// string, boolean, array or object, or a list of them (any one will do); `minimum`/`maximum`; `enum` of strings. `null` params count as `{}`.
 pub fn check_params(schema: &Value, params: &Value) -> Result<(), CmdError> {
     let empty = serde_json::Map::new();
     let given = match params {
@@ -208,8 +229,12 @@ pub fn check_params(schema: &Value, params: &Value) -> Result<(), CmdError> {
 }
 
 fn check_value(k: &str, p: &Value, v: &Value) -> Result<(), CmdError> {
-    let ty = p.get("type").and_then(Value::as_str).unwrap_or("");
-    let ok = match ty {
+    let types: Vec<&str> = match p.get("type") {
+        Some(Value::Array(list)) => list.iter().filter_map(Value::as_str).collect(),
+        Some(t) => t.as_str().into_iter().collect(),
+        None => Vec::new(),
+    };
+    let fits = |ty: &str| match ty {
         "integer" => v.as_i64().is_some(),
         "number" => v.is_number(),
         "string" => v.is_string(),
@@ -218,13 +243,16 @@ fn check_value(k: &str, p: &Value, v: &Value) -> Result<(), CmdError> {
         "object" => v.is_object(),
         _ => true,
     };
-    if !ok {
-        let what = match ty {
-            "integer" => "a whole number",
-            "string" => "text",
-            _ => ty,
-        };
-        return Err(CmdError::Params(format!("`{k}` must be {what}")));
+    if !types.is_empty() && !types.iter().any(|t| fits(t)) {
+        let what: Vec<&str> = types
+            .iter()
+            .map(|ty| match *ty {
+                "integer" => "a whole number",
+                "string" => "text",
+                t => t,
+            })
+            .collect();
+        return Err(CmdError::Params(format!("`{k}` must be {}", what.join(" or "))));
     }
     if let Some(allowed) = p.get("enum").and_then(Value::as_array)
         && !allowed.contains(v)
@@ -507,11 +535,12 @@ const COMMANDS: &[CommandSpec] = &[
         id: "task.add",
         label: "New Task",
         effect: Effect::Edit,
-        schema: || object(json!({"name": {"type": "string"}, "duration": days()}), &[]),
+        schema: || object(json!({"name": {"type": "string"}, "duration": duration()}), &[]),
         run: |p, v| {
             let n = v.get("name").and_then(Value::as_str).map_or_else(|| "New task".to_owned(), name);
-            let duration = p.days_to_minutes(v.get("duration").and_then(Value::as_i64).unwrap_or(1))?;
-            p.add_task(n, duration)?;
+            let (duration, unit) = duration_param(p, v, Some(1))?;
+            let id = p.add_task(n, duration)?;
+            p.task_mut(id)?.duration_unit = unit;
             Ok(())
         },
     },
@@ -519,11 +548,12 @@ const COMMANDS: &[CommandSpec] = &[
         id: "task.insert",
         label: "Insert Task",
         effect: Effect::Edit,
-        schema: || object(json!({"before": above("insert"), "name": {"type": "string"}, "duration": days()}), &[]),
+        schema: || object(json!({"before": above("insert"), "name": {"type": "string"}, "duration": duration()}), &[]),
         run: |p, v| {
             let n = v.get("name").and_then(Value::as_str).map_or_else(|| "New task".to_owned(), name);
-            let duration = p.days_to_minutes(v.get("duration").and_then(Value::as_i64).unwrap_or(1))?;
-            p.insert_task(opt_id_param(v, "before")?, n, duration)?;
+            let (duration, unit) = duration_param(p, v, Some(1))?;
+            let id = p.insert_task(opt_id_param(v, "before")?, n, duration)?;
+            p.task_mut(id)?.duration_unit = unit;
             Ok(())
         },
     },
@@ -551,14 +581,16 @@ const COMMANDS: &[CommandSpec] = &[
         id: "task.setDuration",
         label: "Duration",
         effect: Effect::Edit,
-        schema: || object(json!({"id": task_id(), "duration": days()}), &["id", "duration"]),
+        schema: || object(json!({"id": task_id(), "duration": duration()}), &["id", "duration"]),
         run: |p, v| {
             let id = id_param(v)?;
             if p.is_summary(id) {
                 return Err(CmdError::Params("a summary task's duration is rolled up from its subtasks and can't be set".into()));
             }
-            let duration = p.days_to_minutes(int_param(v, "duration")?)?;
-            p.task_mut(id)?.duration = duration;
+            let (duration, unit) = duration_param(p, v, None)?;
+            let t = p.task_mut(id)?;
+            t.duration = duration;
+            t.duration_unit = unit;
             Ok(())
         },
     },
@@ -568,12 +600,12 @@ const COMMANDS: &[CommandSpec] = &[
         effect: Effect::Edit,
         schema: || {
             object(
-                json!({"id": task_id(), "text": {"type": "string", "description": "predecessors by Unique ID, e.g. 3, 5SS+2; a lag is in working days (or h, m: 5FS+4h)"}}),
+                json!({"id": task_id(), "text": {"type": "string", "description": "predecessors by Unique ID, e.g. 3, 5SS+2, 7FS+4h; a lag is a number with an optional sign and unit (m, h, d, w, mo; days when none; decimals allowed: 7FF-1.5d). Elapsed and percent lags are refused."}}),
                 &["id", "text"],
             )
         },
         run: |p, v| {
-            let links = model::parse_preds(str_param(v, "text")?, p.minutes_per_day())?;
+            let links = model::parse_preds(str_param(v, "text")?, &p.options)?;
             p.set_preds(id_param(v)?, links)?;
             Ok(())
         },
@@ -900,7 +932,9 @@ mod tests {
         assert!(e.contains("durration"), "{e}");
         assert!(s.run("edit.undo", &json!({"steps": 2})).is_err());
         assert!(s.run("task.setDuration", &json!({"id": 1})).unwrap_err().to_string().contains("`duration` is required"));
-        assert!(s.run("task.setDuration", &json!({"id": 1, "duration": "5"})).is_err());
+        assert!(s.run("task.setDuration", &json!({"id": 1, "duration": "5x"})).is_err());
+        assert!(s.run("task.setDuration", &json!({"id": 1, "duration": 1.5})).unwrap_err().to_string().contains("whole number or text"));
+        assert!(s.run("task.setDuration", &json!({"id": 1, "duration": "3ed"})).unwrap_err().to_string().contains("elapsed durations"));
         assert!(s.run("task.setDuration", &json!({"id": 1, "duration": model::MAX_DAYS + 1})).is_err());
         let e = s.run("task.setConstraint", &json!({"id": 1, "type": "SOON"})).unwrap_err().to_string();
         assert!(e.contains("must be one of ASAP, SNET"), "{e}");
