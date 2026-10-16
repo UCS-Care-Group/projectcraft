@@ -6,22 +6,29 @@ use std::collections::BTreeSet;
 
 use projectcraft_engine::model::TaskId;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct Selection {
-    rows: BTreeSet<TaskId>,
+/// Rows of tasks by default; the Resource Sheet holds resource Unique IDs the same way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Selection<T = TaskId> {
+    rows: BTreeSet<T>,
     /// Where a Shift-click or Shift+arrow range starts.
-    anchor: Option<TaskId>,
+    anchor: Option<T>,
     /// The row with the focused cell.
-    pub cursor: Option<TaskId>,
+    pub cursor: Option<T>,
 }
 
-impl Selection {
-    pub fn is_selected(&self, id: TaskId) -> bool {
+impl<T> Default for Selection<T> {
+    fn default() -> Self {
+        Selection { rows: BTreeSet::new(), anchor: None, cursor: None }
+    }
+}
+
+impl<T: Copy + Ord> Selection<T> {
+    pub fn is_selected(&self, id: T) -> bool {
         self.rows.contains(&id)
     }
 
     /// Selects one row and puts the cursor on it.
-    pub fn select_only(&mut self, id: TaskId) {
+    pub fn select_only(&mut self, id: T) {
         self.rows = BTreeSet::from([id]);
         self.anchor = Some(id);
         self.cursor = Some(id);
@@ -29,7 +36,7 @@ impl Selection {
 
     /// A click on a row: alone, Shift (a range from the anchor) or Ctrl (add or remove one row).
     /// `order` is every row's Unique ID, top to bottom.
-    pub fn click(&mut self, id: TaskId, order: &[TaskId], shift: bool, ctrl: bool) {
+    pub fn click(&mut self, id: T, order: &[T], shift: bool, ctrl: bool) {
         if shift {
             let anchor = self.anchor.unwrap_or(id);
             self.rows = range(order, anchor, id);
@@ -48,7 +55,7 @@ impl Selection {
 
     /// Moves the cursor `by` rows (negative is up), stopping at the first and last row. With
     /// `extend` the selection grows from the anchor, as Shift+arrow; otherwise it follows the cursor.
-    pub fn step(&mut self, order: &[TaskId], by: isize, extend: bool) {
+    pub fn step(&mut self, order: &[T], by: isize, extend: bool) {
         let here = self.cursor.and_then(|c| order.iter().position(|t| *t == c));
         let to = match here {
             Some(i) => i.saturating_add_signed(by).min(order.len().saturating_sub(1)),
@@ -63,14 +70,14 @@ impl Selection {
     }
 
     /// The selected rows' Unique IDs, top to bottom; the cursor's row when none is selected.
-    pub fn ids(&self, order: &[TaskId]) -> Vec<TaskId> {
-        let picked: Vec<TaskId> = order.iter().copied().filter(|t| self.rows.contains(t)).collect();
+    pub fn ids(&self, order: &[T]) -> Vec<T> {
+        let picked: Vec<T> = order.iter().copied().filter(|t| self.rows.contains(t)).collect();
         if picked.is_empty() { self.cursor.into_iter().filter(|c| order.contains(c)).collect() } else { picked }
     }
 
     /// Drops rows that no longer exist (after a delete or an undo). A cursor whose row went moves
     /// to the row now at `fallback` (0-based), or the last row.
-    pub fn prune(&mut self, order: &[TaskId], fallback: Option<usize>) {
+    pub fn prune(&mut self, order: &[T], fallback: Option<usize>) {
         self.rows.retain(|t| order.contains(t));
         if self.anchor.is_some_and(|a| !order.contains(&a)) {
             self.anchor = None;
@@ -87,7 +94,7 @@ impl Selection {
 }
 
 /// The rows from `a` to `b`, either way round.
-fn range(order: &[TaskId], a: TaskId, b: TaskId) -> BTreeSet<TaskId> {
+fn range<T: Copy + Ord>(order: &[T], a: T, b: T) -> BTreeSet<T> {
     let at = |id| order.iter().position(|t| *t == id);
     match (at(a), at(b)) {
         (Some(i), Some(j)) => order.get(i.min(j)..=i.max(j)).unwrap_or_default().iter().copied().collect(),
@@ -139,7 +146,7 @@ mod tests {
         s.step(&o, 10, false);
         assert_eq!(s.ids(&o), [TaskId(9)]);
         assert!(s.is_selected(TaskId(9)) && !s.is_selected(TaskId(4)));
-        Selection::default().step(&[], 1, false);
+        Selection::<TaskId>::default().step(&[], 1, false);
     }
 
     #[test]

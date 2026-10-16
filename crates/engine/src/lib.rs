@@ -17,7 +17,7 @@ pub use projectcraft_time as time;
 
 pub use file::{FORMAT_VERSION, create_private_dir_all, write_private};
 
-use model::{Date, ModelError, Project, Schedule, TaskId};
+use model::{Date, ModelError, Project, ResourceField, ResourceId, Schedule, TaskId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CmdError {
@@ -334,6 +334,88 @@ fn name(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(255).collect()
 }
 
+fn resource_id(what: &str) -> Value {
+    json!({"type": "integer", "minimum": 1, "maximum": u32::MAX, "description": format!("the resource's Unique ID (not its row ID){what}")})
+}
+
+fn resource_ids(what: &str) -> Value {
+    json!({"type": "array", "items": resource_id(""), "description": format!("the resources' Unique IDs (not their row IDs); {what}")})
+}
+
+fn money(what: &str) -> Value {
+    json!({"type": "integer", "minimum": 0, "maximum": model::MAX_MONEY, "description": format!("{what}, in whole minor units of the project currency (pence: 1250 is £12.50)")})
+}
+
+/// An optional resource Unique ID param; absent (or null) is `None`.
+fn opt_resource_param(v: &Value, k: &str) -> Result<Option<ResourceId>, CmdError> {
+    match v.get(k) {
+        None | Some(Value::Null) => Ok(None),
+        Some(n) => n
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .map(|n| Some(ResourceId(n)))
+            .ok_or_else(|| CmdError::Params(format!("`{k}` must be a resource's Unique ID"))),
+    }
+}
+
+fn resource_param(v: &Value) -> Result<ResourceId, CmdError> {
+    opt_resource_param(v, "id")?.ok_or_else(|| CmdError::Params("`id` (a resource's Unique ID) is required".into()))
+}
+
+/// The `ids` param as resource Unique IDs.
+fn resource_ids_param(v: &Value) -> Result<Vec<ResourceId>, CmdError> {
+    let list = v.get("ids").and_then(Value::as_array).ok_or_else(|| CmdError::Params("`ids` (a list of Unique IDs) is required".into()))?;
+    if list.len() > model::MAX_RESOURCES {
+        return Err(CmdError::Params(format!("`ids` lists more than {} resources", model::MAX_RESOURCES)));
+    }
+    list.iter()
+        .map(|n| {
+            n.as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .map(ResourceId)
+                .ok_or_else(|| CmdError::Params("`ids` must be Unique IDs (whole numbers)".into()))
+        })
+        .collect()
+}
+
+/// The fields `resource.set` was given, in the order it applies them: the type first, so the
+/// others are checked against the new type.
+fn resource_fields(v: &Value) -> Result<Vec<ResourceField>, CmdError> {
+    let text = |k: &str| v.get(k).and_then(Value::as_str);
+    let amount = |k: &str| v.get(k).and_then(Value::as_i64);
+    let mut out = Vec::new();
+    if let Some(t) = text("type") {
+        out.push(ResourceField::Type(model::ResourceType::from_name(t)?));
+    }
+    if let Some(s) = text("initials") {
+        out.push(ResourceField::Initials(s.into()));
+    }
+    if let Some(s) = text("group") {
+        out.push(ResourceField::Group(s.into()));
+    }
+    if let Some(n) = v.get("maxUnits") {
+        // The number exactly as written (`37.5`), never through a float.
+        let units = n.as_number().map(ToString::to_string).ok_or_else(|| CmdError::Params("`maxUnits` must be a number".into()))?;
+        out.push(ResourceField::MaxUnits(model::parse_units(&units)?));
+    }
+    if let Some(s) = text("materialLabel") {
+        out.push(ResourceField::MaterialLabel(s.into()));
+    }
+    if let Some(n) = amount("standardRate") {
+        out.push(ResourceField::StandardRate(n));
+    }
+    if let Some(n) = amount("overtimeRate") {
+        out.push(ResourceField::OvertimeRate(n));
+    }
+    if let Some(n) = amount("costPerUse") {
+        out.push(ResourceField::CostPerUse(n));
+    }
+    if let Some(a) = text("accrueAt") {
+        out.push(ResourceField::AccrueAt(model::AccrueAt::from_name(a)?));
+    }
+    Ok(out)
+}
+
 const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "project.rename",
@@ -549,6 +631,87 @@ const COMMANDS: &[CommandSpec] = &[
             Ok(())
         },
     },
+    CommandSpec {
+        id: "resource.add",
+        label: "New Resource",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "name": {"type": "string", "description": "unique (any case); no [ ] or commas. Absent: `Resource n`"},
+                    "type": {"type": "string", "enum": model::ResourceType::NAMES, "description": "Work (the default): people and equipment; Material: consumables; Cost: costs that don't depend on work"},
+                    "before": resource_id(" to insert above; the end if absent"),
+                }),
+                &[],
+            )
+        },
+        run: |p, v| {
+            let kind = match v.get("type").and_then(Value::as_str) {
+                Some(t) => model::ResourceType::from_name(t)?,
+                None => model::ResourceType::Work,
+            };
+            p.add_resource(v.get("name").and_then(Value::as_str), kind, opt_resource_param(v, "before")?)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "resource.rename",
+        label: "Resource Name",
+        effect: Effect::Edit,
+        schema: || {
+            object(json!({"id": resource_id(""), "name": {"type": "string", "description": "unique (any case); no [ ] or commas"}}), &["id", "name"])
+        },
+        run: |p, v| {
+            p.rename_resource(resource_param(v)?, str_param(v, "name")?)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "resource.set",
+        label: "Resource Information",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "id": resource_id(""),
+                    "type": {"type": "string", "enum": model::ResourceType::NAMES, "description": "applied first; the other fields given must suit the new type"},
+                    "initials": {"type": "string"},
+                    "group": {"type": "string"},
+                    "maxUnits": {"type": "number", "minimum": 0, "maximum": model::MAX_UNITS / model::UNITS_PER_PERCENT, "description": "work resources: percent of full time, up to two decimal places (100 is full time, 50 half time)"},
+                    "materialLabel": {"type": "string", "description": "material resources: the unit it is counted in, e.g. tons"},
+                    "standardRate": money("work resources: per hour; materials: per unit of the material label"),
+                    "overtimeRate": money("work resources: per hour of overtime"),
+                    "costPerUse": money("work and material resources: charged once per assignment"),
+                    "accrueAt": {"type": "string", "enum": model::AccrueAt::NAMES, "description": "when the cost is incurred; Prorated (the default) spreads it over the work"},
+                }),
+                &["id"],
+            )
+        },
+        run: |p, v| {
+            p.set_resource(resource_param(v)?, &resource_fields(v)?)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "resource.move",
+        label: "Move Resource",
+        effect: Effect::Edit,
+        schema: || object(json!({"ids": resource_ids("kept in their order"), "to": resource_id(" to move above; the end if absent")}), &["ids"]),
+        run: |p, v| {
+            p.move_resources(&resource_ids_param(v)?, opt_resource_param(v, "to")?)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "resource.delete",
+        label: "Delete Resource",
+        effect: Effect::Destructive,
+        schema: || object(json!({"ids": resource_ids("each is deleted with its assignments")}), &["ids"]),
+        run: |p, v| {
+            p.delete_resources(&resource_ids_param(v)?)?;
+            Ok(())
+        },
+    },
     // Undo and redo are handled by `Session::run`; they're here for their metadata.
     CommandSpec { id: "edit.undo", label: "Undo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
     CommandSpec { id: "edit.redo", label: "Redo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
@@ -571,6 +734,23 @@ pub fn sample() -> Session {
         let _ = s.run("task.add", &json!({"name": n, "duration": d}));
         let id = s.project.tasks.last().map_or(0, |t| t.id.0);
         let _ = s.run("task.setPredecessors", &json!({"id": id, "text": preds}));
+    }
+    // Invented people and things, not assigned to anything yet.
+    let resources = [
+        json!({"name": "Priya Shah", "group": "Facilities", "standardRate": 4500, "overtimeRate": 6000}),
+        json!({"name": "Tom Okafor", "group": "IT", "maxUnits": 50, "standardRate": 5250}),
+        json!({"name": "Removals crew", "group": "Contractors", "maxUnits": 300, "standardRate": 3800, "costPerUse": 15000, "accrueAt": "End"}),
+        json!({"name": "Packing boxes", "type": "Material", "materialLabel": "boxes", "standardRate": 250, "accrueAt": "Start"}),
+        json!({"name": "Travel", "type": "Cost"}),
+    ];
+    for mut r in resources {
+        let _ = s.run("resource.add", &json!({"name": r["name"]}));
+        let id = s.project.resources.last().map_or(0, |r| r.id.0);
+        if let Some(m) = r.as_object_mut() {
+            m.remove("name");
+            m.insert("id".into(), id.into());
+        }
+        let _ = s.run("resource.set", &r);
     }
     // The sample opens with nothing to undo.
     s.undo.clear();
@@ -671,6 +851,42 @@ mod tests {
             s.run("edit.undo", &json!({})).unwrap();
         }
         assert_eq!(s.project, before);
+    }
+
+    #[test]
+    fn resource_commands_add_set_move_and_delete_by_unique_id() {
+        let mut s = sample();
+        assert_eq!(s.project.resources.len(), 5, "the sample has invented resources");
+        assert!(s.project.resources.iter().all(|r| r.check().is_ok()));
+        let tom = s.project.resource(ResourceId(2)).unwrap();
+        assert_eq!((tom.max_units, tom.standard_rate, tom.initials.as_str()), (5_000, 5_250, "T"));
+        let boxes = s.project.resource(ResourceId(4)).unwrap();
+        assert_eq!((boxes.kind, boxes.material_label.as_str(), boxes.accrue_at), (model::ResourceType::Material, "boxes", model::AccrueAt::Start));
+        let before = s.project.clone();
+
+        s.run("resource.add", &json!({"name": "Sam Reid", "before": 1})).unwrap();
+        assert_eq!(s.project.resources[0].id, ResourceId(6));
+        s.run("resource.set", &json!({"id": 6, "maxUnits": 37.5, "standardRate": 1250, "group": " Site "})).unwrap();
+        let sam = s.project.resource(ResourceId(6)).unwrap();
+        assert_eq!((sam.max_units, sam.standard_rate, sam.group.as_str()), (3_750, 1_250, "Site"));
+        assert!(s.run("resource.set", &json!({"id": 6, "materialLabel": "tons"})).is_err(), "a work resource has no material label");
+        s.run("resource.set", &json!({"id": 6, "type": "Material", "materialLabel": "tons"})).unwrap();
+        assert!(s.run("resource.set", &json!({"id": 6, "maxUnits": 100.001})).is_err());
+        assert!(s.run("resource.set", &json!({"id": 99, "group": "x"})).is_err());
+        assert!(s.run("resource.rename", &json!({"id": 6, "name": "priya shah"})).unwrap_err().to_string().contains("already"));
+        s.run("resource.rename", &json!({"id": 6, "name": "Sand"})).unwrap();
+        s.run("resource.move", &json!({"ids": [6], "to": 5})).unwrap();
+        assert_eq!(s.project.resource_row_of(ResourceId(6)), Some(5));
+        s.run("resource.delete", &json!({"ids": [6, 1]})).unwrap();
+        s.run("resource.add", &json!({})).unwrap();
+        assert_eq!(s.project.resources.last().unwrap().id, ResourceId(7), "a deleted Unique ID is never reused");
+        let round = Session::load_json(&s.save_json().unwrap()).unwrap();
+        assert_eq!(round.project, s.project);
+        assert_eq!(commands().iter().find(|c| c.id == "resource.delete").unwrap().effect, Effect::Destructive);
+        while s.can_undo() {
+            s.run("edit.undo", &json!({})).unwrap();
+        }
+        assert_eq!(s.project, before, "each resource command is one undo step");
     }
 
     /// Valid params from a schema, then junk built from it: each property wrong-typed, out of

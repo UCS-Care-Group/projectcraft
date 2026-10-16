@@ -31,6 +31,7 @@ mod browser;
 mod files;
 pub use files::{EXTENSION, FileRequest, MAX_RECENT, parse_recent, push_recent, recent_text};
 mod recovery;
+mod resource_sheet;
 mod selection;
 pub use recovery::{AUTOSAVE_EVERY, RECOVERY_EVERY, UNTITLED_RECOVERY, recovery_path};
 use selection::Selection;
@@ -88,6 +89,15 @@ struct SheetKeys {
     typed: String,
 }
 
+/// Which view fills the window, as Microsoft Project's View menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum View {
+    /// The task sheet with its bars.
+    #[default]
+    GanttChart,
+    ResourceSheet,
+}
+
 /// The Change Working Time dialog's own state: the exception being typed. Everything else it
 /// shows is the project calendar, and every change it makes is a `calendar.*` command.
 #[derive(Default)]
@@ -139,6 +149,10 @@ pub struct App {
     browser_dir: Option<std::path::PathBuf>,
     /// The Gantt Chart's day width in points: view state, not saved and not undone.
     day_w: f32,
+    /// The view showing: view state, not saved and not undone.
+    pub view: View,
+    /// The Resource Sheet's selection and editing.
+    resources: resource_sheet::ResourceSheet,
 }
 
 const ROW_H: f32 = 22.0;
@@ -176,6 +190,8 @@ impl App {
             browser: None,
             browser_dir: None,
             day_w: timescale::Preset::Days.day_w(),
+            view: View::default(),
+            resources: resource_sheet::ResourceSheet::default(),
         }
     }
 
@@ -237,6 +253,11 @@ impl App {
         // Undo, redo or a file opened can take rows away.
         let order = self.order();
         self.sel.prune(&order, None);
+        let resource_order = self.resource_order();
+        self.resources.sel.prune(&resource_order, None);
+        if self.resources.editing.as_ref().is_some_and(|(id, _, _)| !resource_order.contains(id)) {
+            self.resources.editing = None;
+        }
         self.sheet_keys(&ctx);
 
         egui::Panel::top("toolbar").show(ui, |ui| {
@@ -251,7 +272,11 @@ impl App {
                 ui.separator();
                 ui.heading(&self.session.project.name);
                 ui.separator();
-                if ui.button(tl!("New Task")).clicked() {
+                if self.view == View::ResourceSheet {
+                    if ui.button(tl!("New Resource")).clicked() {
+                        self.insert_resource();
+                    }
+                } else if ui.button(tl!("New Task")).clicked() {
                     self.run("task.add", json!({}));
                 }
                 if ui.add_enabled(self.session.can_undo(), egui::Button::new(tl!("Undo"))).clicked() {
@@ -266,8 +291,11 @@ impl App {
                 if ui.button(tl!("Save")).clicked() {
                     self.save();
                 }
-                ui.separator();
-                self.zoom_control(ui);
+                // Zoom belongs to the Gantt Chart's timescale.
+                if self.view == View::GanttChart {
+                    ui.separator();
+                    self.zoom_control(ui);
+                }
             });
         });
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -282,7 +310,10 @@ impl App {
             ui.label(text);
         });
         egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::both().show(ui, |ui| self.sheet(ui));
+            egui::ScrollArea::both().show(ui, |ui| match self.view {
+                View::GanttChart => self.sheet(ui),
+                View::ResourceSheet => self.resource_sheet(ui),
+            });
         });
         self.change_working_time(&ctx);
         self.unsaved_prompt(&ctx);
@@ -295,6 +326,16 @@ impl App {
     /// and no other text field has the keyboard.
     fn sheet_keys(&mut self, ctx: &egui::Context) {
         let order = self.order();
+        let modal =
+            self.prompt.is_some() || self.working_time.is_some() || self.browser.is_some() || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
+        if self.view == View::ResourceSheet {
+            if self.resources.editing.is_some() || ctx.text_edit_focused() || modal {
+                return;
+            }
+            let k = read_sheet_keys(ctx, self.resources.sel.cursor.is_some());
+            self.resource_keys(k);
+            return;
+        }
         let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
         let (indent, outdent) = ctx.input_mut(|i| (i.consume_key(alt_shift, Key::ArrowRight), i.consume_key(alt_shift, Key::ArrowLeft)));
         let ids = match &self.editing {
@@ -304,44 +345,10 @@ impl App {
         if let Some((cmd, params)) = outline_key(&ids, indent, outdent) {
             self.run(cmd, params);
         }
-        let modal =
-            self.prompt.is_some() || self.working_time.is_some() || self.browser.is_some() || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
         if self.editing.is_some() || ctx.text_edit_focused() || modal {
             return;
         }
-        let k = ctx.input_mut(|i| {
-            let mut k = SheetKeys::default();
-            // Shift+arrow first: a plain-arrow shortcut would match it too.
-            for (key, by) in [(Key::ArrowUp, -1), (Key::ArrowDown, 1)] {
-                if i.consume_key(Modifiers::SHIFT, key) {
-                    (k.rows, k.extend) = (by, true);
-                } else if i.consume_key(Modifiers::NONE, key) {
-                    k.rows = by;
-                }
-            }
-            if i.consume_key(Modifiers::NONE, Key::Enter) {
-                k.rows = 1;
-            }
-            for (key, by) in [(Key::ArrowLeft, -1), (Key::ArrowRight, 1), (Key::Tab, 1)] {
-                if i.consume_key(Modifiers::NONE, key) {
-                    k.cols = by;
-                }
-            }
-            k.edit = i.consume_key(Modifiers::NONE, Key::F2);
-            k.insert = i.consume_key(Modifiers::NONE, Key::Insert);
-            k.delete = i.consume_key(Modifiers::NONE, Key::Delete);
-            if self.sel.cursor.is_some() && !i.modifiers.command && !i.modifiers.alt {
-                // Taken out of the input, so the editor this starts doesn't type it a second time.
-                i.events.retain(|e| match e {
-                    egui::Event::Text(t) => {
-                        k.typed.push_str(t);
-                        false
-                    }
-                    _ => true,
-                });
-            }
-            k
-        });
+        let k = read_sheet_keys(ctx, self.sel.cursor.is_some());
         if k.rows != 0 {
             self.sel.step(&order, k.rows, k.extend);
         }
@@ -363,6 +370,57 @@ impl App {
         }
     }
 
+    /// Switches the view. An edit in progress is committed first, as a click elsewhere would.
+    pub fn set_view(&mut self, view: View) {
+        if let Some((id, field, text)) = self.editing.take() {
+            self.commit(id, field, text);
+        }
+        if let Some((id, field, text)) = self.resources.editing.take() {
+            self.commit_resource(id, field, text);
+        }
+        self.view = view;
+    }
+}
+
+/// The sheet keys pressed this frame (either sheet). `typing`: a cell has the focus, so typed
+/// text starts editing it and is taken out of the input.
+fn read_sheet_keys(ctx: &egui::Context, typing: bool) -> SheetKeys {
+    ctx.input_mut(|i| {
+        let mut k = SheetKeys::default();
+        // Shift+arrow first: a plain-arrow shortcut would match it too.
+        for (key, by) in [(Key::ArrowUp, -1), (Key::ArrowDown, 1)] {
+            if i.consume_key(Modifiers::SHIFT, key) {
+                (k.rows, k.extend) = (by, true);
+            } else if i.consume_key(Modifiers::NONE, key) {
+                k.rows = by;
+            }
+        }
+        if i.consume_key(Modifiers::NONE, Key::Enter) {
+            k.rows = 1;
+        }
+        for (key, by) in [(Key::ArrowLeft, -1), (Key::ArrowRight, 1), (Key::Tab, 1)] {
+            if i.consume_key(Modifiers::NONE, key) {
+                k.cols = by;
+            }
+        }
+        k.edit = i.consume_key(Modifiers::NONE, Key::F2);
+        k.insert = i.consume_key(Modifiers::NONE, Key::Insert);
+        k.delete = i.consume_key(Modifiers::NONE, Key::Delete);
+        if typing && !i.modifiers.command && !i.modifiers.alt {
+            // Taken out of the input, so the editor this starts doesn't type it a second time.
+            i.events.retain(|e| match e {
+                egui::Event::Text(t) => {
+                    k.typed.push_str(t);
+                    false
+                }
+                _ => true,
+            });
+        }
+        k
+    })
+}
+
+impl App {
     /// Starts editing the focused cell, with `typed` replacing its text, or (F2) its text as it is.
     fn begin_edit(&mut self, typed: Option<String>) {
         let Some(id) = self.sel.cursor else { return };
@@ -446,6 +504,13 @@ impl App {
     /// View: the timescale presets and zoom.
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button(tl!("View"), |ui| {
+            for (view, label) in [(View::GanttChart, "Gantt Chart"), (View::ResourceSheet, "Resource Sheet")] {
+                if ui.radio(self.view == view, tl!(label)).clicked() {
+                    self.set_view(view);
+                    ui.close();
+                }
+            }
+            ui.separator();
             ui.label(RichText::new(tl!("Timescale")).color(Tokens::get(ui.ctx()).text_dim));
             let current = timescale::Preset::of(self.day_w);
             for preset in timescale::Preset::ALL {
@@ -832,6 +897,7 @@ mod tests {
             ("recovery.rs", include_str!("recovery.rs")),
             ("timescale.rs", include_str!("timescale.rs")),
             ("selection.rs", include_str!("selection.rs")),
+            ("resource_sheet.rs", include_str!("resource_sheet.rs")),
         ] {
             let code = src.split("#[cfg(test)]").next().unwrap_or(src);
             for needle in ["Color32", "from_rgb", "from_gray", "from_black_alpha", "from_white_alpha"] {
@@ -1091,5 +1157,50 @@ mod tests {
         let levels: Vec<u32> = h.state().session.project.tasks.iter().map(|t| t.outline_level).collect();
         assert_eq!(levels, [1, 1, 1]);
         assert_eq!(picked(&h), [2, 3], "the selection stays");
+    }
+
+    fn resource_ids(h: &Harness<'static, App>) -> Vec<u32> {
+        h.state().session.project.resources.iter().map(|r| r.id.0).collect()
+    }
+
+    /// The Resource Sheet, from the View menu, edits like the task sheet: typing into the focused
+    /// cell, Enter to commit and move down, Tab across, Insert and Delete; each change one undo
+    /// step. Switching views changes nothing in the project.
+    #[test]
+    fn the_resource_sheet_edits_resources_through_commands() {
+        use projectcraft_engine::model::ResourceId;
+        let mut h = sheet(projectcraft_engine::sample());
+        let before = h.state().session.project.clone();
+        click(&mut h, "View", Modifiers::NONE);
+        click(&mut h, "Resource Sheet", Modifiers::NONE);
+        assert_eq!(h.state().view, View::ResourceSheet);
+        assert_eq!(h.state().session.project, before);
+        assert!(h.query_by_label("£45.00/hr").is_some(), "rates show with the currency symbol");
+        click(&mut h, "Tom Okafor", Modifiers::NONE);
+        for _ in 0..5 {
+            key(&mut h, Modifiers::NONE, Key::Tab);
+        }
+        typed(&mut h, "75%");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().session.project.resource(ResourceId(2)).unwrap().max_units, 7_500);
+        assert_eq!(h.state().resources.sel.cursor, Some(ResourceId(3)), "Enter moves down");
+        typed(&mut h, "lots");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert!(h.state().status.contains("not a percentage"), "{}", h.state().status);
+        key(&mut h, Modifiers::NONE, Key::Insert);
+        assert_eq!(resource_ids(&h), [1, 2, 3, 6, 4, 5]);
+        typed(&mut h, "Sam Reid");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().session.project.resource(ResourceId(6)).unwrap().name, "Sam Reid");
+        click(&mut h, "Packing boxes", Modifiers::NONE);
+        click(&mut h, "Travel", Modifiers::SHIFT);
+        key(&mut h, Modifiers::NONE, Key::Delete);
+        assert_eq!(resource_ids(&h), [1, 2, 3, 6]);
+        key(&mut h, Modifiers::COMMAND, Key::Z);
+        assert_eq!(resource_ids(&h), [1, 2, 3, 6, 4, 5], "one undo step brings both back");
+        assert_eq!(h.state().session.project.tasks, before.tasks, "the tasks are untouched");
+        click(&mut h, "View", Modifiers::NONE);
+        click(&mut h, "Gantt Chart", Modifiers::NONE);
+        assert_eq!(h.state().view, View::GanttChart);
     }
 }

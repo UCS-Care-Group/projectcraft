@@ -78,7 +78,7 @@ impl Session {
 /// Brings a file of an older `version` up to [`FORMAT_VERSION`], one step at a time.
 /// Migration code stays forever for every released version.
 ///
-/// A new field with a default (`constraint`, `outline_level`) needs no new version: older files
+/// A new field with a default (`constraint`, `outline_level`, `resources`) needs no new version: older files
 /// read as the default, and the outline is kept to its rule on load ([`Session::new`]).
 fn migrate(_v: &mut Value, version: u64) {
     if version == 0 {
@@ -114,7 +114,8 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
     }
     let max = p.tasks.iter().map(|t| t.id.0).max().unwrap_or(0);
     p.next_id = p.next_id.max(max.saturating_add(1)).max(1);
-    Ok(())
+    // Resources: count, Unique IDs, names and every field in range; `next_resource_id` repaired.
+    p.check_resources().map_err(|e| bad(e.to_string()))
 }
 
 /// Writes a temp file beside `path` with `write`, fsyncs it, copies the old file to `.bak` (when
@@ -188,7 +189,7 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Constraint, Date, Link, LinkKind, Task, TaskId};
+    use crate::model::{AccrueAt, Constraint, Date, Link, LinkKind, Resource, ResourceId, ResourceType, Task, TaskId};
     use serde_json::json;
 
     fn tmp_dir(name: &str) -> PathBuf {
@@ -235,6 +236,28 @@ mod tests {
             },
         ];
         p.next_id = 9;
+        p.resources = vec![
+            Resource {
+                id: ResourceId(3),
+                name: "Zoë «Site» Lead".into(),
+                initials: "ZL".into(),
+                group: "Site".into(),
+                kind: ResourceType::Work,
+                max_units: 5_050,
+                material_label: String::new(),
+                standard_rate: 4_550,
+                overtime_rate: 6_000,
+                cost_per_use: 1_000,
+                accrue_at: AccrueAt::Start,
+            },
+            Resource {
+                material_label: "tons".into(),
+                accrue_at: AccrueAt::End,
+                ..Resource::new(ResourceId(1), "Concrete".into(), ResourceType::Material)
+            },
+            Resource::new(ResourceId(4), "Travel".into(), ResourceType::Cost),
+        ];
+        p.next_resource_id = 6;
         p
     }
 
@@ -248,7 +271,50 @@ mod tests {
         assert!(v["tasks"][0].get("constraint").is_none(), "ASAP is not written");
         assert_eq!(v["tasks"][1]["outline_level"], json!(2));
         assert!(v["tasks"][0].get("outline_level").is_none(), "level 1 is not written");
+        assert_eq!(v["resources"][0]["max_units"], json!(5_050));
+        assert_eq!(v["resources"][1]["type"], json!("Material"));
+        assert!(v["resources"][2].get("max_units").is_none(), "100% is not written");
+        assert_eq!(v["next_resource_id"], json!(6));
         assert_eq!(Session::load_json(&text).unwrap().project, full());
+    }
+
+    #[test]
+    fn resources_are_validated_on_load_and_unique_ids_never_reused() {
+        let mut p = full();
+        p.next_resource_id = 0;
+        let s = Session::load_json(&Session::new(p).save_json().unwrap()).unwrap();
+        assert_eq!(s.project.next_resource_id, 5, "an existing Unique ID is never handed out again");
+        // A file from before resources has none and writes none.
+        let old = json!({"name": "x", "start": "2026-01-05", "tasks": [], "next_id": 1, "format_version": 1});
+        let s = Session::load_json(&old.to_string()).unwrap();
+        assert!(s.project.resources.is_empty());
+        assert!(!s.save_json().unwrap().contains("resource"));
+        let r = |extra: Value| {
+            let mut one = json!({"id": 1, "name": "Ann"});
+            if let (Some(o), Some(e)) = (one.as_object_mut(), extra.as_object()) {
+                o.extend(e.clone());
+            }
+            json!({"name": "x", "start": "2026-01-05", "resources": [one]}).to_string()
+        };
+        assert!(Session::load_json(&r(json!({}))).is_ok());
+        for broken in [
+            json!({"id": 0}),
+            json!({"name": "  "}),
+            json!({"name": "A[1]"}),
+            json!({"max_units": model::MAX_UNITS + 1}),
+            json!({"max_units": -1}),
+            json!({"standard_rate": -5}),
+            json!({"cost_per_use": model::MAX_MONEY + 1}),
+            json!({"type": "Person"}),
+            json!({"accrue_at": "Never"}),
+            json!({"initials": "x".repeat(300)}),
+        ] {
+            assert!(Session::load_json(&r(broken.clone())).is_err(), "{broken}");
+        }
+        let twice = json!({"name": "x", "start": "2026-01-05", "resources": [{"id": 2, "name": "A"}, {"id": 2, "name": "B"}]});
+        assert!(Session::load_json(&twice.to_string()).is_err());
+        let same_name = json!({"name": "x", "start": "2026-01-05", "resources": [{"id": 1, "name": "Ann"}, {"id": 2, "name": "ANN"}]});
+        assert!(Session::load_json(&same_name.to_string()).is_err());
     }
 
     #[test]

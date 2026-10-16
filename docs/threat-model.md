@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (owner-only file permissions) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (resources: people's names in project files) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -11,7 +11,8 @@ one.
 
 | Asset | Where it lives |
 |---|---|
-| The owner's plans: tasks, links, dates, calendars, and in time resources, costs and baselines | the `.projectcraft` file the owner chose, its `.bak` beside it, and memory while open |
+| The owner's plans: tasks, links, dates, calendars, resources and their rates, and in time costs and baselines | the `.projectcraft` file the owner chose, its `.bak` beside it, and memory while open |
+| Personal data: the names (and initials and groups) of the people in a plan's Resource Sheet | the same files; ProjectCraft holds no contact details (no email, phone or address fields) |
 | The owner's work in progress | memory (the session and its undo stack) until it is saved |
 | Which plans the owner has opened | the recent-files list (`recent-files.txt` in the settings folder: `apps/projectcraft/src/settings.rs`) |
 | The owner's trust that the dates are right | the scheduler (`crates/model/src/schedule.rs`), deterministic: the same plan gives the same dates |
@@ -35,7 +36,7 @@ may be malformed, enormous, or crafted to make the scheduler loop or overflow.
   (`unsafe_code = "forbid"` in the workspace `Cargo.toml`, the clippy denials at every crate root).
   Reading a file (`crates/engine/src/file.rs`) is capped at 128 MB before parsing, must be UTF-8
   JSON, refuses a newer `format_version`, and is validated after: at most `MAX_TASKS` tasks, ids
-  non-zero and unique, durations and lags within `MAX_DAYS`, links only to tasks that exist.
+  non-zero and unique, durations and lags within `MAX_DAYS`, links only to tasks that exist; at most `MAX_RESOURCES` resources with non-zero, unique Unique IDs, unique names, and Max Units and amounts of money within their caps.
   A property test feeds arbitrary bytes to the loader.
 - **No runaway scheduling.** Durations and lags are clamped to `MAX_DAYS` again in the scheduler,
   arithmetic is checked or saturating, and a loop of links is found by the ordering pass
@@ -91,6 +92,11 @@ commands are marked as such in the registry, so an agent can be refused them.
 
 ### Other programs and users on the same computer
 
+A project file holds people's names (its resources), which is personal data. It is protected as
+the plan is: owner-only on Unix (below), never sent anywhere (no network), and its owner decides
+where it is kept and who it is shared with. Deleting a resource removes its name from the next
+save, but the `.bak` keeps the previous save until the one after.
+
 - On Unix (Linux, macOS, the BSDs) every file ProjectCraft writes is owner-only, mode 0600: the
   project file (its atomic-save temp file is created 0600 and renamed over the old one, so saving
   over a wider file also leaves 0600), the `.bak` (copied into a file created 0600), the recovery
@@ -142,3 +148,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 |---|---|---|
 | 2026-10-16 | major | First version: assets, what the program doesn't do, adversaries and mechanisms with their files, known limits |
 | 2026-10-16 | minor | Owner-only permissions on Unix: files written 0600, new settings and recovery folders 0700 (#37) |
+| 2026-10-16 | minor | Resources: project files hold people's names (personal data, no contact details); resources validated on load (#54) |
