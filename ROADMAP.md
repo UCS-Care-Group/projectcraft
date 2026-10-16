@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M2.3 task types) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (headline numbers refreshed) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -9,10 +9,12 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | Number | Value | Kind |
 |---|---|---|
 | M1 tickets done | **16 / 16**, plus follow-ups #26, #28, #37, #39 | measured (GitHub issues) |
-| Commands / crates | 18 commands · 4 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
-| Tests | 161 `#[test]`s; 6 property-test suites; property tests on the file reader, the duration and predecessor parsers, outline changes and the scheduler (summaries with any links and constraints) | measured (source) |
+| M2 tickets done | **7 / 11** (#51–#56, #58), plus #65 Project Options | measured (GitHub issues) |
+| Commands / crates | 32 commands · 4 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
+| Tests | 286 `#[test]`s; property tests in 11 modules: the file reader, the duration, predecessor and Resource Names parsers, outline changes, working times, resources, task types, costs and the scheduler | measured (source) |
 | Builds verified | Windows, macOS and Linux (CI on each), the browser build (wasm) | measured |
-| Reschedule time | 200 tasks: ~0.07 ms (gate 10 ms); 2,000 tasks: ~0.9 ms | measured (`cargo xtask perf`, release) |
+| Reschedule time | 200 tasks: ~0.1–0.3 ms (gate 10 ms); 2,000 tasks: ~2–5 ms; working time counted in minutes since M2 | measured (`cargo xtask perf`, release, CI runners) |
+| Resource Names edit | 1,000 names on 5,000 tasks and 20,000 assignments: ~40–60 ms (gate 100 ms) | measured (`cargo xtask perf`, release, CI runners) |
 | Releases | none yet | measured |
 
 ## M0 — Foundations ✅ (2026-10-15)
@@ -108,3 +110,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | M2.5 costs |
 | 2026-10-16 | minor | Currency exchange listed as a gap; working time and Resource Sheet ticked |
 | 2026-10-16 | minor | M2.3 task types |
+| 2026-10-16 | minor | Headline numbers refreshed for M2 |
