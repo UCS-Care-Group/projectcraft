@@ -7,11 +7,14 @@
 //! `cargo run -p projectcraft-ui-egui --example ui_shot -- script.jsonl` runs a script of JSON
 //! lines instead: `{"cmd": "task.add", "params": {…}}` runs a command (as the CLI's `--cmd`),
 //! `{"theme": "light" | "dark"}` switches the theme, `{"shot": "/abs/out.png"}` saves the window
-//! as PNG, `{"steps": n}` runs extra frames. The window is 1280×720 pt at 2× (override with
+//! as PNG, `{"steps": n}` runs extra frames,
+//! `{"click": "label"}` clicks the first widget with that label (say `File`, or `Open` with
+//! unsaved changes for the Save changes? prompt). The window is 1280×720 pt at 2× (override with
 //! `{"width": w, "height": h}` and `{"scale": s}` on any line) and opens the sample project
 //! unless the first line is `{"empty": true}`.
 
 use egui::ThemePreference;
+use egui_kittest::kittest::Queryable;
 use projectcraft_engine::Session;
 use projectcraft_ui_egui::App;
 use serde_json::{Value, json};
@@ -56,6 +59,13 @@ fn run() -> Result<(), String> {
                 println!("{id}: {e}");
             }
             harness.run_steps(2);
+        } else if let Some(label) = l.get("click").and_then(Value::as_str) {
+            // The first widget with this label (a toolbar button, a menu, a menu item).
+            match harness.query_all_by_label(label).next() {
+                Some(node) => node.click(),
+                None => println!("click: no `{label}`"),
+            }
+            harness.run_steps(4);
         } else if let Some(n) = l.get("steps").and_then(Value::as_u64) {
             harness.run_steps(n.min(10_000) as usize);
         } else if let Some(p) = l.get("shot").and_then(Value::as_str) {

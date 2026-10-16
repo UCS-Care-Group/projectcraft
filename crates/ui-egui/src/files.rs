@@ -1,0 +1,430 @@
+//! Open, Save, Save As, the recent-files list and the unsaved-changes prompt.
+//!
+//! The UI never shows a native dialog itself: it asks for one with a [`FileRequest`] that the
+//! desktop shell takes ([`App::take_file_request`]), shows with `rfd`, and answers through
+//! [`App::file_picked`]. So this crate stays free of `rfd`, and nothing programmatic (the CLI,
+//! tests, later the control channel) can ever open a dialog.
+
+use std::path::{Path, PathBuf};
+
+use projectcraft_engine::Session;
+
+use crate::{App, i18n};
+
+/// Longest the recent-files list gets.
+pub const MAX_RECENT: usize = 10;
+/// The extension of a ProjectCraft project.
+pub const EXTENSION: &str = "projectcraft";
+
+/// A native dialog the UI wants shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileRequest {
+    Open,
+    SaveAs,
+}
+
+/// What to do once unsaved changes are saved or dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Then {
+    /// Close the window.
+    Close,
+    /// Open this file, or ask which with the Open dialog.
+    Open(Option<PathBuf>),
+}
+
+/// `path` moved to the front of `list`, without duplicates, at most [`MAX_RECENT`] long.
+pub fn push_recent(list: &mut Vec<PathBuf>, path: &Path) {
+    list.retain(|p| p != path);
+    list.insert(0, path.to_path_buf());
+    list.truncate(MAX_RECENT);
+}
+
+/// The recent-files list from its settings file: one path a line; blank lines, duplicates and
+/// lines past [`MAX_RECENT`] dropped.
+pub fn parse_recent(text: &str) -> Vec<PathBuf> {
+    let mut list: Vec<PathBuf> = Vec::new();
+    for line in text.lines().map(str::trim_end).filter(|l| !l.is_empty()) {
+        let p = PathBuf::from(line);
+        if !list.contains(&p) && list.len() < MAX_RECENT {
+            list.push(p);
+        }
+    }
+    list
+}
+
+/// The settings-file text for `list`. A path with a line break in it can't be written and is left out.
+pub fn recent_text(list: &[PathBuf]) -> String {
+    let mut text = String::new();
+    for p in list.iter().filter_map(|p| p.to_str()).filter(|s| !s.contains(['\n', '\r'])) {
+        text.push_str(p);
+        text.push('\n');
+    }
+    text
+}
+
+impl App {
+    /// True when the project differs from what was last opened or saved.
+    pub fn is_dirty(&self) -> bool {
+        self.session.project != self.saved
+    }
+
+    /// The dialog the UI is waiting for, if any; the shell shows it and calls [`App::file_picked`].
+    pub fn take_file_request(&mut self) -> Option<FileRequest> {
+        self.file_request.take()
+    }
+
+    /// The recent-files list, if it changed since the last call (for the shell to persist).
+    pub fn take_recent_changed(&mut self) -> Option<&[PathBuf]> {
+        std::mem::take(&mut self.recent_changed).then_some(self.recent.as_slice())
+    }
+
+    /// The answer to a [`FileRequest`]: the chosen path, or `None` when cancelled (or no dialog
+    /// could be shown).
+    pub fn file_picked(&mut self, request: FileRequest, path: Option<PathBuf>) {
+        match (request, path) {
+            (FileRequest::Open, Some(p)) => self.open_path(&p),
+            (FileRequest::SaveAs, Some(p)) => {
+                let p = with_extension(p);
+                if self.save_to(&p) {
+                    self.path = Some(p);
+                    if let Some(then) = self.after_save.take() {
+                        self.proceed(then);
+                    }
+                }
+            }
+            (_, None) => self.after_save = None,
+        }
+    }
+
+    /// Opens `path` in place of the current project. A file that can't be read, or that a newer
+    /// ProjectCraft wrote, leaves the current project as it was and says why.
+    pub fn open_path(&mut self, path: &Path) {
+        match Session::open(path) {
+            Ok(session) => {
+                self.saved = session.project.clone();
+                self.session = session;
+                self.path = Some(path.to_path_buf());
+                self.editing = None;
+                self.status = i18n::fmt(tl!("Opened {path}"), &[("path", &path.display().to_string())]);
+                push_recent(&mut self.recent, path);
+                self.recent_changed = true;
+            }
+            Err(e) => {
+                self.status = i18n::fmt(tl!("Couldn't open: {error}"), &[("error", &e.to_string())]);
+                if !path.exists() && self.recent.iter().any(|p| p == path) {
+                    self.recent.retain(|p| p != path);
+                    self.recent_changed = true;
+                }
+            }
+        }
+    }
+
+    /// Saves to `path`; true when it worked. Undo history is kept.
+    fn save_to(&mut self, path: &Path) -> bool {
+        match self.session.save_to(path) {
+            Ok(()) => {
+                self.saved = self.session.project.clone();
+                self.status = i18n::fmt(tl!("Saved {path}"), &[("path", &path.display().to_string())]);
+                push_recent(&mut self.recent, path);
+                self.recent_changed = true;
+                true
+            }
+            Err(e) => {
+                self.status = i18n::fmt(tl!("Couldn't save: {error}"), &[("error", &e.to_string())]);
+                false
+            }
+        }
+    }
+
+    /// Save: to the project's file, or through Save As when it has none.
+    pub(crate) fn save(&mut self) -> bool {
+        match self.path.clone() {
+            Some(p) => self.save_to(&p),
+            None => {
+                self.file_request = Some(FileRequest::SaveAs);
+                false
+            }
+        }
+    }
+
+    /// Opening another file or closing: asks first when there are unsaved changes.
+    pub(crate) fn request(&mut self, then: Then) {
+        if self.is_dirty() {
+            self.prompt = Some(then);
+        } else {
+            self.proceed(then);
+        }
+    }
+
+    fn proceed(&mut self, then: Then) {
+        match then {
+            Then::Close => self.closing = true,
+            Then::Open(Some(p)) => self.open_path(&p),
+            Then::Open(None) => self.file_request = Some(FileRequest::Open),
+        }
+    }
+
+    /// The window's close button: held back while there are unsaved changes, until the owner answers.
+    pub(crate) fn intercept_close(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.closing {
+            if self.is_dirty() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.prompt = Some(Then::Close);
+            } else {
+                self.closing = true;
+            }
+        }
+        if self.closing {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    /// The Save / Don't Save / Cancel prompt, while one is open.
+    pub(crate) fn unsaved_prompt(&mut self, ctx: &egui::Context) {
+        let Some(then) = self.prompt.clone() else {
+            return;
+        };
+        let name =
+            self.path.as_deref().and_then(Path::file_name).map_or_else(|| self.session.project.name.clone(), |n| n.to_string_lossy().into_owned());
+        let mut answer = None;
+        egui::Modal::new(egui::Id::new("unsaved-changes")).show(ctx, |ui| {
+            ui.heading(tl!("Save changes?"));
+            ui.label(i18n::fmt(tl!("Do you want to save the changes you made to {name}?"), &[("name", &name)]));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(tl!("Save")).clicked() {
+                    answer = Some(Answer::Save);
+                }
+                if ui.button(tl!("Don't Save")).clicked() {
+                    answer = Some(Answer::Discard);
+                }
+                if ui.button(tl!("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    answer = Some(Answer::Cancel);
+                }
+            });
+        });
+        match answer {
+            None => {}
+            Some(Answer::Cancel) => self.prompt = None,
+            Some(Answer::Discard) => {
+                self.prompt = None;
+                self.proceed(then);
+            }
+            Some(Answer::Save) => {
+                self.prompt = None;
+                if self.path.is_some() {
+                    if self.save() {
+                        self.proceed(then);
+                    }
+                } else {
+                    self.after_save = Some(then);
+                    self.file_request = Some(FileRequest::SaveAs);
+                }
+            }
+        }
+    }
+
+    /// The window title: the file's name, with a `*` while there are unsaved changes.
+    pub(crate) fn update_title(&mut self, ctx: &egui::Context) {
+        let name = self.path.as_deref().and_then(Path::file_name).map_or_else(|| tl!("Untitled").to_owned(), |n| n.to_string_lossy().into_owned());
+        let title = format!("{}{}", if self.is_dirty() { "*" } else { "" }, i18n::fmt(tl!("{name} - ProjectCraft"), &[("name", &name)]));
+        if title != self.title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
+    }
+
+    /// The File menu: Open, Open Recent, Save, Save As.
+    pub(crate) fn file_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button(tl!("File"), |ui| {
+            if ui.add(egui::Button::new(tl!("Open…")).shortcut_text(ui.ctx().format_shortcut(&OPEN))).clicked() {
+                self.request(Then::Open(None));
+            }
+            ui.add_enabled_ui(!self.recent.is_empty(), |ui| {
+                ui.menu_button(tl!("Open Recent"), |ui| {
+                    let mut chosen = None;
+                    for p in &self.recent {
+                        let label = p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
+                        if ui.button(label).on_hover_text(p.display().to_string()).clicked() {
+                            chosen = Some(p.clone());
+                        }
+                    }
+                    if let Some(p) = chosen {
+                        self.request(Then::Open(Some(p)));
+                    }
+                });
+            });
+            ui.separator();
+            if ui.add(egui::Button::new(tl!("Save")).shortcut_text(ui.ctx().format_shortcut(&SAVE))).clicked() {
+                self.save();
+            }
+            if ui.add(egui::Button::new(tl!("Save As…")).shortcut_text(ui.ctx().format_shortcut(&SAVE_AS))).clicked() {
+                self.file_request = Some(FileRequest::SaveAs);
+            }
+        });
+    }
+
+    /// Ctrl+O, Ctrl+S, Ctrl+Shift+S (Cmd on macOS). Ignored while the prompt is open.
+    pub(crate) fn file_keys(&mut self, ctx: &egui::Context) {
+        if self.prompt.is_some() {
+            return;
+        }
+        // Save As first: Ctrl+S would match Ctrl+Shift+S too.
+        let (open, save_as, save) = ctx.input_mut(|i| (i.consume_shortcut(&OPEN), i.consume_shortcut(&SAVE_AS), i.consume_shortcut(&SAVE)));
+        if open {
+            self.request(Then::Open(None));
+        }
+        if save_as {
+            self.file_request = Some(FileRequest::SaveAs);
+        } else if save {
+            self.save();
+        }
+    }
+}
+
+enum Answer {
+    Save,
+    Discard,
+    Cancel,
+}
+
+const OPEN: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
+const SAVE: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
+const SAVE_AS: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT), egui::Key::S);
+
+/// A Save As name without an extension gets `.projectcraft` (some dialogs don't add it).
+fn with_extension(p: PathBuf) -> PathBuf {
+    if p.extension().is_some() { p } else { p.with_extension(EXTENSION) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use projectcraft_engine::model::Project;
+    use serde_json::json;
+
+    fn app() -> App {
+        App::new(Session::new(Project::new("Test", projectcraft_engine::time::Date::EPOCH)), None)
+    }
+
+    fn tmp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("projectcraft-ui-files-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn recent_list_moves_to_front_dedups_and_caps() {
+        let mut list = Vec::new();
+        for i in 0..12 {
+            push_recent(&mut list, Path::new(&format!("/p/{i}.projectcraft")));
+        }
+        assert_eq!(list.len(), MAX_RECENT);
+        assert_eq!(list[0], PathBuf::from("/p/11.projectcraft"));
+        push_recent(&mut list, Path::new("/p/5.projectcraft"));
+        assert_eq!(list[0], PathBuf::from("/p/5.projectcraft"));
+        assert_eq!(list.iter().filter(|p| **p == Path::new("/p/5.projectcraft")).count(), 1);
+    }
+
+    #[test]
+    fn recent_text_round_trips_and_parse_is_forgiving() {
+        let list = vec![PathBuf::from("/a b/x.projectcraft"), PathBuf::from("C:\\y.projectcraft")];
+        assert_eq!(parse_recent(&recent_text(&list)), list);
+        let junk = "\n/a\n/a\n\r\n".to_owned() + &"/z\n".repeat(3) + &(0..20).map(|i| format!("/{i}\n")).collect::<String>();
+        let parsed = parse_recent(&junk);
+        assert!(parsed.len() <= MAX_RECENT);
+        assert_eq!(parsed[0], PathBuf::from("/a"));
+        assert_eq!(recent_text(&[PathBuf::from("/bad\nname")]), "");
+    }
+
+    #[test]
+    fn edits_make_dirty_save_as_makes_clean_and_undo_back_is_clean() {
+        let dir = tmp("dirty");
+        let mut a = app();
+        assert!(!a.is_dirty());
+        a.run("task.add", json!({"name": "One"}));
+        assert!(a.is_dirty());
+        assert!(!a.save(), "no file yet: asks for Save As");
+        assert_eq!(a.take_file_request(), Some(FileRequest::SaveAs));
+        a.file_picked(FileRequest::SaveAs, Some(dir.join("plan")));
+        assert_eq!(a.path.as_deref(), Some(dir.join("plan.projectcraft").as_path()));
+        assert!(!a.is_dirty());
+        assert!(a.session.can_undo(), "saving keeps undo");
+        assert_eq!(a.take_recent_changed().map(<[PathBuf]>::to_vec), Some(vec![dir.join("plan.projectcraft")]));
+        assert!(a.take_recent_changed().is_none());
+        a.run("task.add", json!({}));
+        a.run("edit.undo", json!({}));
+        assert!(!a.is_dirty());
+    }
+
+    #[test]
+    fn opening_with_unsaved_changes_prompts_and_dont_save_opens() {
+        let dir = tmp("prompt");
+        let file = dir.join("other.projectcraft");
+        let mut other = Session::new(Project::new("Other", projectcraft_engine::time::Date::EPOCH));
+        other.run("task.add", &json!({"name": "Theirs"})).unwrap();
+        other.save_to(&file).unwrap();
+
+        let mut a = app();
+        a.run("task.add", json!({"name": "Mine"}));
+        a.request(Then::Open(Some(file.clone())));
+        assert_eq!(a.prompt, Some(Then::Open(Some(file.clone()))));
+        assert_eq!(a.session.project.name, "Test", "nothing opened before the owner answers");
+        // Don't Save.
+        let then = a.prompt.take().unwrap();
+        a.proceed(then);
+        assert_eq!(a.session.project.name, "Other");
+        assert!(!a.is_dirty());
+        assert_eq!(a.recent.first(), Some(&file));
+    }
+
+    #[test]
+    fn save_then_close_without_a_file_goes_through_save_as() {
+        let dir = tmp("close");
+        let mut a = app();
+        a.run("task.add", json!({}));
+        a.request(Then::Close);
+        assert!(!a.closing);
+        // Save, with no file yet: Save As, then close.
+        a.prompt = None;
+        a.after_save = Some(Then::Close);
+        a.file_request = Some(FileRequest::SaveAs);
+        assert_eq!(a.take_file_request(), Some(FileRequest::SaveAs));
+        a.file_picked(FileRequest::SaveAs, None);
+        assert!(!a.closing, "cancelled Save As cancels the close");
+        assert!(a.after_save.is_none());
+        a.after_save = Some(Then::Close);
+        a.file_picked(FileRequest::SaveAs, Some(dir.join("c.projectcraft")));
+        assert!(a.closing);
+        assert!(dir.join("c.projectcraft").exists());
+    }
+
+    #[test]
+    fn clean_project_opens_and_closes_without_asking() {
+        let mut a = app();
+        a.request(Then::Open(None));
+        assert!(a.prompt.is_none());
+        assert_eq!(a.take_file_request(), Some(FileRequest::Open));
+        a.request(Then::Close);
+        assert!(a.closing);
+    }
+
+    #[test]
+    fn unreadable_newer_and_missing_files_leave_the_project_and_say_why() {
+        let dir = tmp("bad");
+        let newer = dir.join("newer.projectcraft");
+        std::fs::write(&newer, r#"{"format_version": 999}"#).unwrap();
+        let junk = dir.join("junk.projectcraft");
+        std::fs::write(&junk, [0xff, 0xfe, 0x00]).unwrap();
+        let missing = dir.join("gone.projectcraft");
+        let mut a = app();
+        a.recent = vec![missing.clone(), junk.clone()];
+        a.run("task.add", json!({"name": "Keep"}));
+        for (p, says) in [(&newer, "newer ProjectCraft"), (&junk, "not a ProjectCraft project"), (&missing, "Couldn't open")] {
+            a.open_path(p);
+            assert!(a.status.contains(says), "{}: {}", p.display(), a.status);
+            assert_eq!(a.session.project.tasks.len(), 1);
+        }
+        assert_eq!(a.recent, vec![junk], "the missing file is pruned; the unreadable one stays");
+    }
+}

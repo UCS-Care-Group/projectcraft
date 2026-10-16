@@ -13,3 +13,6 @@ workspace = true
 projectcraft-engine = { workspace = true }
 projectcraft-ui-egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+# Open / Save As dialogs (xdg-desktop-portal on Linux and the BSDs). Waited for on a thread
+# with a small std-only `block_on` (src/dialogs.rs), so no async runtime is added.
+rfd = { workspace = true }
