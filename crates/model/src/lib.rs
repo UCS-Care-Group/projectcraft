@@ -5,6 +5,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod assignment;
+mod cost;
 mod duration;
 mod outline;
 mod resource;
@@ -21,12 +22,13 @@ pub use assignment::{
     Assignment, AssignmentWork, MAX_ASSIGNMENTS, MAX_NAMES_TEXT, MAX_QUANTITY, MAX_TASK_ASSIGNMENTS, Units, assignment_work, default_units,
     parse_assignment_units, quantity_text,
 };
+pub use cost::{Currency, DEFAULT_CURRENCY_CODE, KNOWN_CURRENCIES, MAX_CURRENCY_DIGITS, MAX_CURRENCY_SYMBOL, assignment_cost, div_half_even};
 pub use duration::{DurationUnit, duration_text, lag_text, parse_duration, parse_lag};
 pub use outline::{CIRCULAR_OUTLINE, MAX_OUTLINE_LEVEL, Outline};
 pub use projectcraft_time::Date;
 pub use resource::{
     AccrueAt, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS, FULL_TIME, MAX_MONEY, MAX_RESOURCE_TEXT, MAX_RESOURCES, MAX_UNITS, Resource,
-    ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_name, format_money, parse_money, parse_units, units_text,
+    ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_money, check_name, format_money, parse_money, parse_units, units_text,
 };
 pub use schedule::{Driver, Moment, Schedule, TaskDates, schedule};
 pub use working_time::{
@@ -200,6 +202,14 @@ pub struct Task {
     /// task, but caps its late finish, so finishing after it gives negative slack.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<Date>,
+    /// A cost of the task itself, not of a resource, in minor units of the project currency, as
+    /// Microsoft Project's Fixed Cost field. A file without one has none.
+    #[serde(default, skip_serializing_if = "is_no_cost")]
+    pub fixed_cost: i64,
+}
+
+fn is_no_cost(n: &i64) -> bool {
+    *n == 0
 }
 
 fn top_level() -> u32 {
@@ -503,6 +513,9 @@ pub struct Project {
     /// Hours per day and week, days per month. A file without them has the defaults (8, 40, 20).
     #[serde(default)]
     pub options: Options,
+    /// The one currency every amount is in. A file without one is in pounds sterling.
+    #[serde(default, skip_serializing_if = "Currency::is_default")]
+    pub currency: Currency,
 }
 
 fn is_first_id(n: &u32) -> bool {
@@ -521,6 +534,7 @@ impl Project {
             next_resource_id: 1,
             assignments: Vec::new(),
             options: Options::default(),
+            currency: Currency::default(),
         }
     }
 

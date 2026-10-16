@@ -133,6 +133,7 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
         return Err(bad(format!("more than {} tasks", model::MAX_TASKS)));
     }
     p.options.check().map_err(|e| bad(format!("project options: {e}")))?;
+    p.currency.check().map_err(|e| bad(format!("currency: {e}")))?;
     if p.calendar.exceptions.len() > model::MAX_EXCEPTIONS {
         return Err(bad(format!("more than {} calendar exceptions", model::MAX_EXCEPTIONS)));
     }
@@ -142,6 +143,7 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
             return Err(bad(format!("task id {} is zero or used twice", t.id)));
         }
         model::check_minutes(t.duration).map_err(|e| bad(format!("task {}: {e}", t.id)))?;
+        model::check_money(t.fixed_cost).map_err(|e| bad(format!("task {}: fixed cost: {e}", t.id)))?;
     }
     for t in &p.tasks {
         for l in &t.preds {
@@ -389,6 +391,7 @@ mod tests {
                 constraint: Constraint::Asap,
                 outline_level: 1,
                 deadline: None,
+                fixed_cost: 0,
             },
             // A subtask of task 2, which is a summary storing its rolled-up duration.
             Task {
@@ -400,6 +403,7 @@ mod tests {
                 constraint: Constraint::Asap,
                 outline_level: 2,
                 deadline: None,
+                fixed_cost: 123_456,
             },
             Task {
                 id: TaskId(5),
@@ -410,6 +414,7 @@ mod tests {
                 constraint: Constraint::StartNoEarlierThan(Date::from_ymd(2026, 3, 9).unwrap()),
                 outline_level: 1,
                 deadline: Date::from_ymd(2026, 3, 20),
+                fixed_cost: 0,
             },
         ];
         p.next_id = 9;
@@ -435,6 +440,7 @@ mod tests {
             Resource::new(ResourceId(4), "Travel".into(), ResourceType::Cost),
         ];
         p.next_resource_id = 6;
+        p.currency = model::Currency::new("BHD", Some("BD"), None).unwrap();
         p
     }
 

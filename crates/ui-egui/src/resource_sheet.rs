@@ -4,10 +4,7 @@
 //! above, Delete deletes the selected ones. Every change is a `resource.*` command.
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
-use projectcraft_engine::model::{
-    self, AccrueAt, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS, Resource, ResourceId, ResourceType, format_money, parse_money, parse_units,
-    units_text,
-};
+use projectcraft_engine::model::{self, AccrueAt, Currency, Resource, ResourceId, ResourceType, parse_units, units_text};
 use serde_json::{Value, json};
 
 use crate::selection::Selection;
@@ -57,15 +54,11 @@ pub(crate) struct ResourceSheet {
     pub retype: Option<(ResourceId, Value)>,
 }
 
-/// A money amount in the project currency. ponytail: the default symbol until projects carry a currency.
-fn money(minor: i64) -> String {
-    format_money(minor, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS)
-}
-
 /// A cell's text; `None` where the field doesn't apply to the resource's type (Max Units of a
 /// material), which shows empty and can't be edited.
-pub(crate) fn cell_text(r: &Resource, field: RField) -> Option<String> {
+pub(crate) fn cell_text(r: &Resource, field: RField, currency: &Currency) -> Option<String> {
     let work = r.kind == ResourceType::Work;
+    let money = |n: i64| currency.format(n);
     let per_hour = |n: i64| format!("{}{}", money(n), tl!("/hr"));
     Some(match field {
         RField::Name => r.name.clone(),
@@ -84,9 +77,9 @@ pub(crate) fn cell_text(r: &Resource, field: RField) -> Option<String> {
 }
 
 /// The command a cell's new text issues, or why the text can't be read.
-pub(crate) fn typed(id: ResourceId, field: RField, text: &str) -> Result<(&'static str, Value), String> {
+pub(crate) fn typed(id: ResourceId, field: RField, text: &str, currency: &Currency) -> Result<(&'static str, Value), String> {
     let set = |k: &str, v: Value| Ok(("resource.set", json!({"id": id.0, k: v})));
-    let amount = |t: &str| parse_money(t, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS).map_err(|e| e.to_string());
+    let amount = |t: &str| currency.parse(t).map_err(|e| e.to_string());
     match field {
         RField::Name => Ok(("resource.rename", json!({"id": id.0, "name": text}))),
         RField::Type => set("type", json!(ResourceType::from_name(text).map_err(|e| e.to_string())?.name())),
@@ -140,7 +133,7 @@ impl App {
     fn begin_resource_edit(&mut self, typed: Option<String>) {
         let rs = &mut self.resources;
         let Some(id) = rs.sel.cursor else { return };
-        let Some(text) = self.session.project.resource(id).ok().and_then(|r| cell_text(r, rs.field)) else { return };
+        let Some(text) = self.session.project.resource(id).ok().and_then(|r| cell_text(r, rs.field, &self.session.project.currency)) else { return };
         rs.editing = Some((id, rs.field, typed.unwrap_or(text)));
         rs.focus_editor = true;
     }
@@ -173,11 +166,11 @@ impl App {
     }
 
     pub(crate) fn commit_resource(&mut self, id: ResourceId, field: RField, text: String) {
-        let now = self.session.project.resource(id).ok().and_then(|r| cell_text(r, field));
+        let now = self.session.project.resource(id).ok().and_then(|r| cell_text(r, field, &self.session.project.currency));
         if now.as_deref() == Some(text.as_str()) {
             return;
         }
-        match typed(id, field, &text) {
+        match typed(id, field, &text, &self.session.project.currency) {
             // As Microsoft Project, a new type loses the resource's assignments: ask first.
             Ok((_, params)) if field == RField::Type && self.session.project.is_assigned(id) => {
                 let new = params.get("type").and_then(Value::as_str).unwrap_or("");
@@ -322,7 +315,7 @@ impl App {
             }
             return None;
         }
-        let value = cell_text(r, field);
+        let value = cell_text(r, field, &self.session.project.currency);
         let shown = value.clone().unwrap_or_default();
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &shown));
@@ -367,20 +360,20 @@ mod tests {
             (RField::Initials, "PS"),
             (RField::Name, "Priya S."),
         ] {
-            let (cmd, params) = typed(id, field, text).unwrap();
+            let (cmd, params) = typed(id, field, text, &Currency::default()).unwrap();
             s.run(cmd, &params).unwrap();
         }
         let r = s.project.resource(id).unwrap();
         assert_eq!((r.max_units, r.standard_rate, r.overtime_rate, r.cost_per_use), (3_750, 125_050, 6_000, 99));
         assert_eq!((r.accrue_at, r.group.as_str(), r.initials.as_str(), r.name.as_str()), (AccrueAt::Start, "Site", "PS", "Priya S."));
-        assert_eq!(cell_text(r, RField::MaxUnits).as_deref(), Some("37.5%"));
-        assert_eq!(cell_text(r, RField::StandardRate).as_deref(), Some("£1,250.50/hr"));
-        assert_eq!(cell_text(r, RField::Material), None, "a work resource has no material label");
+        assert_eq!(cell_text(r, RField::MaxUnits, &Currency::default()).as_deref(), Some("37.5%"));
+        assert_eq!(cell_text(r, RField::StandardRate, &Currency::default()).as_deref(), Some("£1,250.50/hr"));
+        assert_eq!(cell_text(r, RField::Material, &Currency::default()), None, "a work resource has no material label");
         for (field, text) in [(RField::MaxUnits, "lots"), (RField::StandardRate, "-5"), (RField::Type, "Person"), (RField::AccrueAt, "")] {
-            assert!(typed(id, field, text).is_err(), "{text}");
+            assert!(typed(id, field, text, &Currency::default()).is_err(), "{text}");
         }
         let boxes = s.project.resource(ResourceId(4)).unwrap();
-        assert_eq!(cell_text(boxes, RField::StandardRate).as_deref(), Some("£2.50"));
-        assert_eq!(cell_text(boxes, RField::MaxUnits), None);
+        assert_eq!(cell_text(boxes, RField::StandardRate, &Currency::default()).as_deref(), Some("£2.50"));
+        assert_eq!(cell_text(boxes, RField::MaxUnits, &Currency::default()), None);
     }
 }

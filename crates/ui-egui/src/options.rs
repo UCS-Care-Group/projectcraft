@@ -22,7 +22,7 @@ pub(crate) struct OptionRow {
 }
 
 /// The rows, top to bottom.
-pub(crate) const ROWS: [OptionRow; 3] = [
+pub(crate) const ROWS: [OptionRow; 6] = [
     OptionRow {
         label: "Hours per day",
         unit: "hours",
@@ -45,6 +45,33 @@ pub(crate) const ROWS: [OptionRow; 3] = [
         parse: |s| match s.trim().parse::<u32>() {
             Ok(d) if (1..=31).contains(&d) => Ok(json!(d)),
             _ => Err(tl!("Days per month must be a whole number from 1 to 31.")),
+        },
+    },
+    // One currency per project; a new code brings its own symbol and decimal places unless those
+    // rows are changed too. Amounts keep their value: there are no exchange rates.
+    OptionRow {
+        label: "Currency",
+        unit: "ISO code",
+        param: "currency",
+        read: |p| p.currency.code.clone(),
+        parse: |s| {
+            let code = s.trim().to_ascii_uppercase();
+            if code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase()) {
+                Ok(json!(code))
+            } else {
+                Err(tl!("Currency must be a three-letter ISO code, such as GBP, EUR or USD."))
+            }
+        },
+    },
+    OptionRow { label: "Currency symbol", unit: "", param: "currencySymbol", read: |p| p.currency.symbol.clone(), parse: |s| Ok(json!(s.trim())) },
+    OptionRow {
+        label: "Decimal places",
+        unit: "in amounts",
+        param: "currencyDigits",
+        read: |p| p.currency.digits.to_string(),
+        parse: |s| match s.trim().parse::<u32>() {
+            Ok(d) if d <= projectcraft_engine::model::MAX_CURRENCY_DIGITS => Ok(json!(d)),
+            _ => Err(tl!("Decimal places must be a whole number from 0 to 4.")),
         },
     },
 ];
@@ -105,7 +132,9 @@ impl App {
         let modal = egui::Modal::new(egui::Id::new("project_options")).show(ctx, |ui| {
             ui.set_width(400.0);
             ui.heading(tl!("Project Options"));
-            ui.label(RichText::new(tl!("Converting durations between hours, days, weeks and months")).color(t.text_dim));
+            ui.label(
+                RichText::new(tl!("Converting durations between hours, days, weeks and months; the currency of every amount")).color(t.text_dim),
+            );
             ui.add_space(10.0);
             egui::Grid::new("project_options_rows").num_columns(3).spacing([12.0, 6.0]).show(ui, |ui| {
                 for (row, text) in ROWS.iter().zip(form.texts.iter_mut()) {
@@ -193,7 +222,7 @@ mod tests {
     #[test]
     fn apply_sets_the_options_in_one_undo_step() {
         let mut h = opened();
-        assert_eq!(texts(&h), Some(vec!["8".to_owned(), "40".to_owned(), "20".to_owned()]));
+        assert_eq!(texts(&h), Some(["8", "40", "20", "GBP", "£", "2"].map(String::from).to_vec()));
         retype(&mut h, "Hours per day", "7.5");
         retype(&mut h, "Days per month", "21");
         h.get_by_label("Apply").click();
@@ -209,6 +238,30 @@ mod tests {
         h.get_by_label("Cancel").click();
         h.run_steps(3);
         assert!(h.state().options.is_none());
+        assert!(!h.state().session.can_undo());
+    }
+
+    /// A new currency code brings its symbol and places; amounts keep their value; one undo step.
+    #[test]
+    fn apply_changes_the_currency() {
+        let mut h = opened();
+        let total = h.state().session.project.total_cost();
+        retype(&mut h, "Currency", "eur");
+        h.get_by_label("Apply").click();
+        h.run_steps(3);
+        let p = &h.state().session.project;
+        assert_eq!((p.currency.code.as_str(), p.currency.symbol.as_str(), p.currency.digits), ("EUR", "€", 2));
+        assert_eq!(p.total_cost(), total);
+        let mut h = opened();
+        retype(&mut h, "Decimal places", "5");
+        h.get_by_label("Apply").click();
+        h.run_steps(3);
+        assert!(h.state().status.starts_with("Decimal places"), "{}", h.state().status);
+        retype(&mut h, "Decimal places", "2");
+        retype(&mut h, "Currency symbol", "1x");
+        h.get_by_label("Apply").click();
+        h.run_steps(3);
+        assert!(h.state().status.contains("currency symbol"), "{}", h.state().status);
         assert!(!h.state().session.can_undo());
     }
 
