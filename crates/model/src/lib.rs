@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 pub use duration::{DAYS_PER_MONTH, DAYS_PER_WEEK, parse_duration};
 pub use projectcraft_time::Date;
-pub use schedule::{Schedule, TaskDates, schedule};
+pub use schedule::{Driver, Schedule, TaskDates, schedule};
 
 /// Longest duration or lag accepted, in working days (about 400 years): keeps all arithmetic in range.
 pub const MAX_DAYS: i64 = 100_000;
@@ -67,9 +67,6 @@ pub struct Link {
 /// A date rule on a task's start or finish, as Microsoft Project's Constraint Type field.
 /// Constraints win over links. Written to the file as `"ASAP"` or `{"SNET": "2026-01-12"}`;
 /// a file without one is As Soon As Possible.
-///
-/// ponytail: the scheduler honours ASAP, SNET and FNET; the hard types (SNLT, FNLT, MSO, MFO)
-/// are modelled but ignored by [`schedule`] and refused by the command until #12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Constraint {
     /// No constraint: as early as the links allow.

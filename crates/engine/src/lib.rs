@@ -313,7 +313,7 @@ const COMMANDS: &[CommandSpec] = &[
             object(
                 json!({
                     "id": task_id(),
-                    "type": {"type": "string", "enum": model::Constraint::CODES, "description": "ASAP clears; SNET Start No Earlier Than; FNET Finish No Earlier Than"},
+                    "type": {"type": "string", "enum": model::Constraint::CODES, "description": "ASAP clears; SNET/FNET Start/Finish No Earlier Than; SNLT/FNLT Start/Finish No Later Than; MSO Must Start On; MFO Must Finish On. Constraints win over links."},
                     "date": {"type": "string", "format": "date", "description": "YYYY-MM-DD; required except for ASAP"},
                 }),
                 &["id", "type"],
@@ -325,10 +325,6 @@ const COMMANDS: &[CommandSpec] = &[
                 None => None,
             };
             let c = model::Constraint::from_code(str_param(v, "type")?, date)?;
-            // ponytail: the hard types are modelled; scheduling them (with negative slack) is #12.
-            if !matches!(c, model::Constraint::Asap | model::Constraint::StartNoEarlierThan(_) | model::Constraint::FinishNoEarlierThan(_)) {
-                return Err(CmdError::Params(format!("{} constraints are not yet supported", c.name())));
-            }
             p.task_mut(id_param(v)?)?.constraint = c;
             Ok(())
         },

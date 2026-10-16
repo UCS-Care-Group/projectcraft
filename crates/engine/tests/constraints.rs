@@ -1,6 +1,7 @@
 //! Worked examples 5, 11, 14 and 15 of the M1 spec (`docs/specs/m1-usable-plan.md`): soft
 //! constraints (Start No Earlier Than, Finish No Earlier Than) and typed dates. Each is worked out
-//! by hand from the Microsoft documentation it cites, before the code.
+//! by hand from the Microsoft documentation it cites, before the code. The hard types are in
+//! `hard_constraints.rs`.
 
 use projectcraft_engine::Session;
 use projectcraft_engine::model::{Constraint, Date, Project, TaskDates, TaskId};
@@ -140,17 +141,14 @@ fn worked_example_15_typing_a_start_or_finish_sets_snet_or_fnet() {
     assert_eq!(s.project.task(TaskId(2)).unwrap().duration, 2);
 }
 
-/// The hard types land with #12; until then the command refuses them and changes nothing.
+/// Bad params are refused and change nothing.
 #[test]
-fn hard_constraint_types_are_refused_for_now_and_bad_params_change_nothing() {
+fn bad_constraint_params_change_nothing() {
     let mut s = a_then_b();
     let before = s.project.clone();
-    for ty in ["SNLT", "FNLT", "MSO", "MFO"] {
-        let e = s.run("task.setConstraint", &json!({"id": 2, "type": ty, "date": "2026-01-12"})).unwrap_err().to_string();
-        assert!(e.contains("not yet supported"), "{ty}: {e}");
-    }
     let e = s.run("task.setConstraint", &json!({"id": 2, "type": "SNET"})).unwrap_err().to_string();
     assert!(e.contains("date"), "{e}");
+    assert!(s.run("task.setConstraint", &json!({"id": 2, "type": "MSO"})).is_err());
     assert!(s.run("task.setConstraint", &json!({"id": 2, "type": "ALAP", "date": "2026-01-12"})).is_err());
     assert!(s.run("task.setConstraint", &json!({"id": 2, "type": "SNET", "date": "2026-02-30"})).is_err());
     assert!(s.run("task.setConstraint", &json!({"id": 9, "type": "SNET", "date": "2026-01-12"})).is_err());
@@ -165,7 +163,7 @@ fn far_and_early_constraint_dates_never_panic() {
     s.run("task.setConstraint", &json!({"id": 2, "type": "SNET", "date": "0001-01-01"})).unwrap();
     assert_eq!(start_finish(&s, 2), (date("2026-01-08"), date("2026-01-09")));
     for d in ["9999-12-31", "9999-12-30", "0001-01-01"] {
-        for ty in ["SNET", "FNET"] {
+        for ty in ["SNET", "FNET", "SNLT", "FNLT", "MSO", "MFO"] {
             let _ = s.run("task.setConstraint", &json!({"id": 2, "type": ty, "date": d}));
         }
     }
