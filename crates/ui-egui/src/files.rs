@@ -101,6 +101,8 @@ impl App {
     pub fn open_path(&mut self, path: &Path) {
         match Session::open(path) {
             Ok(session) => {
+                // The project being left was saved or its changes dropped: its recovery copy goes.
+                self.drop_recovery();
                 self.saved = session.project.clone();
                 self.session = session;
                 self.path = Some(path.to_path_buf());
@@ -108,6 +110,7 @@ impl App {
                 self.status = i18n::fmt(tl!("Opened {path}"), &[("path", &path.display().to_string())]);
                 push_recent(&mut self.recent, path);
                 self.recent_changed = true;
+                self.check_recovery();
             }
             Err(e) => {
                 self.status = i18n::fmt(tl!("Couldn't open: {error}"), &[("error", &e.to_string())]);
@@ -119,14 +122,22 @@ impl App {
         }
     }
 
+    /// Writes the project to `path` (atomically) and marks it clean. Undo history is kept: saving,
+    /// manual or auto, never clears it. A clean save deletes the recovery copy.
+    pub(crate) fn write_file(&mut self, path: &Path) -> Result<(), projectcraft_engine::CmdError> {
+        self.session.save_to(path)?;
+        self.saved = self.session.project.clone();
+        push_recent(&mut self.recent, path);
+        self.recent_changed = true;
+        self.drop_recovery();
+        Ok(())
+    }
+
     /// Saves to `path`; true when it worked. Undo history is kept.
     fn save_to(&mut self, path: &Path) -> bool {
-        match self.session.save_to(path) {
+        match self.write_file(path) {
             Ok(()) => {
-                self.saved = self.session.project.clone();
                 self.status = i18n::fmt(tl!("Saved {path}"), &[("path", &path.display().to_string())]);
-                push_recent(&mut self.recent, path);
-                self.recent_changed = true;
                 true
             }
             Err(e) => {
@@ -175,6 +186,8 @@ impl App {
             }
         }
         if self.closing {
+            // A clean close: saved, or the owner chose Don't Save.
+            self.drop_recovery();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
@@ -261,12 +274,13 @@ impl App {
             if ui.add(egui::Button::new(tl!("Save As…")).shortcut_text(ui.ctx().format_shortcut(&SAVE_AS))).clicked() {
                 self.file_request = Some(FileRequest::SaveAs);
             }
+            self.autosave_toggle(ui);
         });
     }
 
     /// Ctrl+O, Ctrl+S, Ctrl+Shift+S (Cmd on macOS). Ignored while the prompt is open.
     pub(crate) fn file_keys(&mut self, ctx: &egui::Context) {
-        if self.prompt.is_some() {
+        if self.prompt.is_some() || self.recovery_offered() {
             return;
         }
         // Save As first: Ctrl+S would match Ctrl+Shift+S too.

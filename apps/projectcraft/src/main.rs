@@ -10,6 +10,8 @@ mod settings;
 struct Shell {
     app: App,
     dialogs: dialogs::Dialogs,
+    /// The only clock the app reads for autosave and the recovery copy ([`App::tick`]).
+    started: std::time::Instant,
 }
 
 impl eframe::App for Shell {
@@ -17,6 +19,9 @@ impl eframe::App for Shell {
         if let Some((request, path)) = self.dialogs.answer() {
             self.app.file_picked(request, path);
         }
+        self.app.tick(self.started.elapsed());
+        // Wake now and then so autosave and the recovery copy run while the window is idle.
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs(5));
         self.app.ui(ui);
         if !self.dialogs.busy()
             && let Some(request) = self.app.take_file_request()
@@ -25,6 +30,9 @@ impl eframe::App for Shell {
         }
         if let Some(recent) = self.app.take_recent_changed() {
             settings::save_recent(recent);
+        }
+        if let Some(on) = self.app.take_autosave_changed() {
+            settings::save_autosave(on);
         }
     }
 }
@@ -46,6 +54,10 @@ fn main() -> eframe::Result {
     };
     let mut app = App::new(session, if sample { None } else { path.clone() });
     app.recent = settings::load_recent();
+    // `--sample` keeps nothing: no autosave, no recovery copy.
+    if !sample {
+        app.keep_recovery(settings::recovery_dir(), settings::load_autosave());
+    }
     if let Some(p) = path.filter(|p| !sample && p.exists()) {
         projectcraft_ui_egui::push_recent(&mut app.recent, &p);
         settings::save_recent(&app.recent);
@@ -53,7 +65,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "ProjectCraft",
         eframe::NativeOptions::default(),
-        Box::new(|_| Ok(Box::new(Shell { app, dialogs: dialogs::Dialogs::default() }))),
+        Box::new(|_| Ok(Box::new(Shell { app, dialogs: dialogs::Dialogs::default(), started: std::time::Instant::now() }))),
     )
 }
 

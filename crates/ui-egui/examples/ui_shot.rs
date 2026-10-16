@@ -9,7 +9,9 @@
 //! `{"theme": "light" | "dark"}` switches the theme, `{"shot": "/abs/out.png"}` saves the window
 //! as PNG, `{"steps": n}` runs extra frames,
 //! `{"click": "label"}` clicks the first widget with that label (say `File`, or `Open` with
-//! unsaved changes for the Save changes? prompt). The window is 1280×720 pt at 2× (override with
+//! unsaved changes for the Save changes? prompt), `{"recover": "/abs/dir"}` turns on the
+//! recovery copy with `dir` as the untitled folder (an `untitled.projectcraft.recovery` there is
+//! offered back). The window is 1280×720 pt at 2× (override with
 //! `{"width": w, "height": h}` and `{"scale": s}` on any line) and opens the sample project
 //! unless the first line is `{"empty": true}`.
 
@@ -65,6 +67,9 @@ fn run() -> Result<(), String> {
                 Some(node) => node.click(),
                 None => println!("click: no `{label}`"),
             }
+            harness.run_steps(4);
+        } else if let Some(dir) = l.get("recover").and_then(Value::as_str) {
+            harness.state_mut().keep_recovery(Some(dir.into()), true);
             harness.run_steps(4);
         } else if let Some(n) = l.get("steps").and_then(Value::as_u64) {
             harness.run_steps(n.min(10_000) as usize);

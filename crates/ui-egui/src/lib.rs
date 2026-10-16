@@ -23,6 +23,8 @@ pub mod theme;
 use theme::Tokens;
 mod files;
 pub use files::{EXTENSION, FileRequest, MAX_RECENT, parse_recent, push_recent, recent_text};
+mod recovery;
+pub use recovery::{AUTOSAVE_EVERY, RECOVERY_EVERY, UNTITLED_RECOVERY, recovery_path};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
@@ -80,6 +82,8 @@ pub struct App {
     /// The owner chose to close; the window closes.
     closing: bool,
     title: String,
+    /// Autosave and the recovery copy; `None` keeps nothing (the sample, screenshots).
+    keeper: Option<recovery::Keeper>,
 }
 
 const ROW_H: f32 = 22.0;
@@ -108,6 +112,7 @@ impl App {
             after_save: None,
             closing: false,
             title: String::new(),
+            keeper: None,
         }
     }
 
@@ -177,6 +182,7 @@ impl App {
             egui::ScrollArea::both().show(ui, |ui| self.sheet(ui));
         });
         self.unsaved_prompt(&ctx);
+        self.recovery_prompt(&ctx);
         self.update_title(&ctx);
     }
 
@@ -329,7 +335,12 @@ mod tests {
     /// Colours live in `theme.rs` only: every other source file takes them from `Tokens`.
     #[test]
     fn no_colours_outside_the_token_set() {
-        for (file, src) in [("lib.rs", include_str!("lib.rs")), ("i18n.rs", include_str!("i18n.rs")), ("files.rs", include_str!("files.rs"))] {
+        for (file, src) in [
+            ("lib.rs", include_str!("lib.rs")),
+            ("i18n.rs", include_str!("i18n.rs")),
+            ("files.rs", include_str!("files.rs")),
+            ("recovery.rs", include_str!("recovery.rs")),
+        ] {
             let code = src.split("#[cfg(test)]").next().unwrap_or(src);
             for needle in ["Color32", "from_rgb", "from_gray", "from_black_alpha", "from_white_alpha"] {
                 assert!(!code.contains(needle), "{file} names a colour ({needle}); add a token in theme.rs");
