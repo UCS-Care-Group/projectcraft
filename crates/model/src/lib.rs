@@ -12,6 +12,7 @@ mod resource;
 mod rows;
 mod schedule;
 mod task_type;
+mod view;
 mod working_time;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,6 +34,7 @@ pub use resource::{
 };
 pub use schedule::{Driver, Moment, Schedule, TaskDates, schedule};
 pub use task_type::{MAX_WORK, TaskType};
+pub use view::{Column, Columns};
 pub use working_time::{
     DEFAULT_WORKING_TIMES, MAX_WORKING_TIMES, MINUTES_IN_DAY, Options, WorkingTime, check_working_times, clock, minutes_of, parse_clock,
     parse_working_time,
@@ -530,6 +532,9 @@ pub struct Project {
     /// The one currency every amount is in. A file without one is in pounds sterling.
     #[serde(default, skip_serializing_if = "Currency::is_default")]
     pub currency: Currency,
+    /// The task sheet's columns after ID and Task Name. A file without them shows every column.
+    #[serde(default, skip_serializing_if = "Columns::is_default")]
+    pub columns: Columns,
 }
 
 fn is_first_id(n: &u32) -> bool {
@@ -549,6 +554,7 @@ impl Project {
             assignments: Vec::new(),
             options: Options::default(),
             currency: Currency::default(),
+            columns: Columns::default(),
         }
     }
 
