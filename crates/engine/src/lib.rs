@@ -86,16 +86,13 @@ impl Session {
 
     /// Schedules the project, after keeping its outline to the rule. Each summary task stores its
     /// rolled-up duration (working minutes), so one that stops being a summary keeps its last rolled-up duration
-    /// (worked example 13); the scheduler never reads a summary's own duration.
+    /// (worked example 13); the scheduler never reads a summary's own duration. A summary's work
+    /// assignments work that duration.
     fn reschedule(&mut self) {
         self.project.normalize_outline();
         self.schedule = model::schedule(&self.project);
         if let Ok(s) = &self.schedule {
-            for (id, d) in &s.rolled_up {
-                if let Ok(t) = self.project.task_mut(*id) {
-                    t.duration = *d;
-                }
-            }
+            self.project.set_rolled_up(&s.rolled_up);
         }
     }
 
@@ -531,6 +528,8 @@ const COMMANDS: &[CommandSpec] = &[
                     "currency": {"type": "string", "description": "the project's one currency, as its ISO 4217 code (GBP, the default; EUR, USD, JPY, BHD…). No exchange rates: amounts keep their value, rounded half to even when the new currency has fewer decimal places. A known code brings its symbol and decimal places"},
                     "currencySymbol": {"type": "string", "description": "the symbol amounts show with (£, €, $, CHF); at most 8 characters, no digits, signs, commas or full stops. Absent: the currency's own"},
                     "currencyDigits": {"type": "integer", "minimum": 0, "maximum": model::MAX_CURRENCY_DIGITS, "description": "decimal places of the currency's minor unit (2 for pence, 0 for yen, 3 for fils). Absent: the currency's own"},
+                    "defaultTaskType": {"type": "string", "enum": model::TaskType::NAMES, "description": "the type new tasks get; default Fixed Units"},
+                    "newTasksEffortDriven": {"type": "boolean", "description": "whether new tasks are effort-driven; default false (new Fixed Work tasks always are)"},
                 }),
                 &[],
             )
@@ -545,6 +544,12 @@ const COMMANDS: &[CommandSpec] = &[
             }
             if let Some(d) = v.get("daysPerMonth").and_then(Value::as_i64) {
                 o.days_per_month = u32::try_from(d).map_err(|_| CmdError::Params("`daysPerMonth` must be between 1 and 31".into()))?;
+            }
+            if let Some(t) = v.get("defaultTaskType").and_then(Value::as_str) {
+                o.task_type = model::TaskType::from_name(t)?;
+            }
+            if let Some(e) = v.get("newTasksEffortDriven").and_then(Value::as_bool) {
+                o.effort_driven = e;
             }
             o.check()?;
             p.options = o;
@@ -625,9 +630,55 @@ const COMMANDS: &[CommandSpec] = &[
                 return Err(CmdError::Params("a summary task's duration is rolled up from its subtasks and can't be set".into()));
             }
             let (duration, unit) = duration_param(p, v, None)?;
-            let t = p.task_mut(id)?;
-            t.duration = duration;
-            t.duration_unit = unit;
+            p.set_duration(id, duration, unit)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.setWork",
+        label: "Work",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "id": task_id(),
+                    "work": {"type": ["number", "string"], "minimum": 0, "description": "the task's work: hours as a number (20, 7.5), or text with a unit (30m, 20h, 2d, 1w). Shared among its work resources in proportion to their work; Fixed Units and Fixed Work tasks change duration, Fixed Duration tasks change units. Needs a work resource."},
+                }),
+                &["id", "work"],
+            )
+        },
+        run: |p, v| {
+            let text = match v.get("work") {
+                Some(Value::String(s)) => s.clone(),
+                Some(Value::Number(n)) => n.to_string(),
+                _ => return Err(CmdError::Params("`work` (hours, or text such as 20h) is required".into())),
+            };
+            let work = model::parse_work(&text, &p.options)?;
+            p.set_task_work(id_param(v)?, work)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.setType",
+        label: "Task Type",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "id": task_id(),
+                    "type": {"type": "string", "enum": model::TaskType::NAMES, "description": "which of duration, units and work stays when another changes: Fixed Units (the default), Fixed Duration or Fixed Work. Nothing is recalculated when it changes."},
+                    "effortDriven": {"type": "boolean", "description": "keep the task's work as work resources are added or removed; always on for Fixed Work. Not for a summary."},
+                }),
+                &["id"],
+            )
+        },
+        run: |p, v| {
+            let ty = v.get("type").and_then(Value::as_str).map(model::TaskType::from_name).transpose()?;
+            let effort = v.get("effortDriven").and_then(Value::as_bool);
+            if ty.is_none() && effort.is_none() {
+                return Err(CmdError::Params("give `type`, `effortDriven` or both".into()));
+            }
+            p.set_task_type(id_param(v)?, ty, effort)?;
             Ok(())
         },
     },
@@ -1218,8 +1269,11 @@ mod tests {
         s.run("assignment.remove", &json!({"task": 4, "resource": 4})).unwrap();
         assert!(s.run("assignment.remove", &json!({"task": 4, "resource": 4})).is_err());
         assert_eq!(s.project.resource_names(TaskId(4)), "Priya Shah[25%]");
-        // Dates don't move: the duration stays as entered.
-        assert_eq!(s.project.task(TaskId(4)).unwrap().duration, before.task(TaskId(4)).unwrap().duration);
+        // Fixed Units, the default: Priya's 80 hours of work stay, so at 25% the task takes four
+        // times as long; the material takes no part.
+        assert_eq!(before.task(TaskId(4)).unwrap().duration, 10 * 480);
+        assert_eq!(s.project.task(TaskId(4)).unwrap().duration, 40 * 480);
+        assert_eq!(s.project.task_work(TaskId(4)), 80 * 60);
         let round = Session::load_json(&s.save_json().unwrap()).unwrap();
         assert_eq!(round.project, s.project);
         for _ in 0..4 {

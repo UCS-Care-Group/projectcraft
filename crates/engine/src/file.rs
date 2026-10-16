@@ -155,6 +155,8 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
     }
     let max = p.tasks.iter().map(|t| t.id.0).max().unwrap_or(0);
     p.next_id = p.next_id.max(max.saturating_add(1)).max(1);
+    // Assignments from before task types: their work and duration from the task's duration.
+    p.fill_assignment_work();
     // Resources: count, Unique IDs, names and every field in range; `next_resource_id` repaired.
     p.check_resources().map_err(|e| bad(e.to_string()))
 }
@@ -380,7 +382,13 @@ mod tests {
         p.calendar.exceptions.insert(Date::from_ymd(2026, 4, 4).unwrap(), true);
         p.calendar.set_weekday_times(4, vec![model::parse_working_time("7:30-15:30").unwrap()]).unwrap();
         p.calendar.set_exception(Date::from_ymd(2026, 4, 11).unwrap(), vec![model::parse_working_time("9:00-13:00").unwrap()]).unwrap();
-        p.options = model::Options { minutes_per_day: 450, minutes_per_week: 2250, days_per_month: 21 };
+        p.options = model::Options {
+            minutes_per_day: 450,
+            minutes_per_week: 2250,
+            days_per_month: 21,
+            task_type: model::TaskType::FixedDuration,
+            effort_driven: true,
+        };
         p.tasks = vec![
             Task {
                 id: TaskId(2),
@@ -392,6 +400,8 @@ mod tests {
                 outline_level: 1,
                 deadline: None,
                 fixed_cost: 0,
+                task_type: model::TaskType::FixedUnits,
+                effort_driven: false,
             },
             // A subtask of task 2, which is a summary storing its rolled-up duration.
             Task {
@@ -404,6 +414,8 @@ mod tests {
                 outline_level: 2,
                 deadline: None,
                 fixed_cost: 123_456,
+                task_type: model::TaskType::FixedWork,
+                effort_driven: true,
             },
             Task {
                 id: TaskId(5),
@@ -415,6 +427,8 @@ mod tests {
                 outline_level: 1,
                 deadline: Date::from_ymd(2026, 3, 20),
                 fixed_cost: 0,
+                task_type: model::TaskType::FixedDuration,
+                effort_driven: true,
             },
         ];
         p.next_id = 9;
@@ -441,6 +455,7 @@ mod tests {
         ];
         p.next_resource_id = 6;
         p.currency = model::Currency::new("BHD", Some("BD"), None).unwrap();
+        p.assignments = vec![model::Assignment { task: TaskId(7), resource: ResourceId(3), units: model::Units::Work(5_050), work: 2, duration: 4 }];
         p
     }
 
@@ -610,7 +625,13 @@ mod tests {
         assert_eq!(v["calendar"]["times"][0], json!([{"from": 480, "to": 720}, {"from": 780, "to": 1020}]));
         assert_eq!(v["calendar"]["times"][1], json!([]));
         assert_eq!(v["calendar"]["times"][4], json!([{"from": 450, "to": 930}]));
-        assert_eq!(v["options"], json!({"minutes_per_day": 450, "minutes_per_week": 2250, "days_per_month": 21}));
+        assert_eq!(
+            v["options"],
+            json!({"minutes_per_day": 450, "minutes_per_week": 2250, "days_per_month": 21, "task_type": "FixedDuration", "effort_driven": true})
+        );
+        // The task-type options are written only when they differ from Project's defaults.
+        let plain = serde_json::from_str::<Value>(&Session::new(Project::new("x", Date::EPOCH)).save_json().unwrap()).unwrap();
+        assert_eq!(plain["options"], json!({"minutes_per_day": 480, "minutes_per_week": 2400, "days_per_month": 20}));
         // A file from before working times: the default hours on every working weekday, default options.
         let old = json!({"name": "Old", "start": "2026-01-05", "format_version": 1, "calendar": {"working": [true, true, true, true, true, false, false],
             "exceptions": [{"date": "2026-01-10", "working": true}]}, "tasks": [{"id": 1, "name": "A", "duration": 3}], "next_id": 2});

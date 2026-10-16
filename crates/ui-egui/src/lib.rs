@@ -11,7 +11,7 @@
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{
-    DurationUnit, MAX_WORKING_TIMES, Outline, TaskId, WorkingTime, check_working_times, clock, duration_text, parse_clock,
+    DurationUnit, MAX_WORKING_TIMES, Outline, TaskId, TaskType, WorkingTime, check_working_times, clock, duration_text, parse_clock,
 };
 use projectcraft_engine::{Session, WEEKDAYS, time::Date};
 use serde_json::{Value, json};
@@ -44,7 +44,7 @@ use selection::Selection;
 enum Field {
     Name,
     Duration,
-    /// Read-only: the task's work, from its assignments.
+    /// The task's work, from its assignments; typed, it is shared among them (`task.setWork`).
     Work,
     Start,
     Finish,
@@ -54,10 +54,14 @@ enum Field {
     Cost,
     FixedCost,
     Deadline,
+    /// Fixed Units, Fixed Duration or Fixed Work.
+    Type,
+    /// Yes or No.
+    EffortDriven,
 }
 
 /// The columns, left to right: each field, its heading and its width.
-const COLUMNS: [(Field, &str, f32); 10] = [
+const COLUMNS: [(Field, &str, f32); 12] = [
     (Field::Name, "Task Name", NAME_W),
     (Field::Duration, "Duration", 60.0),
     (Field::Work, "Work", 60.0),
@@ -68,10 +72,12 @@ const COLUMNS: [(Field, &str, f32); 10] = [
     (Field::Cost, "Cost", 84.0),
     (Field::FixedCost, "Fixed Cost", 84.0),
     (Field::Deadline, "Deadline", 80.0),
+    (Field::Type, "Type", 100.0),
+    (Field::EffortDriven, "Effort Driven", 90.0),
 ];
 
 /// The columns the cursor moves across, left to right.
-const FIELDS: [Field; 10] = [
+const FIELDS: [Field; 12] = [
     Field::Name,
     Field::Duration,
     Field::Work,
@@ -82,7 +88,27 @@ const FIELDS: [Field; 10] = [
     Field::Cost,
     Field::FixedCost,
     Field::Deadline,
+    Field::Type,
+    Field::EffortDriven,
 ];
+
+/// The Effort Driven column's text.
+fn yes_no(b: bool) -> &'static str {
+    if b { "Yes" } else { "No" }
+}
+
+/// Typed Effort Driven text: yes or no (or the start of either, or true, false, 1, 0), any case.
+fn typed_yes_no(text: &str) -> Option<bool> {
+    let t = text.trim().to_lowercase();
+    match t.as_str() {
+        "" => None,
+        "true" | "1" => Some(true),
+        "false" | "0" => Some(false),
+        _ if "yes".starts_with(&t) => Some(true),
+        _ if "no".starts_with(&t) => Some(false),
+        _ => None,
+    }
+}
 
 /// The command a typed Start or Finish issues: Start No Earlier Than or Finish No Earlier Than
 /// that date. The cell keeps showing the scheduler's date, as in Microsoft Project. A typed
@@ -563,8 +589,8 @@ impl App {
         }
     }
 
-    /// A cell's text as the sheet shows it; `None` where it can't be edited (a summary's duration,
-    /// the work, the cost).
+    /// A cell's text as the sheet shows it; `None` where it can't be edited: the cost, and a
+    /// summary's duration, work, type and effort-driven setting, which follow its subtasks.
     fn cell_text(&self, id: TaskId, field: Field) -> Option<String> {
         let p = &self.session.project;
         let t = p.task(id).ok()?;
@@ -572,10 +598,13 @@ impl App {
         let date = |d: Option<Date>| d.map_or_else(String::new, |d| d.to_string());
         Some(match field {
             Field::Name => t.name.clone(),
-            Field::Duration if p.is_summary(id) => return None,
+            Field::Duration | Field::Work | Field::Type | Field::EffortDriven if p.is_summary(id) => return None,
             Field::Duration => duration_text(t.duration, t.duration_unit, &p.options),
-            Field::Work | Field::Cost => return None,
+            Field::Cost => return None,
             Field::FixedCost => p.currency.format(t.fixed_cost),
+            Field::Work => assign::work_text(p.task_work(id), p),
+            Field::Type => tl!(t.task_type.name()).to_owned(),
+            Field::EffortDriven => tl!(yes_no(p.is_effort_driven(id))).to_owned(),
             Field::Start => date(dates.map(|d| d.start)),
             Field::Finish => date(dates.map(|d| d.finish)),
             Field::Preds => p.preds_text_rows(&t.preds),
@@ -623,7 +652,23 @@ impl App {
                 }
                 Err(e) => self.status = e.to_string(),
             },
-            Field::Work | Field::Cost => {}
+            Field::Cost => {}
+            // Hours when no unit is typed; shared among the work resources as the type says.
+            Field::Work => {
+                self.run("task.setWork", json!({"id": id.0, "work": text.trim()}));
+            }
+            Field::Type => match TaskType::from_name(&text) {
+                Ok(ty) => {
+                    self.run("task.setType", json!({"id": id.0, "type": ty.name()}));
+                }
+                Err(_) => self.status = tl!("Type Fixed Units, Fixed Duration or Fixed Work.").to_owned(),
+            },
+            Field::EffortDriven => match typed_yes_no(&text) {
+                Some(on) => {
+                    self.run("task.setType", json!({"id": id.0, "effortDriven": on}));
+                }
+                None => self.status = tl!("Type Yes or No.").to_owned(),
+            },
         }
     }
 
@@ -904,12 +949,15 @@ impl App {
                     let lead = if field == Field::Name { indent } else { 0.0 };
                     let value = self.cell_text(id, field);
                     let p = &self.session.project;
-                    let shown = match &value {
-                        Some(v) => v.clone(),
-                        None if field == Field::Work => assign::work_text(work.get(&id).copied().unwrap_or(0), p),
-                        None if field == Field::Cost => p.currency.format(costs.get(&id).copied().unwrap_or(0)),
-                        // A summary's rolled-up duration shows in days.
-                        None => duration_text(duration, DurationUnit::Days, &p.options),
+                    let shown = match (&value, field) {
+                        (Some(v), _) => v.clone(),
+                        // A summary's: its own and its subtasks' work, any task's cost, its rolled-up duration in
+                        // days, and the type it is scheduled as.
+                        (None, Field::Work) => assign::work_text(work.get(&id).copied().unwrap_or(0), p),
+                        (None, Field::Cost) => p.currency.format(costs.get(&id).copied().unwrap_or(0)),
+                        (None, Field::Type) => tl!(p.task_type_of(id).name()).to_owned(),
+                        (None, Field::EffortDriven) => tl!(yes_no(false)).to_owned(),
+                        (None, _) => duration_text(duration, DurationUnit::Days, &p.options),
                     };
                     let inner = ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
@@ -1000,6 +1048,9 @@ impl App {
         let r = match field {
             Field::Work => r.on_hover_text(assign::work_lines(&self.session.project, id)),
             Field::Cost => r.on_hover_text(assign::cost_lines(&self.session.project, id)),
+            Field::Type | Field::EffortDriven if !editable => {
+                r.on_hover_text(tl!("A summary task is scheduled as Fixed Duration and is never effort-driven"))
+            }
             _ if !editable => r.on_hover_text(tl!("A summary task's duration is rolled up from its subtasks")),
             _ => r,
         };
@@ -1371,18 +1422,20 @@ mod tests {
         key(&mut h, Modifiers::NONE, Key::ArrowLeft);
         assert_eq!(h.state().field, Field::Work);
         key(&mut h, Modifiers::NONE, Key::F2);
-        assert!(h.state().editing.is_none(), "the work is read-only");
-        assert_eq!(h.state().session.project.tasks.len(), 8, "moving about changes nothing");
+        assert!(h.state().editing.is_some(), "the work is typed into");
+        key(&mut h, Modifiers::NONE, Key::Escape);
+        assert!(h.state().editing.is_none());
+        assert!(!h.state().session.can_undo(), "moving about changes nothing");
     }
 
     #[test]
     fn the_deadline_column_is_reached_by_the_arrows_and_typed_into() {
         let mut h = sheet(projectcraft_engine::sample());
         click(&mut h, "Order furniture", Modifiers::NONE);
-        for _ in 0..10 {
+        for _ in 0..9 {
             key(&mut h, Modifiers::NONE, Key::ArrowRight);
         }
-        assert_eq!(h.state().field, Field::Deadline, "the last column, and no further");
+        assert_eq!(h.state().field, Field::Deadline);
         typed(&mut h, "2026-11-13");
         key(&mut h, Modifiers::NONE, Key::Enter);
         let d = h.state().session.project.task(TaskId(3)).unwrap().deadline;
@@ -1421,6 +1474,64 @@ mod tests {
         key(&mut h, Modifiers::NONE, Key::Enter);
         assert_eq!(h.state().session.project, before);
         assert!(h.state().status.contains("not an amount of money"), "{}", h.state().status);
+    }
+
+    /// Type and Effort Driven are typed into like any cell (the start of a name will do), and
+    /// typed Work, in hours, is shared as the task type says: Agree the brief, made Fixed Work,
+    /// takes 3 days for 24 hours of Priya's time at 100%. A summary's are not its own.
+    #[test]
+    fn type_effort_driven_and_work_are_typed_into_the_sheet() {
+        use projectcraft_engine::model::TaskType;
+        let mut h = sheet(projectcraft_engine::sample());
+        let before = h.state().session.project.clone();
+        click(&mut h, "Agree the brief", Modifiers::NONE);
+        for _ in 0..12 {
+            key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        }
+        assert_eq!(h.state().field, Field::EffortDriven, "the last column, and no further");
+        assert_eq!(h.state().cell_text(TaskId(1), Field::EffortDriven).as_deref(), Some("No"));
+        typed(&mut h, "y");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert!(h.state().session.project.task(TaskId(1)).unwrap().effort_driven);
+        key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        key(&mut h, Modifiers::NONE, Key::ArrowLeft);
+        typed(&mut h, "fixed work");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().session.project.task(TaskId(1)).unwrap().task_type, TaskType::FixedWork);
+        assert_eq!(h.state().cell_text(TaskId(1), Field::Type).as_deref(), Some("Fixed Work"));
+        key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        for _ in 0..8 {
+            key(&mut h, Modifiers::NONE, Key::ArrowLeft);
+        }
+        assert_eq!(h.state().field, Field::Work);
+        assert_eq!(h.state().cell_text(TaskId(1), Field::Work).as_deref(), Some("16h"));
+        typed(&mut h, "24");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        let p = &h.state().session.project;
+        assert_eq!((p.task_work(TaskId(1)), p.task(TaskId(1)).unwrap().duration), (24 * 60, 3 * 480));
+        // Text that doesn't read says why and changes nothing.
+        let after = h.state().session.project.clone();
+        key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        for (field, bad, why) in [(Field::Type, "Fixed Cost", "Type Fixed Units"), (Field::EffortDriven, "maybe", "Type Yes or No")] {
+            h.state_mut().field = field;
+            typed(&mut h, bad);
+            key(&mut h, Modifiers::NONE, Key::Enter);
+            assert!(h.state().status.contains(why), "{}", h.state().status);
+            assert_eq!(h.state().session.project, after);
+            key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        }
+        // A summary's type, effort-driven setting and work can't be typed.
+        for _ in 0..2 {
+            h.state_mut().session.run("task.add", &json!({})).unwrap();
+        }
+        h.state_mut().session.run("task.indent", &json!({"ids": [10]})).unwrap();
+        for field in [Field::Type, Field::EffortDriven, Field::Work] {
+            assert_eq!(h.state().cell_text(TaskId(9), field), None);
+        }
+        while h.state().session.can_undo() {
+            h.state_mut().session.run("edit.undo", &json!({})).unwrap();
+        }
+        assert_eq!(h.state().session.project, before);
     }
 
     #[test]
