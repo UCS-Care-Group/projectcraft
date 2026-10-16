@@ -3,7 +3,7 @@
 //! **Everything is a command.** Each user-visible action is a [`CommandSpec`] with a stable id
 //! (`task.add`, `task.setPredecessors`), a label, a JSON Schema for its params, an [`Effect`] and a
 //! `run` function. The toolbar, the task sheet, the CLI (and later the control channel and MCP
-//! server) all call [`Session::run`], which checks params against the schema first (ADR 0004).
+//! server) all call [`Session::run`], which checks params against the schema first.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod file;
