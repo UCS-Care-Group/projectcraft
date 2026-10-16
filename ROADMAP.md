@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (CLI sweeps stale save temp files) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (duration edit on assignments of different lengths) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -92,6 +92,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | M2.5: costs: one currency per project (ISO code, default GBP, its symbol and decimal places; JPY with none and BHD with three handled), set with `project.setOptions` (`currency`, `currencySymbol`, `currencyDigits`) and in Project › Options…; changing it keeps each amount's value (no exchange rates), rounding half to even when there are fewer places; money stays whole minor units with integer maths; an assignment costs its work × the standard rate (a material its quantity × the rate) plus cost/use, rounded half to even once; a cost resource its amount; a task its assignments plus its fixed cost (`task.setFixedCost`); summaries and the project roll up; Cost (read-only, each assignment's cost in its tooltip) and Fixed Cost columns, the project total in the status bar and the CLI; overtime rate and Accrue At stored for tracking; hostile amounts saturate, never overflow; worked example from Microsoft's "Enter costs for resources"; additive file fields, validated on load (#58) |
 | 2026-10-16 | M2.3: task types and effort-driven scheduling: each task is Fixed Units (the default), Fixed Duration or Fixed Work, and each work assignment keeps its own units, work and duration (the task's is the longest); editing units, duration or work recalculates as Microsoft's table says (worked examples for all nine cells, with its own numbers); effort-driven tasks keep their work as resources are added or removed (shared in proportion to units; Fixed Units and Fixed Work change duration, Fixed Duration changes units), resources assigned together first each work the whole duration, Fixed Work is always effort-driven and summaries never are (scheduled as Fixed Duration); `task.setType` and `task.setWork` (hours, or text with a unit); `project.setOptions` takes the default task type and whether new tasks are effort-driven (off by default), shown under New tasks in Project › Options…; Type and Effort Driven columns, and the Work column can be typed into; costs follow each assignment's work (an effort-driven task's cost stays as resources are added); additive file fields (assignment `work` and `duration`, worked out on load for older files; a task whose duration isn't its longest assignment's is repaired on open, never refused); an assignment at 0% doesn't hold the duration; `cargo xtask perf` gates Resource Names with 1,000 names on a 5,000-task, 20,000-assignment plan under 100 ms (#56) |
 | 2026-10-16 | M2: `projectcraft-cli` removes the staging files a killed save left beside a project after opening it and after `--save`, as the desktop app does; one it can't remove stays, with one line on stderr, and the command still succeeds (#87) |
+| 2026-10-16 | M2: a duration typed on a task whose work assignments are of different lengths sets every one to the new duration (Fixed Units and Fixed Duration recalculate each one's work, Fixed Work each one's units); Microsoft's published pages give the rule for one assignment but not this case, so the choice is documented in the code and pinned by a worked example for all three task types (#88) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -113,3 +114,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | M2.3 task types |
 | 2026-10-16 | minor | Headline numbers refreshed for M2 |
 | 2026-10-16 | minor | CLI sweeps stale save temp files (#87) |
+| 2026-10-16 | minor | Duration edit on assignments of different lengths (#88) |

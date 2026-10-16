@@ -299,6 +299,52 @@ fn worked_example_tt18_an_assignment_at_0_percent_holds_nothing() {
     assert_eq!(again.project, s.project);
 }
 
+/// A duration typed on a task whose assignments are of different lengths: every work assignment
+/// takes the new duration, and the task type says what else moves. Microsoft's pages give the
+/// rule for one assignment (the table above; "How Project schedules tasks: Behind the scenes",
+/// https://support.microsoft.com/en-us/project/how-project-schedules-tasks-behind-the-scenes)
+/// and say what a duration is ("Duration (task field)",
+/// https://support.microsoft.com/en-us/project/duration-task-field; "Change a task duration",
+/// https://support.microsoft.com/en-us/office/change-a-task-duration-0c551218-e543-4a5a-80f5-363c5c7c4e49),
+/// but not what happens to assignments of different lengths, so this pins ProjectCraft's choice
+/// (documented on `Project::set_duration`).
+///
+/// Ann at 200% and Bob at 100%, 80 hours each: Ann's take 5 days, Bob's 10, the task 10. Typing
+/// 8 days:
+/// - Fixed Units and Fixed Duration keep the units: Ann 8 days × 200% = 128 hours, Bob 8 days ×
+///   100% = 64 hours, 192 in all.
+/// - Fixed Work keeps the work: 80 hours in 8 days is 125% for each.
+///
+/// Either way both finish with the task, at 17:00 on Wednesday 14 January.
+#[test]
+fn worked_example_tt19_a_new_duration_on_assignments_of_different_lengths() {
+    for ty in ["Fixed Units", "Fixed Duration", "Fixed Work"] {
+        let mut s = draft("Fixed Units", false);
+        s.run("assignment.add", &json!({"task": 1, "resource": 2})).unwrap();
+        s.run("assignment.setUnits", &json!({"task": 1, "resource": 1, "units": "200%"})).unwrap();
+        s.run("task.setType", &json!({"id": 1, "type": ty})).unwrap();
+        let spans: Vec<i64> = s.project.assignments_of(DRAFT).map(|a| a.duration).collect();
+        assert_eq!(spans, [5 * D, 10 * D], "{ty}: different lengths before");
+        assert_eq!(duration(&s), 10 * D);
+        s.run("task.setDuration", &json!({"id": 1, "duration": 8})).unwrap();
+        let spans: Vec<i64> = s.project.assignments_of(DRAFT).map(|a| a.duration).collect();
+        assert_eq!(spans, [8 * D, 8 * D], "{ty}: every assignment takes the new duration");
+        assert_eq!(duration(&s), 8 * D, "{ty}");
+        assert_eq!(finish(&s), at("2026-01-14", 17), "{ty}");
+        if ty == "Fixed Work" {
+            assert_eq!((work_of(&s, ANN), work_of(&s, BOB), work(&s)), (80 * H, 80 * H, 160 * H), "{ty}");
+            assert_eq!((units(&s, ANN), units(&s, BOB)), (125.0, 125.0), "{ty}");
+        } else {
+            assert_eq!((work_of(&s, ANN), work_of(&s, BOB), work(&s)), (128 * H, 64 * H, 192 * H), "{ty}");
+            assert_eq!((units(&s, ANN), units(&s, BOB)), (200.0, 100.0), "{ty}");
+        }
+        // Undo puts back the different lengths.
+        s.run("edit.undo", &json!({})).unwrap();
+        let spans: Vec<i64> = s.project.assignments_of(DRAFT).map(|a| a.duration).collect();
+        assert_eq!(spans, [5 * D, 10 * D], "{ty}: undone");
+    }
+}
+
 #[test]
 fn types_and_options_are_commands_and_bad_ones_change_nothing() {
     let mut s = draft("Fixed Units", false);
