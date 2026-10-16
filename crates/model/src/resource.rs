@@ -1,6 +1,6 @@
 //! Resources: the people, equipment, materials and costs a project's tasks use, as Microsoft
 //! Project's Resource Sheet. Each has a row ID (its place in the sheet, which renumbers) and a
-//! Unique ID (permanent, never reused); commands, and later assignments, use the Unique ID.
+//! Unique ID (permanent, never reused); commands and assignments use the Unique ID.
 //!
 //! Money is whole minor units (pence) and units are whole hundredths of a percent, so nothing here
 //! is a float and the same plan always gives the same numbers. No contact details are held.
@@ -290,7 +290,7 @@ pub fn check_money(minor: i64) -> Result<i64, ModelError> {
 /// Reads a non-negative decimal into whole units of `10^-digits`: `"12.5"` with 2 digits is 1250.
 /// Refuses more decimal places than `digits`, signs, exponents and anything over `max`. Exact:
 /// no floating point.
-fn parse_fixed(text: &str, digits: u32, max: i64) -> Option<i64> {
+pub(crate) fn parse_fixed(text: &str, digits: u32, max: i64) -> Option<i64> {
     let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
     if (whole.is_empty() && frac.is_empty()) || !whole.chars().chain(frac.chars()).all(|c| c.is_ascii_digit()) {
         return None;
@@ -307,7 +307,7 @@ fn parse_fixed(text: &str, digits: u32, max: i64) -> Option<i64> {
 }
 
 /// Writes `n` units of `10^-digits` as a decimal with exactly `digits` places.
-fn fixed_text(n: i64, digits: u32) -> String {
+pub(crate) fn fixed_text(n: i64, digits: u32) -> String {
     let scale = 10u64.saturating_pow(digits);
     let (sign, n) = (if n < 0 { "-" } else { "" }, n.unsigned_abs());
     if digits == 0 {
@@ -460,9 +460,8 @@ impl Project {
             match f {
                 ResourceField::Initials(s) => r.initials = clean(s),
                 ResourceField::Group(s) => r.group = clean(s),
-                // ponytail: no assignments exist yet, so a type change loses nothing. Once they do,
-                // changing the type of an assigned resource drops its assignments (as Microsoft
-                // Project), and the sheet asks first.
+                // Changing the type drops the resource's assignments below (as Microsoft Project);
+                // the sheet asks first.
                 ResourceField::Type(k) => r.kind = *k,
                 ResourceField::MaxUnits(u) => r.max_units = check_units(*u)?,
                 ResourceField::MaterialLabel(s) => r.material_label = clean(s),
@@ -472,21 +471,23 @@ impl Project {
                 ResourceField::AccrueAt(a) => r.accrue_at = *a,
             }
         }
+        let retyped = self.resource(id)?.kind != r.kind;
         *self.resource_mut(id)? = r;
+        if retyped {
+            self.assignments.retain(|a| a.resource != id);
+        }
         Ok(())
     }
 
-    /// Deletes resources, all or nothing: refused if any is missing. Their Unique IDs are never
-    /// handed out again.
-    ///
-    /// ponytail: there are no assignments yet. When there are, this removes each deleted
-    /// resource's assignments too, in the same edit.
+    /// Deletes resources and their assignments, all or nothing: refused if any is missing. Their
+    /// Unique IDs are never handed out again.
     pub fn delete_resources(&mut self, ids: &[ResourceId]) -> Result<(), ModelError> {
         for id in ids {
             self.resource(*id)?;
         }
         let gone: BTreeSet<ResourceId> = ids.iter().copied().collect();
         self.resources.retain(|r| !gone.contains(&r.id));
+        self.assignments.retain(|a| !gone.contains(&a.resource));
         Ok(())
     }
 
@@ -511,8 +512,9 @@ impl Project {
     }
 
     /// Refuses resources no command could have made (for a loaded file): too many, a Unique ID of
-    /// 0 or used twice, a field out of range, two with the same name. Repairs `next_resource_id`
-    /// so a Unique ID is never reused.
+    /// 0 or used twice, a field out of range, two with the same name; and assignments to a missing
+    /// task or resource ([`Project::check_assignments`]). Repairs `next_resource_id` so a Unique ID
+    /// is never reused.
     pub fn check_resources(&mut self) -> Result<(), ModelError> {
         if self.resources.len() > MAX_RESOURCES {
             return Err(ModelError::Invalid(format!("more than {MAX_RESOURCES} resources")));
@@ -529,7 +531,7 @@ impl Project {
         }
         let max = ids.last().map_or(0, |r| r.0);
         self.next_resource_id = self.next_resource_id.max(max.saturating_add(1)).max(1);
-        Ok(())
+        self.check_assignments()
     }
 }
 

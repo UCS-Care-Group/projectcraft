@@ -53,6 +53,8 @@ pub(crate) struct ResourceSheet {
     focus_editor: bool,
     down_after_edit: bool,
     clicked: Option<(ResourceId, Option<RField>, Modifiers, bool)>,
+    /// A type change waiting for the owner to agree: it drops the resource's assignments.
+    pub retype: Option<(ResourceId, Value)>,
 }
 
 /// A money amount in the project currency. ponytail: the default symbol until projects carry a currency.
@@ -176,10 +178,49 @@ impl App {
             return;
         }
         match typed(id, field, &text) {
+            // As Microsoft Project, a new type loses the resource's assignments: ask first.
+            Ok((_, params)) if field == RField::Type && self.session.project.is_assigned(id) => {
+                let new = params.get("type").and_then(Value::as_str).unwrap_or("");
+                if self.session.project.resource(id).is_ok_and(|r| r.kind.name() != new) {
+                    self.resources.retype = Some((id, params));
+                }
+            }
             Ok((cmd, params)) => {
                 self.run(cmd, params);
             }
             Err(e) => self.status = e,
+        }
+    }
+
+    /// The question before a type change that drops assignments: Change Type runs it, Cancel
+    /// (or Escape) changes nothing.
+    pub(crate) fn retype_prompt(&mut self, ctx: &egui::Context) {
+        let Some((id, params)) = self.resources.retype.take() else { return };
+        let Ok(r) = self.session.project.resource(id) else { return };
+        let count = self.session.project.assignments.iter().filter(|a| a.resource == id).count();
+        let new = params.get("type").and_then(Value::as_str).unwrap_or("").to_lowercase();
+        let t = Tokens::get(ctx);
+        let (mut change, mut cancel) = (false, false);
+        let modal = egui::Modal::new(egui::Id::new("retype_resource")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.heading(tl!("Change Resource Type"));
+            ui.add_space(6.0);
+            let text = crate::i18n::fmt(
+                tl!("{name} is assigned to {count} task(s). Making it a {type} resource removes those assignments."),
+                &[("name", &r.name), ("count", &count.to_string()), ("type", tl!(&new))],
+            );
+            ui.label(text);
+            ui.label(RichText::new(tl!("You can undo this.")).color(t.text_dim));
+            ui.add_space(10.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                cancel = ui.button(tl!("Cancel")).clicked();
+                change = ui.button(tl!("Change Type")).clicked();
+            });
+        });
+        if change {
+            self.run("resource.set", params);
+        } else if !(cancel || modal.should_close()) {
+            self.resources.retype = Some((id, params));
         }
     }
 

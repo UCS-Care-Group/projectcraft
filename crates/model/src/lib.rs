@@ -4,6 +4,7 @@
 //! Everything here is plain data with edit primitives; undo and commands live in the engine.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod assignment;
 mod duration;
 mod outline;
 mod resource;
@@ -16,6 +17,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub use assignment::{
+    Assignment, AssignmentWork, MAX_ASSIGNMENTS, MAX_NAMES_TEXT, MAX_QUANTITY, MAX_TASK_ASSIGNMENTS, Units, assignment_work, default_units,
+    parse_assignment_units, quantity_text,
+};
 pub use duration::{DurationUnit, duration_text, lag_text, parse_duration, parse_lag};
 pub use outline::{CIRCULAR_OUTLINE, MAX_OUTLINE_LEVEL, Outline};
 pub use projectcraft_time::Date;
@@ -491,6 +496,10 @@ pub struct Project {
     /// The Unique ID the next resource gets; repaired on load so none is reused.
     #[serde(default, skip_serializing_if = "is_first_id")]
     pub next_resource_id: u32,
+    /// Which resources work on which tasks, in the order they were assigned. A file without them
+    /// has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assignments: Vec<Assignment>,
     /// Hours per day and week, days per month. A file without them has the defaults (8, 40, 20).
     #[serde(default)]
     pub options: Options,
@@ -510,6 +519,7 @@ impl Project {
             next_id: 1,
             resources: Vec::new(),
             next_resource_id: 1,
+            assignments: Vec::new(),
             options: Options::default(),
         }
     }

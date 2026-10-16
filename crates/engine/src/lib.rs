@@ -480,6 +480,23 @@ fn resource_fields(v: &Value) -> Result<Vec<ResourceField>, CmdError> {
     Ok(out)
 }
 
+/// The `task` and `resource` params of an `assignment.*` command.
+fn assignment_params(v: &Value) -> Result<(TaskId, ResourceId), CmdError> {
+    let task = opt_id_param(v, "task")?.ok_or_else(|| CmdError::Params("`task` (a task's Unique ID) is required".into()))?;
+    let resource = opt_resource_param(v, "resource")?.ok_or_else(|| CmdError::Params("`resource` (a resource's Unique ID) is required".into()))?;
+    Ok((task, resource))
+}
+
+/// The `units` param read for the resource's type; `None` when absent.
+fn units_param(p: &Project, resource: ResourceId, v: &Value) -> Result<Option<model::Units>, CmdError> {
+    let Some(text) = v.get("units").and_then(Value::as_str) else { return Ok(None) };
+    Ok(Some(model::parse_assignment_units(p.resource(resource)?.kind, text)?))
+}
+
+fn units(what: &str) -> Value {
+    json!({"type": "string", "description": format!("{what}; as the Resource Names column writes them: a work resource's percent of its working time (50%), a material's quantity, fixed (5 tons) or per time (2 tons/d, with m, h, d, w or mo), or a cost resource's amount (£200)")})
+}
+
 const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "project.rename",
@@ -846,6 +863,65 @@ const COMMANDS: &[CommandSpec] = &[
             Ok(())
         },
     },
+    CommandSpec {
+        id: "assignment.add",
+        label: "Assign Resource",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "task": task_id(),
+                    "resource": resource_id(""),
+                    "units": units("absent: 100% (or the resource's Max Units if lower), one of a material's label, no cost"),
+                }),
+                &["task", "resource"],
+            )
+        },
+        run: |p, v| {
+            let (task, resource) = assignment_params(v)?;
+            let units = units_param(p, resource, v)?;
+            p.assign(task, resource, units)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "assignment.setUnits",
+        label: "Assignment Units",
+        effect: Effect::Edit,
+        schema: || object(json!({"task": task_id(), "resource": resource_id(""), "units": units("the new units")}), &["task", "resource", "units"]),
+        run: |p, v| {
+            let (task, resource) = assignment_params(v)?;
+            let units = units_param(p, resource, v)?.ok_or_else(|| CmdError::Params("`units` (text) is required".into()))?;
+            p.set_assignment_units(task, resource, units)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "assignment.remove",
+        label: "Remove Assignment",
+        effect: Effect::Edit,
+        schema: || object(json!({"task": task_id(), "resource": resource_id("")}), &["task", "resource"]),
+        run: |p, v| {
+            let (task, resource) = assignment_params(v)?;
+            p.unassign(task, resource)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.setResourceNames",
+        label: "Resource Names",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({"id": task_id(), "text": {"type": "string", "description": "the task's resources by name (not by Unique ID), as Microsoft Project's Resource Names column: Ann[50%], Bob, Concrete[2 tons/d], Travel[£200]; units as `assignment.add` takes them, absent the default. Replaces the task's assignments; empty removes them. A name that isn't a resource yet becomes a new work resource with 100% Max Units."}}),
+                &["id", "text"],
+            )
+        },
+        run: |p, v| {
+            p.set_resource_names(id_param(v)?, str_param(v, "text")?)?;
+            Ok(())
+        },
+    },
     // Undo and redo are handled by `Session::run`; they're here for their metadata.
     CommandSpec { id: "edit.undo", label: "Undo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
     CommandSpec { id: "edit.redo", label: "Redo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
@@ -869,7 +945,7 @@ pub fn sample() -> Session {
         let id = s.project.tasks.last().map_or(0, |t| t.id.0);
         let _ = s.run("task.setPredecessors", &json!({"id": id, "text": preds}));
     }
-    // Invented people and things, not assigned to anything yet.
+    // Invented people and things.
     let resources = [
         json!({"name": "Priya Shah", "group": "Facilities", "standardRate": 4500, "overtimeRate": 6000}),
         json!({"name": "Tom Okafor", "group": "IT", "maxUnits": 50, "standardRate": 5250}),
@@ -885,6 +961,18 @@ pub fn sample() -> Session {
             m.insert("id".into(), id.into());
         }
         let _ = s.run("resource.set", &r);
+    }
+    // Who does what: task Unique IDs 1–8 as added above.
+    let assigned = [
+        (1, "Priya Shah"),
+        (2, "Priya Shah[50%], Tom Okafor"),
+        (3, "Priya Shah"),
+        (5, "Tom Okafor"),
+        (6, "Removals crew[200%], Packing boxes[2 boxes/h]"),
+        (7, "Removals crew[300%], Priya Shah, Travel[£150.00]"),
+    ];
+    for (id, text) in assigned {
+        let _ = s.run("task.setResourceNames", &json!({"id": id, "text": text}));
     }
     // The sample opens with nothing to undo.
     s.undo.clear();
@@ -947,7 +1035,7 @@ mod tests {
     fn commands_take_unique_ids_that_survive_deletes_and_save() {
         for c in commands() {
             for (k, p) in (c.schema)()["properties"].as_object().unwrap() {
-                if ["id", "ids", "text", "before", "to"].contains(&k.as_str()) {
+                if ["id", "ids", "text", "before", "to", "task", "resource"].contains(&k.as_str()) {
                     assert!(p["description"].as_str().unwrap().contains("Unique ID"), "{}.{k}", c.id);
                 }
             }
@@ -1066,6 +1154,79 @@ mod tests {
             s.run("edit.undo", &json!({})).unwrap();
         }
         assert_eq!(s.project, before);
+    }
+
+    #[test]
+    fn assignment_commands_assign_change_and_remove_by_unique_id() {
+        let mut s = sample();
+        assert_eq!(s.project.resource_names(TaskId(7)), "Removals crew[300%], Priya Shah, Travel[£150.00]");
+        assert_eq!(s.project.resource_names(TaskId(5)), "Tom Okafor[50%]", "Tom's Max Units is 50%, so that is his default");
+        let before = s.project.clone();
+        s.run("assignment.add", &json!({"task": 4, "resource": 4, "units": "5 boxes"})).unwrap();
+        s.run("assignment.add", &json!({"task": 4, "resource": 1})).unwrap();
+        s.run("assignment.setUnits", &json!({"task": 4, "resource": 1, "units": "25%"})).unwrap();
+        assert_eq!(s.project.resource_names(TaskId(4)), "Packing boxes[5 boxes], Priya Shah[25%]");
+        for bad in [
+            json!({"task": 4, "resource": 1}),
+            json!({"task": 4, "resource": 2, "units": "5 boxes"}),
+            json!({"task": 4, "resource": 99}),
+            json!({"task": 99, "resource": 1}),
+        ] {
+            assert!(s.run("assignment.add", &bad).is_err(), "{bad}");
+        }
+        assert!(s.run("assignment.setUnits", &json!({"task": 4, "resource": 2, "units": "50%"})).is_err(), "not assigned");
+        assert!(s.run("assignment.setUnits", &json!({"task": 4, "resource": 1, "units": "lots"})).is_err());
+        s.run("assignment.remove", &json!({"task": 4, "resource": 4})).unwrap();
+        assert!(s.run("assignment.remove", &json!({"task": 4, "resource": 4})).is_err());
+        assert_eq!(s.project.resource_names(TaskId(4)), "Priya Shah[25%]");
+        // Dates don't move: the duration stays as entered.
+        assert_eq!(s.project.task(TaskId(4)).unwrap().duration, before.task(TaskId(4)).unwrap().duration);
+        let round = Session::load_json(&s.save_json().unwrap()).unwrap();
+        assert_eq!(round.project, s.project);
+        for _ in 0..4 {
+            s.run("edit.undo", &json!({})).unwrap();
+        }
+        assert_eq!(s.project, before, "each command is one undo step");
+    }
+
+    /// Typing an unknown name in Resource Names makes a work resource and assigns it: one command,
+    /// so one undo step takes both away.
+    #[test]
+    fn auto_create_is_one_undo_step() {
+        let mut s = sample();
+        let before = s.project.clone();
+        s.run("task.setResourceNames", &json!({"id": 4, "text": "Sam Reid[50%], Priya Shah"})).unwrap();
+        let sam = s.project.resources.last().unwrap();
+        assert_eq!((sam.name.as_str(), sam.kind, sam.max_units), ("Sam Reid", model::ResourceType::Work, model::FULL_TIME));
+        assert_eq!(s.project.resource_names(TaskId(4)), "Sam Reid[50%], Priya Shah");
+        s.run("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.project, before);
+        // A refused text makes nothing, not even the new resource.
+        assert!(s.run("task.setResourceNames", &json!({"id": 4, "text": "Sam Reid, Priya Shah[lots]"})).is_err());
+        assert_eq!(s.project, before);
+    }
+
+    #[test]
+    fn deleting_or_retyping_a_resource_drops_its_assignments_and_loads_are_checked() {
+        let mut s = sample();
+        s.run("resource.delete", &json!({"ids": [1]})).unwrap();
+        assert_eq!(s.project.resource_names(TaskId(2)), "Tom Okafor[50%]");
+        s.run("resource.set", &json!({"id": 2, "type": "Material"})).unwrap();
+        assert_eq!(s.project.resource_names(TaskId(2)), "");
+        s.run("task.delete", &json!({"ids": [7]})).unwrap();
+        assert!(s.project.assignments.iter().all(|a| a.task != TaskId(7)));
+        // A file whose assignments name a missing resource, or carry units of another type, is refused.
+        let mut v: Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
+        assert!(v["assignments"].is_array());
+        v["assignments"][0]["resource"] = json!(99);
+        assert!(Session::load_json(&v.to_string()).err().unwrap().to_string().contains("missing resource 99"));
+        let mut v: Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
+        v["assignments"][0]["units"] = json!({"cost": 5});
+        assert!(Session::load_json(&v.to_string()).is_err());
+        // A file without assignments (from before them) loads with none.
+        let mut v: Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
+        v.as_object_mut().unwrap().remove("assignments");
+        assert!(Session::load_json(&v.to_string()).unwrap().project.assignments.is_empty());
     }
 
     /// Valid params from a schema, then junk built from it: each property wrong-typed, out of

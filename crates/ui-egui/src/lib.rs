@@ -29,6 +29,7 @@ pub mod theme;
 pub mod timescale;
 
 use theme::Tokens;
+mod assign;
 mod browser;
 mod files;
 mod options;
@@ -43,14 +44,29 @@ use selection::Selection;
 enum Field {
     Name,
     Duration,
+    /// Read-only: the task's work, from its assignments.
+    Work,
     Start,
     Finish,
     Preds,
+    Resources,
     Deadline,
 }
 
-/// The editable columns, left to right.
-const FIELDS: [Field; 6] = [Field::Name, Field::Duration, Field::Start, Field::Finish, Field::Preds, Field::Deadline];
+/// The columns, left to right: each field, its heading and its width.
+const COLUMNS: [(Field, &str, f32); 8] = [
+    (Field::Name, "Task Name", NAME_W),
+    (Field::Duration, "Duration", 60.0),
+    (Field::Work, "Work", 60.0),
+    (Field::Start, "Start", 80.0),
+    (Field::Finish, "Finish", 80.0),
+    (Field::Preds, "Predecessors", 100.0),
+    (Field::Resources, "Resource Names", 170.0),
+    (Field::Deadline, "Deadline", 80.0),
+];
+
+/// The columns the cursor moves across, left to right.
+const FIELDS: [Field; 8] = [Field::Name, Field::Duration, Field::Work, Field::Start, Field::Finish, Field::Preds, Field::Resources, Field::Deadline];
 
 /// The command a typed Start or Finish issues: Start No Earlier Than or Finish No Earlier Than
 /// that date. The cell keeps showing the scheduler's date, as in Microsoft Project. A typed
@@ -189,6 +205,8 @@ pub struct App {
     pub view: View,
     /// The Resource Sheet's selection and editing.
     resources: resource_sheet::ResourceSheet,
+    /// The Assign Resources dialog, while it is open.
+    assign: Option<assign::AssignForm>,
 }
 
 const ROW_H: f32 = 22.0;
@@ -229,6 +247,7 @@ impl App {
             day_w: timescale::Preset::Days.day_w(),
             view: View::default(),
             resources: resource_sheet::ResourceSheet::default(),
+            assign: None,
         }
     }
 
@@ -292,6 +311,13 @@ impl App {
         if redo {
             self.run("edit.redo", json!({}));
         }
+        // Alt+F10: Assign Resources, as in Microsoft Project.
+        if self.view == View::GanttChart && ctx.input_mut(|i| i.consume_key(Modifiers::ALT, Key::F10)) {
+            self.open_assign_resources();
+        }
+        if self.assign.as_ref().is_some_and(|f| self.session.project.task(f.task).is_err()) {
+            self.assign = None;
+        }
         // Undo, redo or a file opened can take rows away.
         let order = self.order();
         self.sel.prune(&order, None);
@@ -321,8 +347,18 @@ impl App {
                     if ui.button(tl!("New Resource")).clicked() {
                         self.insert_resource();
                     }
-                } else if ui.button(tl!("New Task")).clicked() {
-                    self.run("task.add", json!({}));
+                } else {
+                    if ui.button(tl!("New Task")).clicked() {
+                        self.run("task.add", json!({}));
+                    }
+                    let can = self.sel.cursor.is_some();
+                    if ui
+                        .add_enabled(can, egui::Button::new(tl!("Assign Resources…")))
+                        .on_hover_text(tl!("Assign resources to the focused task (Alt+F10)"))
+                        .clicked()
+                    {
+                        self.open_assign_resources();
+                    }
                 }
                 if ui.add_enabled(self.session.can_undo(), egui::Button::new(tl!("Undo"))).clicked() {
                     self.run("edit.undo", json!({}));
@@ -362,6 +398,8 @@ impl App {
         });
         self.change_working_time(&ctx);
         self.project_options(&ctx);
+        self.assign_resources(&ctx);
+        self.retype_prompt(&ctx);
         self.unsaved_prompt(&ctx);
         self.recovery_prompt(&ctx);
         self.file_browser(&ctx);
@@ -372,8 +410,13 @@ impl App {
     /// and no other text field has the keyboard.
     fn sheet_keys(&mut self, ctx: &egui::Context) {
         let order = self.order();
-        let modal =
-            self.prompt.is_some() || self.working_time.is_some() || self.browser.is_some() || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
+        let modal = self.prompt.is_some()
+            || self.working_time.is_some()
+            || self.options.is_some()
+            || self.assign.is_some()
+            || self.resources.retype.is_some()
+            || self.browser.is_some()
+            || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
         if self.view == View::ResourceSheet {
             if self.resources.editing.is_some() || ctx.text_edit_focused() || modal {
                 return;
@@ -501,7 +544,8 @@ impl App {
         }
     }
 
-    /// A cell's text as the sheet shows it; `None` where it can't be edited (a summary's duration).
+    /// A cell's text as the sheet shows it; `None` where it can't be edited (a summary's duration,
+    /// the work).
     fn cell_text(&self, id: TaskId, field: Field) -> Option<String> {
         let p = &self.session.project;
         let t = p.task(id).ok()?;
@@ -511,9 +555,11 @@ impl App {
             Field::Name => t.name.clone(),
             Field::Duration if p.is_summary(id) => return None,
             Field::Duration => duration_text(t.duration, t.duration_unit, &p.options),
+            Field::Work => return None,
             Field::Start => date(dates.map(|d| d.start)),
             Field::Finish => date(dates.map(|d| d.finish)),
             Field::Preds => p.preds_text_rows(&t.preds),
+            Field::Resources => p.resource_names(id),
             Field::Deadline => date(t.deadline),
         })
     }
@@ -543,6 +589,14 @@ impl App {
                 }
                 Err(e) => self.status = e.to_string(),
             },
+            // Names as typed; a new name makes a work resource, and the status line says so.
+            Field::Resources => {
+                let before = self.session.project.clone();
+                if self.run("task.setResourceNames", json!({"id": id.0, "text": text})) {
+                    self.status = assign::created_message(&before, &self.session.project).unwrap_or_default();
+                }
+            }
+            Field::Work => {}
         }
     }
 
@@ -782,13 +836,14 @@ impl App {
             // ID and the indicators are narrow, fixed-width columns.
             ui.add_sized([ID_W, ROW_H], egui::Label::new(RichText::new(tl!("ID")).strong()));
             ui.add_sized([ROW_H, ROW_H], egui::Label::new(""));
-            for h in ["Task Name", "Duration", "Start", "Finish", "Predecessors", "Deadline"] {
+            for (_, h, _) in COLUMNS {
                 ui.label(RichText::new(tl!(h)).strong());
             }
             let (header, _) = ui.allocate_exact_size(Vec2::new(chart_w, timescale::TIER_H * 2.0), Sense::hover());
             timescale::header(ui, header, scale);
             ui.end_row();
             let outline = Outline::of(&self.session.project);
+            let work = self.session.project.work_by_task();
             // The ID column is the row number; commands get Unique IDs.
             for (i, id) in order.iter().copied().enumerate() {
                 let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
@@ -807,18 +862,16 @@ impl App {
                 self.take_click(ui, &r, id, None);
                 indicator(ui, dates);
                 let indent = (outline.level(i).saturating_sub(1).min(20) as f32) * INDENT_W;
-                for (field, width) in [
-                    (Field::Name, NAME_W),
-                    (Field::Duration, 60.0),
-                    (Field::Start, 80.0),
-                    (Field::Finish, 80.0),
-                    (Field::Preds, 100.0),
-                    (Field::Deadline, 80.0),
-                ] {
+                for (field, _, width) in COLUMNS {
                     let lead = if field == Field::Name { indent } else { 0.0 };
                     let value = self.cell_text(id, field);
-                    // A summary's rolled-up duration shows in days.
-                    let shown = value.clone().unwrap_or_else(|| duration_text(duration, DurationUnit::Days, &self.session.project.options));
+                    let p = &self.session.project;
+                    let shown = match &value {
+                        Some(v) => v.clone(),
+                        None if field == Field::Work => assign::work_text(work.get(&id).copied().unwrap_or(0), p),
+                        // A summary's rolled-up duration shows in days.
+                        None => duration_text(duration, DurationUnit::Days, &p.options),
+                    };
                     let inner = ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.add_space(lead);
@@ -833,7 +886,8 @@ impl App {
                     (false, 0) => Bar::Milestone,
                     (false, _) => Bar::Task,
                 };
-                gantt_bar(ui, scale, chart_w, &calendar, dates, shape, deadline);
+                let names = self.session.project.resource_names(id);
+                gantt_bar(ui, scale, chart_w, &calendar, dates, shape, deadline, &names);
                 ui.end_row();
             }
         });
@@ -898,9 +952,11 @@ impl App {
         if self.sel.cursor == Some(id) && self.field == field {
             ui.painter().rect_stroke(rect.shrink(1.0), 2.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
         }
-        if !editable {
-            r.clone().on_hover_text(tl!("A summary task's duration is rolled up from its subtasks"));
-        }
+        let r = match field {
+            Field::Work => r.on_hover_text(assign::work_lines(&self.session.project, id)),
+            _ if !editable => r.on_hover_text(tl!("A summary task's duration is rolled up from its subtasks")),
+            _ => r,
+        };
         self.take_click(ui, &r, id, Some(field));
         None
     }
@@ -942,8 +998,10 @@ enum Bar {
     Summary,
 }
 
-/// One row's chart cell: the non-working days shaded, then the task's bar and its deadline
-/// marker on the timescale.
+/// One row's chart cell: the non-working days shaded, then the task's bar, its resource names to
+/// the right of it (as Microsoft Project's default bar style), and its deadline marker on the
+/// timescale.
+#[allow(clippy::too_many_arguments)]
 fn gantt_bar(
     ui: &mut egui::Ui,
     scale: timescale::Scale,
@@ -952,6 +1010,7 @@ fn gantt_bar(
     dates: Option<projectcraft_engine::model::TaskDates>,
     shape: Bar,
     deadline: Option<Date>,
+    names: &str,
 ) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(chart_w, ROW_H), Sense::hover());
     // Through the gaps between rows too, so the shading runs top to bottom unbroken.
@@ -990,6 +1049,12 @@ fn gantt_bar(
             egui::Rect::from_min_max(egui::pos2(rect.left() + x0, rect.top() + 5.0), egui::pos2(rect.left() + x1.max(x0 + 2.0), rect.bottom() - 5.0));
         p.rect_filled(bar, 2.0, colour);
     }
+    if !names.is_empty() {
+        let gap = if shape == Bar::Milestone { ROW_H * 0.3 + 4.0 } else { 6.0 };
+        let at = egui::pos2(rect.left() + x1.max(x0 + 2.0) + gap, rect.center().y);
+        let font = egui::TextStyle::Small.resolve(ui.style());
+        p.with_clip_rect(rect).text(at, egui::Align2::LEFT_CENTER, names, font, t.text);
+    }
     if let Some(x) = marker {
         deadline_marker(p, egui::pos2(rect.left() + x, rect.top()), &t, d.deadline_missed);
     }
@@ -1026,6 +1091,7 @@ mod tests {
             ("selection.rs", include_str!("selection.rs")),
             ("resource_sheet.rs", include_str!("resource_sheet.rs")),
             ("options.rs", include_str!("options.rs")),
+            ("assign.rs", include_str!("assign.rs")),
         ] {
             let code = src.split("#[cfg(test)]").next().unwrap_or(src);
             for needle in ["Color32", "from_rgb", "from_gray", "from_black_alpha", "from_white_alpha"] {
@@ -1254,9 +1320,12 @@ mod tests {
         assert_eq!(picked(&h), [3]);
         key(&mut h, Modifiers::NONE, Key::ArrowRight);
         key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        key(&mut h, Modifiers::NONE, Key::ArrowRight);
         assert_eq!(h.state().field, Field::Start);
         key(&mut h, Modifiers::NONE, Key::ArrowLeft);
-        assert_eq!(h.state().field, Field::Duration);
+        assert_eq!(h.state().field, Field::Work);
+        key(&mut h, Modifiers::NONE, Key::F2);
+        assert!(h.state().editing.is_none(), "the work is read-only");
         assert_eq!(h.state().session.project.tasks.len(), 8, "moving about changes nothing");
     }
 
@@ -1395,5 +1464,111 @@ mod tests {
         click(&mut h, "View", Modifiers::NONE);
         click(&mut h, "Gantt Chart", Modifiers::NONE);
         assert_eq!(h.state().view, View::GanttChart);
+    }
+
+    /// Typing in Resource Names assigns by name; an unknown name becomes a work resource, the
+    /// status line says so, and one undo takes back both. The Work column shows duration × units.
+    #[test]
+    fn resource_names_are_typed_and_a_new_name_is_one_undo_step() {
+        let mut h = sheet(projectcraft_engine::sample());
+        let before = h.state().session.project.clone();
+        assert_eq!(h.state().cell_text(TaskId(2), Field::Resources).as_deref(), Some("Priya Shah[50%], Tom Okafor[50%]"));
+        // Survey: 3 days, Priya at 50% and Tom at 50%: 24 hours.
+        assert!(h.query_by_label("24h").is_some());
+        click(&mut h, "Furniture delivered", Modifiers::NONE);
+        for _ in 0..6 {
+            key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        }
+        assert_eq!(h.state().field, Field::Resources);
+        typed(&mut h, "Sam Reid[50%], Tom Okafor");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        let p = &h.state().session.project;
+        assert_eq!(p.resource_names(TaskId(4)), "Sam Reid[50%], Tom Okafor[50%]");
+        assert!(h.state().status.contains("Added Sam Reid to the Resource Sheet"), "{}", h.state().status);
+        // 10 days × (50% + 50%) = 80 hours.
+        assert!(h.query_by_label("80h").is_some());
+        key(&mut h, Modifiers::COMMAND, Key::Z);
+        assert_eq!(h.state().session.project, before, "one undo step takes back the assignment and the new resource");
+        // Text that doesn't read says why and changes nothing.
+        key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        typed(&mut h, "Packing boxes[lots]");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert!(h.state().status.contains("not a material quantity"), "{}", h.state().status);
+        assert_eq!(h.state().session.project, before);
+    }
+
+    /// Assign Resources (Alt+F10) adds, changes the units of and removes assignments of the
+    /// focused task, each one command.
+    #[test]
+    fn assign_resources_adds_removes_and_changes_units() {
+        use projectcraft_engine::model::ResourceId;
+        let mut h = sheet(projectcraft_engine::sample());
+        let before = h.state().session.project.clone();
+        click(&mut h, "Furniture delivered", Modifiers::NONE);
+        key(&mut h, Modifiers::ALT, Key::F10);
+        assert_eq!(h.state().assign.as_ref().map(|f| f.task), Some(TaskId(4)));
+        // Nothing assigned yet: the first Assign is Priya, at the default 100%.
+        h.get_all_by_label("Assign").next().unwrap().click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.project.resource_names(TaskId(4)), "Priya Shah");
+        // Packing boxes with typed units: the third unassigned row.
+        h.state_mut().assign.as_mut().unwrap().units.insert(ResourceId(4), "12 boxes".into());
+        h.run_steps(2);
+        h.get_all_by_label("Assign").nth(2).unwrap().click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.project.resource_names(TaskId(4)), "Priya Shah, Packing boxes[12 boxes]");
+        // Priya's units changed: typed into her row, then Enter.
+        h.state_mut().assign.as_mut().unwrap().units.insert(ResourceId(1), "25%".into());
+        h.run_steps(2);
+        h.get_all_by_role(egui::accesskit::Role::TextInput).next().unwrap().focus();
+        h.run_steps(1);
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        assert_eq!(h.state().session.project.resource_names(TaskId(4)), "Priya Shah[25%], Packing boxes[12 boxes]");
+        // Units that don't read: refused with the reason, nothing changes.
+        let now = h.state().session.project.clone();
+        h.state_mut().assign.as_mut().unwrap().units.insert(ResourceId(2), "lots".into());
+        h.run_steps(2);
+        h.get_all_by_label("Assign").next().unwrap().click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.project, now);
+        assert!(h.state().status.contains("not a percentage"), "{}", h.state().status);
+        h.get_all_by_label("Remove").next().unwrap().click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.project.resource_names(TaskId(4)), "Packing boxes[12 boxes]");
+        h.get_by_label("Close").click();
+        h.run_steps(2);
+        assert!(h.state().assign.is_none());
+        for _ in 0..4 {
+            key(&mut h, Modifiers::COMMAND, Key::Z);
+        }
+        assert_eq!(h.state().session.project, before, "four commands, four undo steps");
+    }
+
+    /// Changing an assigned resource's type asks first: Cancel keeps everything, Change Type
+    /// drops its assignments.
+    #[test]
+    fn changing_an_assigned_resources_type_asks_first() {
+        use projectcraft_engine::model::{ResourceId, ResourceType};
+        let mut h = sheet(projectcraft_engine::sample());
+        click(&mut h, "View", Modifiers::NONE);
+        click(&mut h, "Resource Sheet", Modifiers::NONE);
+        let before = h.state().session.project.clone();
+        h.state_mut().commit_resource(ResourceId(2), resource_sheet::RField::Type, "Material".into());
+        h.run_steps(3);
+        assert!(h.state().resources.retype.is_some());
+        assert!(h.query_by_label_contains("removes those assignments").is_some());
+        click(&mut h, "Cancel", Modifiers::NONE);
+        assert_eq!(h.state().session.project, before);
+        h.state_mut().commit_resource(ResourceId(2), resource_sheet::RField::Type, "Material".into());
+        h.run_steps(3);
+        click(&mut h, "Change Type", Modifiers::NONE);
+        assert_eq!(h.state().session.project.resource(ResourceId(2)).unwrap().kind, ResourceType::Material);
+        assert!(!h.state().session.project.is_assigned(ResourceId(2)));
+        // A resource with no assignments changes type without a question.
+        h.state_mut().commit_resource(ResourceId(2), resource_sheet::RField::Type, "Cost".into());
+        h.run_steps(3);
+        assert!(h.state().resources.retype.is_none());
+        assert_eq!(h.state().session.project.resource(ResourceId(2)).unwrap().kind, ResourceType::Cost);
     }
 }

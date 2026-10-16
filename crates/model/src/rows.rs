@@ -91,6 +91,7 @@ impl Project {
         }
         let gone: BTreeSet<TaskId> = self.tasks.iter().zip(&doomed).filter(|(_, d)| **d).map(|(t, _)| t.id).collect();
         self.tasks.retain(|t| !gone.contains(&t.id));
+        self.assignments.retain(|a| !gone.contains(&a.task));
         for t in &mut self.tasks {
             t.preds.retain(|l| !gone.contains(&l.pred));
         }
