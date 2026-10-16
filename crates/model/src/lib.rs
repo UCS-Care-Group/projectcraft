@@ -395,9 +395,10 @@ impl Project {
             .collect()
     }
 
-    /// Replaces a task's predecessors, refusing links to missing tasks, to itself, or that close a loop.
+    /// Replaces a task's predecessors, refusing links to missing tasks, to itself, between a
+    /// summary and its own subtask, or that close a loop.
     pub fn set_preds(&mut self, id: TaskId, preds: Vec<Link>) -> Result<(), ModelError> {
-        self.check_summary_links(id, !preds.is_empty())?;
+        self.task(id)?;
         for l in &preds {
             self.task(l.pred)?;
             if l.pred == id {
@@ -405,6 +406,7 @@ impl Project {
             }
             check_days(l.lag.abs())?;
         }
+        self.check_outline_links(id, &preds)?;
         let old = std::mem::replace(&mut self.task_mut(id)?.preds, preds);
         if let Err(e) = schedule::order(self) {
             self.task_mut(id)?.preds = old;

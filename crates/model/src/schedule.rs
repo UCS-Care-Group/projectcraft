@@ -19,17 +19,28 @@
 //! Summary tasks ([`Outline`]) are rolled up, not scheduled: a summary starts at its earliest
 //! subtask's start and finishes at its latest subtask's finish, and its duration is the working
 //! days between. Each subtask comes before its summary in [`order`], so a summary's dates are
-//! known before its successors are scheduled. A summary's own links and constraint are not used
-//! yet (the hold on its subtasks is #8), and its driver is left as the project start. The roll-up
-//! steps are marked "Roll-up".
+//! known before its successors are scheduled. The roll-up steps are marked "Roll-up".
 //!
-//! ponytail: schedules forward from the project start, with no actual progress and no resource
-//! levelling; each is its own step on the roadmap. A Must Start On before the project start is
-//! held at the project start.
+//! A summary's own links and constraint (Project allows both:
+//! https://learn.microsoft.com/en-us/archive/technet-wiki/29569.ms-project-linking-andor-assigning-resources-to-summary-tasks)
+//! give it a **hold**: the earliest any of its subtasks may start, worked out as for a task (links,
+//! then the constraint) and never earlier than its own summary's hold. One forward pass does it:
+//! the hold is a node of its own in [`order`], after the summary's predecessors and before its
+//! subtasks. A subtask held later than its own links is driven by [`Driver::ParentSummary`]. In
+//! the backward pass a summary's late start and finish (from its subtasks) bound its predecessors,
+//! and a hard constraint on a summary caps the late finish of every subtask. A link between a
+//! summary and one of its own subtasks is a loop through the outline, so [`order`] refuses it.
+//!
+//! ponytail: a finish-type link or constraint on a summary (FF, SF, Finish No Earlier/Later Than,
+//! Must Finish On) needs the summary's duration before its subtasks are scheduled; it takes the
+//! rolled-up duration from a first pass without those holds, so a hold that changes the duration
+//! (a subtask's own link or constraint) can leave the finish a little off the date. Schedules
+//! forward from the project start, with no actual progress and no resource levelling; each is its
+//! own step on the roadmap. A Must Start On before the project start is held at the project start.
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{Constraint, Date, LinkKind, ModelError, Outline, Project, TaskId};
+use crate::{Constraint, Date, LinkKind, ModelError, Outline, Project, Task, TaskId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskDates {
@@ -57,6 +68,9 @@ pub enum Driver {
     /// Its constraint: a Start/Finish No Earlier Than date later than the links, a No Later Than
     /// date holding it earlier, or a Must Start/Finish On date.
     Constraint,
+    /// The hold of a summary it sits in (by Unique ID): the summary whose own link or constraint
+    /// allows no earlier start, the innermost when several tie.
+    ParentSummary(TaskId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,32 +81,83 @@ pub struct Schedule {
     pub rolled_up: BTreeMap<TaskId, i64>,
 }
 
-/// Task indices in an order where every predecessor comes before its successors, and every
-/// subtask before its summary.
+/// The outline as the scheduler uses it: each row's direct subtasks, its summary, and where its
+/// subtree ends.
+struct Tree {
+    kids: Vec<Vec<usize>>,
+    parent: Vec<Option<usize>>,
+    outline: Outline,
+}
+
+impl Tree {
+    fn of(p: &Project) -> Tree {
+        let outline = Outline::of(p);
+        let kids = outline.children();
+        let mut parent = vec![None; kids.len()];
+        for (s, ks) in kids.iter().enumerate() {
+            for &k in ks {
+                if let Some(x) = parent.get_mut(k) {
+                    *x = Some(s);
+                }
+            }
+        }
+        Tree { kids, parent, outline }
+    }
+
+    fn summary(&self, i: usize) -> Option<&[usize]> {
+        self.kids.get(i).map(Vec::as_slice).filter(|k| !k.is_empty())
+    }
+
+    fn parent(&self, i: usize) -> Option<usize> {
+        self.parent.get(i).copied().flatten()
+    }
+
+    /// The rows below a summary that aren't summaries themselves, at any depth.
+    fn leaves(&self, s: usize) -> impl Iterator<Item = usize> + '_ {
+        (s + 1..self.outline.subtree_end(s)).filter(|&r| self.summary(r).is_none())
+    }
+}
+
+/// Nodes in an order where every predecessor comes before its successors and every subtask before
+/// its summary. Nodes `0..n` are the tasks (by row); node `n + s` is summary `s`'s hold. A
+/// summary's predecessors come before its hold, its own summary's hold before its hold, and its
+/// hold before each of its subtasks.
 pub(crate) fn order(p: &Project) -> Result<Vec<usize>, ModelError> {
+    order_with(p, &Tree::of(p))
+}
+
+fn order_with(p: &Project, tree: &Tree) -> Result<Vec<usize>, ModelError> {
+    let n = p.tasks.len();
     let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
-    let mut waiting: Vec<usize> = p.tasks.iter().map(|t| t.preds.iter().filter(|l| index.contains_key(&l.pred)).count()).collect();
-    let mut succs: Vec<Vec<usize>> = vec![Vec::new(); p.tasks.len()];
+    let mut waiting = vec![0usize; 2 * n];
+    let mut succs: Vec<Vec<usize>> = vec![Vec::new(); 2 * n];
+    let mut edge = |from: usize, to: usize| {
+        if let (Some(w), Some(s)) = (waiting.get_mut(to), succs.get_mut(from)) {
+            *w += 1;
+            s.push(to);
+        }
+    };
     for (i, t) in p.tasks.iter().enumerate() {
+        let kids = tree.summary(i);
         for l in &t.preds {
-            if let Some(&j) = index.get(&l.pred)
-                && let Some(s) = succs.get_mut(j)
-            {
-                s.push(i);
+            if let Some(&j) = index.get(&l.pred) {
+                // A summary's predecessors feed its hold.
+                edge(j, if kids.is_some() { n + i } else { i });
+            }
+        }
+        if let Some(kids) = kids {
+            if let Some(up) = tree.parent(i) {
+                edge(n + up, n + i);
+            }
+            for &k in kids {
+                // Roll-up: a summary waits for its subtasks. Its hold comes before them.
+                edge(k, i);
+                edge(n + i, k);
             }
         }
     }
-    // Roll-up: a summary waits for its subtasks.
-    for (summary, kids) in Outline::of(p).children().into_iter().enumerate() {
-        for k in kids {
-            if let (Some(w), Some(s)) = (waiting.get_mut(summary), succs.get_mut(k)) {
-                *w += 1;
-                s.push(summary);
-            }
-        }
-    }
-    let mut ready: Vec<usize> = (0..p.tasks.len()).filter(|&i| waiting.get(i) == Some(&0)).rev().collect();
-    let mut out = Vec::with_capacity(p.tasks.len());
+    let mut ready: Vec<usize> = (0..2 * n).filter(|&i| waiting.get(i) == Some(&0)).rev().collect();
+    let mut out = Vec::with_capacity(2 * n);
     while let Some(i) = ready.pop() {
         out.push(i);
         for &s in succs.get(i).into_iter().flatten() {
@@ -104,10 +169,13 @@ pub(crate) fn order(p: &Project) -> Result<Vec<usize>, ModelError> {
             }
         }
     }
-    if out.len() == p.tasks.len() {
+    if out.len() == 2 * n {
         return Ok(out);
     }
-    let stuck = (0..p.tasks.len()).find(|i| waiting.get(*i).is_some_and(|w| *w > 0)).and_then(|i| p.tasks.get(i)).map_or(TaskId(0), |t| t.id);
+    let stuck = (0..2 * n)
+        .find(|i| waiting.get(*i).is_some_and(|w| *w > 0))
+        .and_then(|i| p.tasks.get(i.checked_sub(n).unwrap_or(i)))
+        .map_or(TaskId(0), |t| t.id);
     Err(ModelError::Cycle(stuck))
 }
 
@@ -126,95 +194,194 @@ fn finish_offset(p: &Project, cd: Date) -> i64 {
     p.calendar.workdays_between(p.start, cd) + i64::from(p.calendar.is_workday(cd))
 }
 
-pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
-    let order = order(p)?;
+/// The early dates from one forward pass, by row.
+struct Forward {
+    es: Vec<i64>,
+    ef: Vec<i64>,
+    /// Early start for slack: where the links put the task before a hard constraint held it.
+    early: Vec<i64>,
+    conflict: Vec<bool>,
+    driver: Vec<Driver>,
+}
+
+/// Where a task's links put its start, given its duration `dur`, and which link did it.
+fn link_start(t: &Task, index: &HashMap<TaskId, usize>, es: &[i64], ef: &[i64], dur: i64) -> (i64, Driver) {
+    let mut start = 0i64;
+    let mut why = Driver::ProjectStart;
+    for l in &t.preds {
+        let Some(&j) = index.get(&l.pred) else { continue };
+        let (pes, pef) = (es.get(j).copied().unwrap_or(0), ef.get(j).copied().unwrap_or(0));
+        let lag = l.lag.clamp(-crate::MAX_DAYS, crate::MAX_DAYS);
+        let s = match l.kind {
+            LinkKind::FS => pef + lag,
+            LinkKind::SS => pes + lag,
+            LinkKind::FF => pef + lag - dur,
+            LinkKind::SF => pes + lag - dur,
+        };
+        if s > start || (s == start && why == Driver::ProjectStart) {
+            (start, why) = (s, Driver::Link(l.pred));
+        }
+    }
+    (start, why)
+}
+
+/// What a constraint makes of a start the links put at `start` (driven by `why`), for a task of
+/// `dur` days: the start it is held at, its early start for slack, what drove it, and whether a
+/// link can't be honoured.
+fn constrain(p: &Project, c: Constraint, start: i64, why: Driver, dur: i64) -> (i64, i64, Driver, bool) {
+    // Where the links (and a No Earlier Than date) put it; then what a hard constraint makes of it.
+    let natural = match c {
+        Constraint::StartNoEarlierThan(cd) => start.max(start_offset(p, cd)),
+        Constraint::FinishNoEarlierThan(cd) => start.max(finish_offset(p, cd) - dur),
+        _ => start,
+    };
+    let must = matches!(c, Constraint::MustStartOn(_) | Constraint::MustFinishOn(_));
+    let held = match c {
+        Constraint::StartNoLaterThan(cd) => natural.min(start_offset(p, cd)),
+        Constraint::FinishNoLaterThan(cd) => natural.min(finish_offset(p, cd) - dur),
+        Constraint::MustStartOn(cd) => start_offset(p, cd),
+        Constraint::MustFinishOn(cd) => finish_offset(p, cd) - dur,
+        _ => natural,
+    }
+    .max(0);
+    let why = if natural > start || held != natural || must { Driver::Constraint } else { why };
+    // Must Start/Finish On set the early dates too (ES = CD); the No Later Than types leave them.
+    let soft_early = if must { held } else { natural };
+    (held, soft_early, why, start > held)
+}
+
+/// One forward pass. `sdur` is each summary's duration as its finish-type links and constraint
+/// see it.
+fn forward(p: &Project, tree: &Tree, order: &[usize], dur: &[i64], sdur: &[i64]) -> Forward {
     let n = p.tasks.len();
     let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
-    let kids = Outline::of(p).children();
-    let summary = |i: usize| kids.get(i).filter(|k| !k.is_empty());
-    let dur: Vec<i64> = p.tasks.iter().map(|t| t.duration.clamp(0, crate::MAX_DAYS)).collect();
     let d = |i: usize| dur.get(i).copied().unwrap_or(0);
-
-    // Forward pass. Offsets stay small: at most MAX_TASKS chains of MAX_DAYS-bounded steps fit in i64.
-    let (mut es, mut ef) = (vec![0i64; n], vec![0i64; n]);
-    // Early start for slack: where the links put the task before a hard constraint held it.
-    let mut early = vec![0i64; n];
-    let mut conflict = vec![false; n];
-    let mut driver = vec![Driver::ProjectStart; n];
-    for &i in &order {
-        let Some(t) = p.tasks.get(i) else { continue };
-        if let Some(k) = summary(i) {
-            roll_up(k, &mut es, &mut ef, i);
-            if let (Some(e), Some(&s)) = (early.get_mut(i), es.get(i)) {
-                *e = s;
+    let id = |i: usize| p.tasks.get(i).map_or(TaskId(0), |t| t.id);
+    // Offsets stay small: at most MAX_TASKS chains of MAX_DAYS-bounded steps fit in i64.
+    let mut f = Forward { es: vec![0; n], ef: vec![0; n], early: vec![0; n], conflict: vec![false; n], driver: vec![Driver::ProjectStart; n] };
+    // Each summary's hold, and the summary whose own link or constraint set it (none: the project start).
+    let mut hold = vec![0i64; n];
+    let mut source: Vec<Option<usize>> = vec![None; n];
+    // A subtask's start from its summary's hold, if that is later than `start`.
+    let held_by = |hold: &[i64], source: &[Option<usize>], i: usize, start: i64| {
+        let up = tree.parent(i)?;
+        let h = hold.get(up).copied().unwrap_or(0);
+        (h > start).then(|| (h, source.get(up).copied().flatten()))
+    };
+    for &node in order {
+        if let Some(s) = node.checked_sub(n) {
+            // A summary's hold: its links, at least its own summary's hold, then its constraint.
+            let Some(t) = p.tasks.get(s).filter(|_| tree.summary(s).is_some()) else { continue };
+            let ds = sdur.get(s).copied().unwrap_or(0);
+            let (mut start, mut why) = link_start(t, &index, &f.es, &f.ef, ds);
+            let mut src = Some(s);
+            if let Some((h, up_src)) = held_by(&hold, &source, s, start) {
+                (start, src) = (h, up_src);
+                why = up_src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(id(u)));
+            }
+            let (held, _, why, conflict) = constrain(p, t.constraint, start, why, ds);
+            if why == Driver::ProjectStart {
+                src = None;
+            } else if matches!(why, Driver::Link(_) | Driver::Constraint) {
+                src = Some(s);
+            }
+            if let (Some(h), Some(sr), Some(w), Some(c)) = (hold.get_mut(s), source.get_mut(s), f.driver.get_mut(s), f.conflict.get_mut(s)) {
+                *h = held;
+                *sr = src;
+                *w = why;
+                *c = conflict;
             }
             continue;
         }
-        let mut start = 0i64;
-        let mut why = Driver::ProjectStart;
-        for l in &t.preds {
-            let Some(&j) = index.get(&l.pred) else { continue };
-            let (pes, pef) = (es.get(j).copied().unwrap_or(0), ef.get(j).copied().unwrap_or(0));
-            let lag = l.lag.clamp(-crate::MAX_DAYS, crate::MAX_DAYS);
-            let s = match l.kind {
-                LinkKind::FS => pef + lag,
-                LinkKind::SS => pes + lag,
-                LinkKind::FF => pef + lag - d(i),
-                LinkKind::SF => pes + lag - d(i),
+        let i = node;
+        let Some(t) = p.tasks.get(i) else { continue };
+        if let Some(k) = tree.summary(i) {
+            roll_up(k, &mut f.es, &mut f.ef, i);
+            let (s, e) = (f.es.get(i).copied().unwrap_or(0), f.ef.get(i).copied().unwrap_or(0));
+            // The subtasks' own links can still take the summary past a No Later Than or Must date.
+            let missed = match t.constraint {
+                Constraint::StartNoLaterThan(cd) => s > start_offset(p, cd),
+                Constraint::FinishNoLaterThan(cd) => e > finish_offset(p, cd),
+                Constraint::MustStartOn(cd) => s > start_offset(p, cd),
+                Constraint::MustFinishOn(cd) => e > finish_offset(p, cd),
+                _ => false,
             };
-            if s > start || (s == start && why == Driver::ProjectStart) {
-                (start, why) = (s, Driver::Link(l.pred));
+            if let (Some(a), Some(c)) = (f.early.get_mut(i), f.conflict.get_mut(i)) {
+                *a = s;
+                *c |= missed;
             }
+            continue;
         }
-        // Where the links (and a No Earlier Than date) put it; then what a hard constraint makes of it.
-        let natural = match t.constraint {
-            Constraint::StartNoEarlierThan(cd) => start.max(start_offset(p, cd)),
-            Constraint::FinishNoEarlierThan(cd) => start.max(finish_offset(p, cd) - d(i)),
-            _ => start,
-        };
-        let held = match t.constraint {
-            Constraint::StartNoLaterThan(cd) => natural.min(start_offset(p, cd)),
-            Constraint::FinishNoLaterThan(cd) => natural.min(finish_offset(p, cd) - d(i)),
-            Constraint::MustStartOn(cd) => start_offset(p, cd),
-            Constraint::MustFinishOn(cd) => finish_offset(p, cd) - d(i),
-            _ => natural,
+        let (mut start, mut why) = link_start(t, &index, &f.es, &f.ef, d(i));
+        if let Some((h, src)) = held_by(&hold, &source, i, start) {
+            start = h;
+            why = src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(id(u)));
         }
-        .max(0);
-        if natural > start || held != natural || matches!(t.constraint, Constraint::MustStartOn(_) | Constraint::MustFinishOn(_)) {
-            why = Driver::Constraint;
-        }
-        // Must Start/Finish On set the early dates too (ES = CD); the No Later Than types leave them.
-        let soft_early = if matches!(t.constraint, Constraint::MustStartOn(_) | Constraint::MustFinishOn(_)) { held } else { natural };
+        let (held, soft_early, why, conflict) = constrain(p, t.constraint, start, why, d(i));
         if let (Some(a), Some(b), Some(e), Some(c), Some(w)) =
-            (es.get_mut(i), ef.get_mut(i), early.get_mut(i), conflict.get_mut(i), driver.get_mut(i))
+            (f.es.get_mut(i), f.ef.get_mut(i), f.early.get_mut(i), f.conflict.get_mut(i), f.driver.get_mut(i))
         {
             *a = held;
             *b = held + d(i);
             *e = soft_early;
-            *c = start > held;
+            *c = conflict;
             *w = why;
         }
     }
+    f
+}
+
+pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
+    let tree = Tree::of(p);
+    let order = order_with(p, &tree)?;
+    let n = p.tasks.len();
+    let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+    let summary = |i: usize| tree.summary(i);
+    let dur: Vec<i64> = p.tasks.iter().map(|t| t.duration.clamp(0, crate::MAX_DAYS)).collect();
+
+    // Forward pass. A summary's finish-type link or constraint takes its duration from a first pass.
+    let finish_type = |t: &Task| {
+        matches!(t.constraint, Constraint::FinishNoEarlierThan(_) | Constraint::FinishNoLaterThan(_) | Constraint::MustFinishOn(_))
+            || t.preds.iter().any(|l| matches!(l.kind, LinkKind::FF | LinkKind::SF))
+    };
+    let mut fw = forward(p, &tree, &order, &dur, &vec![0; n]);
+    if p.tasks.iter().enumerate().any(|(i, t)| summary(i).is_some() && finish_type(t)) {
+        let sdur: Vec<i64> = fw.ef.iter().zip(&fw.es).map(|(f, s)| f - s).collect();
+        fw = forward(p, &tree, &order, &dur, &sdur);
+    }
+    let Forward { es, ef, early, conflict, driver } = fw;
     let end = ef.iter().copied().max().unwrap_or(0);
     // Roll-up: from here on a summary's duration is its rolled-up one.
     let dur: Vec<i64> =
-        (0..n).map(|i| if summary(i).is_some() { ef.get(i).copied().unwrap_or(0) - es.get(i).copied().unwrap_or(0) } else { d(i) }).collect();
+        (0..n)
+            .map(|i| {
+                if summary(i).is_some() {
+                    ef.get(i).copied().unwrap_or(0) - es.get(i).copied().unwrap_or(0)
+                } else {
+                    dur.get(i).copied().unwrap_or(0)
+                }
+            })
+            .collect();
     let d = |i: usize| dur.get(i).copied().unwrap_or(0);
 
     // Backward pass.
     let mut lf = vec![end; n];
-    for &i in order.iter().rev() {
-        let Some(t) = p.tasks.get(i) else { continue };
-        let my_lf = lf.get(i).copied().unwrap_or(end);
-        // Roll-up: a summary's successors hold back each of its subtasks.
-        if let Some(k) = summary(i) {
-            for &c in k {
-                if let Some(x) = lf.get_mut(c) {
-                    *x = (*x).min(my_lf);
-                }
+    for &node in order.iter().rev() {
+        if let Some(s) = node.checked_sub(n) {
+            // A summary's hold: every subtask is final here, so the summary's late start and
+            // finish (rolled up from them) bound its predecessors.
+            let Some(t) = p.tasks.get(s) else { continue };
+            if t.preds.is_empty() || summary(s).is_none() {
+                continue;
             }
+            let my_lf = tree.leaves(s).filter_map(|r| lf.get(r).copied()).max().unwrap_or(end);
+            let my_ls = tree.leaves(s).filter_map(|r| lf.get(r).map(|x| x - d(r))).min().unwrap_or(my_lf);
+            bound_preds(t, &index, &mut lf, my_ls, my_lf, &d);
             continue;
         }
+        let i = node;
+        let Some(t) = p.tasks.get(i) else { continue };
+        let my_lf = lf.get(i).copied().unwrap_or(end);
         // A hard constraint caps the late finish: LS = CD (SNLT, MSO), LF = CD (FNLT, MFO).
         let cap = match t.constraint {
             Constraint::StartNoLaterThan(cd) => start_offset(p, cd) + d(i),
@@ -223,23 +390,19 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
             _ => end,
         };
         let my_lf = my_lf.min(cap);
+        // Roll-up: a summary's successors and constraint hold back each of its subtasks.
+        if let Some(k) = summary(i) {
+            for &c in k {
+                if let Some(x) = lf.get_mut(c) {
+                    *x = (*x).min(my_lf);
+                }
+            }
+            continue;
+        }
         if let Some(x) = lf.get_mut(i) {
             *x = my_lf;
         }
-        let my_ls = my_lf - d(i);
-        for l in &t.preds {
-            let Some(&j) = index.get(&l.pred) else { continue };
-            let lag = l.lag.clamp(-crate::MAX_DAYS, crate::MAX_DAYS);
-            let bound = match l.kind {
-                LinkKind::FS => my_ls - lag,
-                LinkKind::SS => my_ls - lag + d(j),
-                LinkKind::FF => my_lf - lag,
-                LinkKind::SF => my_lf - lag + d(j),
-            };
-            if let Some(x) = lf.get_mut(j) {
-                *x = (*x).min(bound);
-            }
-        }
+        bound_preds(t, &index, &mut lf, my_lf - d(i), my_lf, &d);
     }
 
     let mut ls: Vec<i64> = (0..n).map(|i| lf.get(i).copied().unwrap_or(end) - d(i)).collect();
@@ -281,6 +444,23 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     }
     let rolled_up = (0..n).filter(|&i| summary(i).is_some()).filter_map(|i| p.tasks.get(i).map(|t| (t.id, d(i)))).collect();
     Ok(Schedule { tasks, finish: last(0, end)?, rolled_up })
+}
+
+/// The late finish each of a task's predecessors may have, given the task's late start and finish.
+fn bound_preds(t: &Task, index: &HashMap<TaskId, usize>, lf: &mut [i64], my_ls: i64, my_lf: i64, d: &impl Fn(usize) -> i64) {
+    for l in &t.preds {
+        let Some(&j) = index.get(&l.pred) else { continue };
+        let lag = l.lag.clamp(-crate::MAX_DAYS, crate::MAX_DAYS);
+        let bound = match l.kind {
+            LinkKind::FS => my_ls - lag,
+            LinkKind::SS => my_ls - lag + d(j),
+            LinkKind::FF => my_lf - lag,
+            LinkKind::SF => my_lf - lag + d(j),
+        };
+        if let Some(x) = lf.get_mut(j) {
+            *x = (*x).min(bound);
+        }
+    }
 }
 
 /// Roll-up: a summary's start is its subtasks' earliest, its finish their latest. `start` and
@@ -409,5 +589,40 @@ mod tests {
         p.add_task("A", 1).unwrap();
         p.calendar.working = [false; 7];
         assert!(schedule(&p).is_err());
+    }
+
+    proptest::proptest! {
+        /// Any outline with any links and constraints (as a damaged file could hold them, loops and
+        /// summary-to-own-subtask links included) schedules or reports an error, never panics, and
+        /// gives the same dates twice.
+        #[test]
+        fn summaries_with_links_and_constraints_never_panic(
+            levels in proptest::collection::vec(0u32..5, 1..10),
+            links in proptest::collection::vec((0usize..10, 0u32..12, 0u8..4, -3i64..4), 0..12),
+            constraints in proptest::collection::vec((0usize..10, 0u8..7, 0i64..30), 0..5),
+        ) {
+            let mut p = Project::new("t", date("2026-01-05"));
+            for (i, l) in levels.iter().enumerate() {
+                let id = p.add_task(format!("T{i}"), (i % 4) as i64).unwrap();
+                p.task_mut(id).unwrap().outline_level = *l;
+            }
+            let ids: Vec<TaskId> = p.tasks.iter().map(|t| t.id).collect();
+            let kinds = [LinkKind::FS, LinkKind::SS, LinkKind::FF, LinkKind::SF];
+            for (succ, pred, kind, lag) in links {
+                if let Some(&id) = ids.get(succ) {
+                    p.task_mut(id).unwrap().preds.push(crate::Link { pred: TaskId(pred), kind: kinds[usize::from(kind)], lag });
+                }
+            }
+            for (row, ty, day) in constraints {
+                let d = date("2026-01-01").add_days(day).unwrap();
+                let c = [Constraint::Asap, Constraint::StartNoEarlierThan(d), Constraint::FinishNoEarlierThan(d), Constraint::StartNoLaterThan(d),
+                    Constraint::FinishNoLaterThan(d), Constraint::MustStartOn(d), Constraint::MustFinishOn(d)][usize::from(ty)];
+                if let Some(&id) = ids.get(row) {
+                    p.task_mut(id).unwrap().constraint = c;
+                }
+            }
+            let first = schedule(&p);
+            proptest::prop_assert_eq!(&first, &schedule(&p));
+        }
     }
 }

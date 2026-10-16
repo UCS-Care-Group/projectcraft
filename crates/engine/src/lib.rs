@@ -403,7 +403,6 @@ const COMMANDS: &[CommandSpec] = &[
             };
             let c = model::Constraint::from_code(str_param(v, "type")?, date)?;
             let id = id_param(v)?;
-            p.check_summary_constraint(id, c)?;
             p.task_mut(id)?.constraint = c;
             Ok(())
         },

@@ -82,25 +82,22 @@ fn a_summary_duration_cannot_be_set_and_its_subtasks_drive_it() {
 }
 
 #[test]
-fn links_and_constraints_on_summaries_wait_for_8() {
+fn a_summary_takes_links_both_ways_but_not_to_its_own_subtasks() {
     let mut s = rows();
     s.run("task.add", &json!({"name": "C", "duration": 1})).unwrap();
     s.run("task.indent", &json!({"ids": [2, 3]})).unwrap();
-    // A summary as predecessor works: C follows Phase's finish, Friday 9, on Monday 12.
+    // A summary as predecessor: C follows Phase's finish, Friday 9, on Monday 12.
     s.run("task.setPredecessors", &json!({"id": 4, "text": "1"})).unwrap();
     assert_eq!(start_finish(&s, 4), (date("2026-01-12"), date("2026-01-12")));
-    // Predecessors or a constraint on a summary (the hold on its subtasks) are refused for now.
-    let e = s.run("task.setPredecessors", &json!({"id": 1, "text": "4"})).unwrap_err().to_string();
-    assert!(e.contains("aren't supported yet"), "{e}");
-    let e = s.run("task.setConstraint", &json!({"id": 1, "type": "SNET", "date": "2026-01-12"})).unwrap_err().to_string();
-    assert!(e.contains("aren't supported yet"), "{e}");
     // C, following Phase, can't become one of its subtasks: a circular relationship.
     assert_eq!(s.run("task.indent", &json!({"ids": [4]})).unwrap_err().to_string(), CIRCULAR_OUTLINE);
-    // Unlinked, C joins Phase; one more level would make B (which has a predecessor) a summary: refused too.
+    // Unlinked, C joins Phase; one more level makes B, which follows A, a summary over C.
     s.run("task.setPredecessors", &json!({"id": 4, "text": ""})).unwrap();
     s.run("task.indent", &json!({"ids": [4]})).unwrap();
-    let e = s.run("task.indent", &json!({"ids": [4]})).unwrap_err().to_string();
-    assert!(e.contains("has predecessors"), "{e}");
+    s.run("task.indent", &json!({"ids": [4]})).unwrap();
+    assert!(s.project.is_summary(TaskId(3)));
+    // B's link from A now holds C: Thursday 8.
+    assert_eq!(start_finish(&s, 4), (date("2026-01-08"), date("2026-01-08")));
 }
 
 /// Worked example 10's shape: indenting a task under its own linked predecessor is refused.
