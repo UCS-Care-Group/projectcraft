@@ -123,12 +123,15 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
 fn replace_file(path: &Path, bak: bool, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     let tmp = sibling(path, ".tmp");
     let result = (|| {
-        let mut f = File::create(&tmp)?;
+        let mut f = create_private(&tmp)?;
         write(&mut f)?;
         f.sync_all()?;
         drop(f);
         if bak && path.exists() {
-            fs::copy(path, sibling(path, ".bak"))?;
+            // Copied into a file created owner-only, so the `.bak` is never readable by others.
+            let mut from = File::open(path)?;
+            let mut to = create_private(&sibling(path, ".bak"))?;
+            io::copy(&mut from, &mut to)?;
         }
         fs::rename(&tmp, path)
     })();
@@ -143,6 +146,36 @@ fn replace_file(path: &Path, bak: bool, write: impl FnOnce(&mut File) -> io::Res
         let _ = d.sync_all();
     }
     Ok(())
+}
+
+/// Creates (or truncates) `path` for writing, readable and writable by the owner only (0600 on
+/// Unix, even when the file already existed with wider permissions). Elsewhere, the platform default.
+fn create_private(path: &Path) -> io::Result<File> {
+    let mut options = File::options();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let f = options.open(path)?;
+    // `mode` only applies to a new file; an existing one (a stale temp, an old `.bak`) is tightened.
+    #[cfg(unix)]
+    f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    Ok(f)
+}
+
+/// Writes `bytes` to `path`, owner-only (0600) on Unix. For small app files such as settings.
+pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut f = create_private(path)?;
+    f.write_all(bytes)
+}
+
+/// Creates `dir` and any missing parents; each folder it creates is owner-only (0700) on Unix.
+/// Folders that already exist are left as they are.
+pub fn create_private_dir_all(dir: &Path) -> io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)
 }
 
 /// `plan.projectcraft` → `plan.projectcraft<suffix>`, in the same folder.
@@ -289,6 +322,52 @@ mod tests {
         assert_eq!(Session::open(&path).unwrap().project, s.project);
         assert_eq!(Session::open(&sibling(&path, ".bak")).unwrap().project, full());
         assert!(!sibling(&path, ".tmp").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saves_and_bak_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp_dir("modes");
+        let path = dir.join("plan.projectcraft");
+        // An existing file and stale temp, both world-readable, end owner-only.
+        fs::write(&path, b"{}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        fs::write(sibling(&path, ".tmp"), b"").unwrap();
+        fs::set_permissions(sibling(&path, ".tmp"), fs::Permissions::from_mode(0o666)).unwrap();
+        let s = Session::new(full());
+        s.save_to(&path).unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&sibling(&path, ".bak")), 0o600);
+        s.save_to(&path).unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&sibling(&path, ".bak")), 0o600);
+        let copy = dir.join("plan.projectcraft.recovery");
+        s.save_copy_to(&copy).unwrap();
+        assert_eq!(mode(&copy), 0o600);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_and_folders_are_owner_only() {
+        let dir = tmp_dir("private");
+        let nested = dir.join("a").join("b");
+        create_private_dir_all(&nested).unwrap();
+        assert_eq!(mode(&dir.join("a")), 0o700);
+        assert_eq!(mode(&nested), 0o700);
+        let file = nested.join("recent-files.txt");
+        write_private(&file, b"one\n").unwrap();
+        write_private(&file, b"two\n").unwrap();
+        assert_eq!(fs::read(&file).unwrap(), b"two\n");
+        assert_eq!(mode(&file), 0o600);
         let _ = fs::remove_dir_all(dir);
     }
 

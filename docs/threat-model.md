@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** major (first version) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (owner-only file permissions) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -91,9 +91,17 @@ commands are marked as such in the registry, so an agent can be refused them.
 
 ### Other programs and users on the same computer
 
-- Project files are written where the owner chooses, with the operating system's default
-  permissions for a new file (the owner's umask on Unix, the folder's access list on Windows),
-  like any document. The settings folder is in the owner's profile.
+- On Unix (Linux, macOS, the BSDs) every file ProjectCraft writes is owner-only, mode 0600: the
+  project file (its atomic-save temp file is created 0600 and renamed over the old one, so saving
+  over a wider file also leaves 0600), the `.bak` (copied into a file created 0600), the recovery
+  copy, and the settings files (`recent-files.txt`, `autosave.txt`). A stale temp or `.bak` with
+  wider permissions is tightened to 0600 when reused. Settings and recovery folders ProjectCraft
+  creates are 0700; a folder that already exists, such as the one the owner saves into, is left as
+  it is. `create_private`, `write_private` and `create_private_dir_all` in
+  `crates/engine/src/file.rs`, with Unix-only tests there and in `crates/ui-egui/src/recovery.rs`.
+  std only, no new dependency.
+- On Windows the files get the folder's access list, like any document; the settings folder is in
+  the owner's profile. The web build writes no files.
 - The recent-files list holds paths only, read back capped at 64 KB, and entries that no longer
   exist are dropped.
 - Error messages name the file that failed (on standard error, or in the app). They never carry
@@ -133,3 +141,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-16 | major | First version: assets, what the program doesn't do, adversaries and mechanisms with their files, known limits |
+| 2026-10-16 | minor | Owner-only permissions on Unix: files written 0600, new settings and recovery folders 0700 (#37) |

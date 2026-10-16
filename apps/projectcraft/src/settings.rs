@@ -44,7 +44,10 @@ pub fn save_recent(list: &[PathBuf]) {
     let Some(file) = recent_file() else {
         return;
     };
-    let result = file.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&file, projectcraft_ui_egui::recent_text(list)));
+    let result = file
+        .parent()
+        .map_or(Ok(()), projectcraft_engine::create_private_dir_all)
+        .and_then(|()| projectcraft_engine::write_private(&file, projectcraft_ui_egui::recent_text(list).as_bytes()));
     if let Err(e) = result {
         eprintln!("couldn't save the recent-files list to {}: {e}", file.display());
     }
@@ -73,7 +76,10 @@ pub fn save_autosave(on: bool) {
     let Some(file) = autosave_file() else {
         return;
     };
-    let result = file.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&file, if on { "on\n" } else { "off\n" }));
+    let result = file
+        .parent()
+        .map_or(Ok(()), projectcraft_engine::create_private_dir_all)
+        .and_then(|()| projectcraft_engine::write_private(&file, if on { "on\n" } else { "off\n" }.as_bytes()));
     if let Err(e) = result {
         eprintln!("couldn't save the autosave setting to {}: {e}", file.display());
     }

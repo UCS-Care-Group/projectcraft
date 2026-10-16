@@ -165,7 +165,7 @@ impl App {
         let Some(target) = self.recovery_target() else {
             return;
         };
-        let result = target.parent().filter(|d| !d.as_os_str().is_empty()).map_or(Ok(()), std::fs::create_dir_all);
+        let result = target.parent().filter(|d| !d.as_os_str().is_empty()).map_or(Ok(()), projectcraft_engine::create_private_dir_all);
         let result = result.map_err(|e| e.to_string()).and_then(|()| self.session.save_copy_to(&target).map_err(|e| e.to_string()));
         let Some(k) = &mut self.keeper else {
             return;
@@ -341,6 +341,14 @@ mod tests {
         assert!(u.is_dirty(), "no file to autosave to");
         let copy = dir.join("data").join(UNTITLED_RECOVERY);
         assert_eq!(Session::open(&copy).unwrap().project.tasks.len(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&dir.join("data")), 0o700, "a new recovery folder is owner-only");
+            assert_eq!(mode(&copy), 0o600, "the recovery copy is owner-only");
+            assert_eq!(mode(&recovery_path(&file)), 0o600);
+        }
         // First Save As: the copy is saved over and leaves the app data folder.
         u.file_picked(crate::FileRequest::SaveAs, Some(dir.join("named.projectcraft")));
         assert!(!copy.exists());
