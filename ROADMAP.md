@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (M1.0 command schemas)
+> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (M1.4 duration units)
 
 Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -35,3 +35,4 @@ Each roadmap milestone has a pass/fail checklist; it is reached when every item 
 | 2026-10-15 | M1 spec and plan grilled and agreed; ADRs 0003 (native JSON) and 0004 (agent access) |
 | 2026-10-16 | M1.0: every command has a params JSON Schema and an effect; unknown params refused; `commands` lists both (#4) |
 | 2026-10-16 | M1.0: `format_version` in the file (refuse newer, migrate M0), validation on load, atomic save with `.bak` (#6) |
+| 2026-10-16 | M1.4: duration entry takes `d`, `w` (×5) and `mo` (×20), clamped to `MAX_DAYS`; `h`, `m` and elapsed units refused with a clear message (#16) |
