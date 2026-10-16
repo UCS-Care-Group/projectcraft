@@ -55,7 +55,7 @@ impl DurationUnit {
     }
 
     /// The unit a word names: the short form, or Project's longer ones (`hrs`, `days`, `wks`, `mons`).
-    fn from_word(w: &str) -> Option<DurationUnit> {
+    pub(crate) fn from_word(w: &str) -> Option<DurationUnit> {
         Some(match w {
             "m" | "min" | "mins" | "minute" | "minutes" => DurationUnit::Minutes,
             "h" | "hr" | "hrs" | "hour" | "hours" => DurationUnit::Hours,

@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M2 scope agreed) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M2.2 assignments) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -35,7 +35,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 ## M2 — Resources and assignments
 - [ ] Working time in hours and minutes: part-day durations, working hours in calendars, files from M1 open with the same dates
 - [ ] Resource Sheet: work, material and cost resources
-- [ ] Assignments: Resource Names column, Assign Resources dialog, material quantities
+- [x] Assignments: Resource Names column, Assign Resources dialog, material quantities
 - [ ] Task types (Fixed Units, Fixed Duration, Fixed Work) and effort-driven scheduling, as Microsoft Project documents them
 - [ ] Resource calendars (leave and part-time working)
 - [ ] Costs: rates, cost per use, fixed costs, cost resources, rolled up to the penny
@@ -85,6 +85,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | M2.0: part-day durations and lags: `30m`, `4h`, `1.5d`, `2w`, `1mo` (decimals allowed), converted with the project's hours per day / per week / days per month and rounded to the nearest minute; the unit typed is kept for display (`4h` stays `4h`, days to two decimals), in the Duration and Predecessors columns (`3FS+4h`) and the CLI; elapsed units and percent lags refused with the reason; commands take the text or whole days as before; Gantt bars start and end part-way through a day, in proportion to the day's working time; part-day worked examples (#53) |
 | 2026-10-16 | M2: a finish-to-finish successor (task or summary) never finishes before a milestone predecessor at the start of a day: it finishes at that moment (Monday 8:00, not Friday 17:00), the same working time, so slack is unchanged; an intermittent property-test failure fixed (#74) |
 | 2026-10-16 | SEC: in the desktop app, opening or saving a project (and writing its recovery copy) removes the `.<name>.<pid>-<n>.craft_tmp` staging files a killed save left beside it (or beside its `.bak`) once they are an hour old; only regular files named exactly for that file, never a symbolic link, at most 10,000 folder entries looked at; a file that can't be removed stays and the status bar says so; native only (#72) |
+| 2026-10-16 | M2.2: assignments: a resource on a task with units (work: percent of working time, default 100% or the resource's Max Units if lower; material: a fixed quantity `5 tons` or a rate `2 tons/d` that scales with the duration; cost: an amount per assignment); `assignment.add`, `assignment.setUnits`, `assignment.remove` and `task.setResourceNames` by Unique ID; Resource Names column typed as Project writes it (`Ann[50%], Bob, Concrete[2 tons/d]`), an unknown name making a work resource in the same undo step with a status message; read-only Work column (duration × units, summaries roll up their own and their subtasks'), each assignment's work in its tooltip; Assign Resources dialog (toolbar, Alt+F10); resource names beside the Gantt bars and in the CLI; summaries take resources; deleting a task or resource removes its assignments, and changing an assigned resource's type asks first and drops them; durations stay as entered; additive `assignments` file field, validated on load (#55) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -100,3 +101,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | M1 reached |
 | 2026-10-16 | minor | M2 checklist added |
 | 2026-10-16 | minor | FF after a milestone at the start of a day (#74) |
+| 2026-10-16 | minor | M2.2 assignments |

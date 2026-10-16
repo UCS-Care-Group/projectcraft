@@ -65,7 +65,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
             let s = open(args.get(1))?;
             let sched = s.schedule.as_ref().map_err(|e| format!("can't schedule: {e}"))?;
             println!("{}  (start {}, finish {})", s.project.name, s.project.start, sched.finish);
-            println!("{:>4}  {:<28} {:>5}  {:<10}  {:<10}  {:>5}  preds", "UID", "Task Name", "Dur", "Start", "Finish", "Slack");
+            println!("{:>4}  {:<28} {:>5}  {:<10}  {:<10}  {:>5}  {:<12} resources", "UID", "Task Name", "Dur", "Start", "Finish", "Slack", "preds");
             let levels = projectcraft_engine::model::Outline::of(&s.project).levels;
             // Durations and slack are working minutes; shown in days, as entered.
             let day = s.project.minutes_per_day();
@@ -82,16 +82,18 @@ fn run(args: Vec<String>) -> Result<(), String> {
                 };
                 // Subtasks indent two spaces a level.
                 let name = format!("{}{}", "  ".repeat(level.saturating_sub(1).min(20) as usize), t.name);
-                println!(
-                    "{:>4}{crit} {:<28} {:>6}  {}  {}  {:>5}{warn} {}",
+                let line = format!(
+                    "{:>4}{crit} {:<28} {:>6}  {}  {}  {:>5}{warn} {:<12} {}",
                     t.id,
                     name,
                     duration_text(t.duration, t.duration_unit, &s.project.options),
                     d.start,
                     d.finish,
                     days_text(d.slack, day),
-                    preds_text(&t.preds, &s.project.options)
+                    preds_text(&t.preds, &s.project.options),
+                    s.project.resource_names(t.id)
                 );
+                println!("{}", line.trim_end());
             }
             Ok(())
         }
