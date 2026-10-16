@@ -2,7 +2,8 @@
 
 use std::process::ExitCode;
 
-use projectcraft_engine::{Session, model::preds_text};
+use projectcraft_engine::Session;
+use projectcraft_engine::model::{days_text, preds_text};
 use serde_json::Value;
 
 const USAGE: &str = "\
@@ -66,6 +67,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
             println!("{}  (start {}, finish {})", s.project.name, s.project.start, sched.finish);
             println!("{:>4}  {:<28} {:>5}  {:<10}  {:<10}  {:>5}  preds", "UID", "Task Name", "Dur", "Start", "Finish", "Slack");
             let levels = projectcraft_engine::model::Outline::of(&s.project).levels;
+            // Durations and slack are working minutes; shown in days, as entered.
+            let day = s.project.minutes_per_day();
             for (t, level) in s.project.tasks.iter().zip(levels) {
                 let Some(d) = sched.tasks.get(&t.id) else { continue };
                 let crit = if d.critical { "*" } else { " " };
@@ -83,11 +86,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
                     "{:>4}{crit} {:<28} {:>4}d  {}  {}  {:>5}{warn} {}",
                     t.id,
                     name,
-                    t.duration,
+                    days_text(t.duration, day),
                     d.start,
                     d.finish,
-                    d.slack,
-                    preds_text(&t.preds)
+                    days_text(d.slack, day),
+                    preds_text(&t.preds, day)
                 );
             }
             Ok(())

@@ -11,7 +11,7 @@ ProjectCraft follows the architecture and conventions of [MailCraft](https://git
 ## What works today
 - **Tasks:** add, insert, move, rename, change duration, delete (a summary moves or deletes with its subtasks); milestones (duration 0).
 - **Links:** finish-to-start, start-to-start, finish-to-finish, start-to-finish, with lag or lead, typed in the Predecessors column (`3, 5SS+2, 7FF-1`). Loops are refused.
-- **Scheduling:** forward and backward pass over working days (Monday to Friday, plus holidays in the file); total slack; critical tasks in red.
+- **Scheduling:** forward and backward pass over working time, counted in minutes on the calendar's working hours (Monday to Friday, 8:00–12:00 and 13:00–17:00 by default, plus exceptions); total slack; critical tasks in red.
 - **Gantt Chart:** the task sheet with bars and milestone diamonds; select rows with click, Shift-click and Ctrl-click; arrows, Enter, F2, Insert, Delete and Alt+Shift+→/← work as in a spreadsheet; undo and redo for every change.
 - **Files:** `.projectcraft` (JSON).
 - **Command line:** every command, and the schedule printed as a table.

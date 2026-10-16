@@ -21,8 +21,14 @@ fn a_then_b() -> Session {
     s
 }
 
+/// The scheduler's dates, with total slack in working days (it counts working minutes), as
+/// these examples count it.
 fn dates(s: &Session, id: u32) -> TaskDates {
-    s.schedule.as_ref().unwrap().tasks[&TaskId(id)]
+    let mut d = s.schedule.as_ref().unwrap().tasks[&TaskId(id)];
+    let day = s.project.minutes_per_day();
+    assert_eq!(d.slack % day, 0, "whole days of slack");
+    d.slack /= day;
+    d
 }
 
 fn start_finish(s: &Session, id: u32) -> (Date, Date) {
@@ -89,7 +95,7 @@ fn worked_example_11_clearing_to_asap_returns_to_link_driven_dates() {
 #[test]
 fn worked_example_14_a_constraint_date_on_a_non_working_day_moves_to_a_working_day() {
     let mut p = Project::new("t", date("2026-01-05"));
-    p.add_task("C", 2).unwrap();
+    p.add_task("C", 2 * 480).unwrap();
     // Monday 2026-01-19 is a holiday.
     p.calendar.exceptions.insert(date("2026-01-19"), false);
     let mut s = Session::new(p);
@@ -138,7 +144,7 @@ fn worked_example_15_typing_a_start_or_finish_sets_snet_or_fnet() {
     s.run("task.setConstraint", &json!({"id": 2, "type": "FNET", "date": "2026-01-16"})).unwrap();
     assert_eq!(s.project.task(TaskId(2)).unwrap().constraint, Constraint::FinishNoEarlierThan(date("2026-01-16")));
     assert_eq!(start_finish(&s, 2), (date("2026-01-15"), date("2026-01-16")));
-    assert_eq!(s.project.task(TaskId(2)).unwrap().duration, 2);
+    assert_eq!(s.project.task(TaskId(2)).unwrap().duration, 2 * 480);
 }
 
 /// Bad params are refused and change nothing.

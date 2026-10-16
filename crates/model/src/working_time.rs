@@ -1,8 +1,8 @@
 //! Working times (a from–to stretch of a day, in whole minutes since midnight) and the project
 //! options that turn hours into days, weeks and months.
 //!
-//! ponytail: the scheduler still counts whole working days; these are held and edited, not yet
-//! scheduled on.
+//! The scheduler counts working time in minutes on the calendar's working times; the options only
+//! convert days, weeks and months to minutes.
 
 use std::fmt;
 
@@ -134,6 +134,12 @@ impl Default for Options {
 }
 
 impl Options {
+    /// A day of duration in working minutes, kept in its bounds (1 to 24 hours) whatever the
+    /// options hold, so it is always safe to multiply and divide by.
+    pub fn day(&self) -> i64 {
+        i64::from(self.minutes_per_day.clamp(60, MAX_MINUTES_PER_DAY))
+    }
+
     /// Refuses options outside their bounds (a day of 1 to 24 hours, a week of 1 to 168, a month of 1 to 31 days).
     pub fn check(&self) -> Result<(), ModelError> {
         let ok = (60..=MAX_MINUTES_PER_DAY).contains(&self.minutes_per_day)

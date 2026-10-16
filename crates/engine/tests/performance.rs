@@ -22,6 +22,9 @@ const RUNS: usize = 31;
 /// make every edit of a hostile file take seconds.
 const HOSTILE_GATE: Duration = Duration::from_secs(1);
 
+/// A day of duration at the default 8 hours, in working minutes.
+const DAY: i64 = 480;
+
 /// A small linear congruential generator (Knuth's MMIX constants): the same seed, the same plan.
 struct Lcg(u64);
 
@@ -72,7 +75,7 @@ fn plan(n: usize, seed: u64) -> Project {
             if p.tasks.len() >= n {
                 break 'all;
             }
-            let id = p.add_task(name, 1).unwrap();
+            let id = p.add_task(name, DAY).unwrap();
             p.task_mut(id).unwrap().outline_level = level;
             match level {
                 2 => {
@@ -89,7 +92,7 @@ fn plan(n: usize, seed: u64) -> Project {
                 4 => {
                     let k = leaves.len();
                     let t = p.task_mut(id).unwrap();
-                    t.duration = if rng.chance(8) { 0 } else { 1 + rng.below(10) as i64 };
+                    t.duration = if rng.chance(8) { 0 } else { (1 + rng.below(10) as i64) * DAY };
                     let near = |rng: &mut Lcg| start.add_days(k as i64 * 2 + rng.below(40) as i64).unwrap();
                     if k % 9 == 4 {
                         let d = near(&mut rng);
@@ -119,7 +122,7 @@ fn plan(n: usize, seed: u64) -> Project {
                                 15..18 => LinkKind::FF,
                                 _ => LinkKind::SF,
                             };
-                            links.push(Link { pred, kind, lag: rng.below(6) as i64 - 2 });
+                            links.push(Link { pred, kind, lag: (rng.below(6) as i64 - 2) * DAY });
                         }
                     }
                     p.set_preds(id, links).unwrap();
@@ -216,7 +219,7 @@ fn hostile(n: usize, depth: u32) -> Project {
     let far = date("9000-01-01");
     let mut p = Project::new("Hostile", start);
     let add = |p: &mut Project, level: u32, duration: i64, c: Constraint| {
-        let id = p.add_task("T", duration).unwrap();
+        let id = p.add_task("T", duration * DAY).unwrap();
         let t = p.task_mut(id).unwrap();
         t.outline_level = level;
         t.constraint = c;
