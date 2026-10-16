@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (task sheet column chooser) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (Assign Resources on the selection; asking before deleting an assigned resource) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -100,6 +100,8 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | M2: `projectcraft-cli` removes the staging files a killed save left beside a project after opening it and after `--save`, as the desktop app does; one it can't remove stays, with one line on stderr, and the command still succeeds (#87) |
 | 2026-10-16 | M2: a duration typed on a task whose work assignments are of different lengths sets every one to the new duration (Fixed Units and Fixed Duration recalculate each one's work, Fixed Work each one's units); Microsoft's published pages give the rule for one assignment but not this case, so the choice is documented in the code and pinned by a worked example for all three task types (#88) |
 | 2026-10-16 | M2: column chooser for the task sheet: View › Columns… ticks each column to show or hide it (Duration, Work, Start, Finish, Predecessors, Resource Names, Cost, Fixed Cost, Deadline, Type, Effort Driven), Show All puts every column back; ID and Task Name always show; `view.setColumns` takes the headings left to right, one undo step; the arrows skip hidden columns; the choice is saved with the project (an additive `columns` field: older files open with every column, a column name this version doesn't know is dropped) (#86) |
+| 2026-10-16 | M2: Assign Resources acts on every selected task, as Microsoft Project's: Assign adds the resource to the tasks without it (the others keep their units), new units and Remove go to those with it, each one command and one undo step; a tick where all selected tasks have the resource, a dash where only some do; units and work shown are the focused task's. `assignment.add`, `assignment.setUnits` and `assignment.remove` take `tasks` (a list) in place of `task` (#82) |
+| 2026-10-16 | M2: deleting resources that have assignments in the Resource Sheet asks first (Delete / Cancel), naming how many tasks they are assigned to; Cancel or Escape changes nothing, Delete is one `resource.delete` and one undo step; a resource on no task is deleted at once (#83) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -124,3 +126,5 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | Duration edit on assignments of different lengths (#88) |
 | 2026-10-16 | minor | M4 scope and import gaps listed; XER moved after M4 |
 | 2026-10-16 | minor | Task sheet column chooser (#86) |
+| 2026-10-16 | minor | Assign Resources on every selected task (#82) |
+| 2026-10-16 | minor | Asking before deleting an assigned resource (#83) |

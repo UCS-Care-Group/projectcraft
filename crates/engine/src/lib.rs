@@ -477,11 +477,64 @@ fn resource_fields(v: &Value) -> Result<Vec<ResourceField>, CmdError> {
     Ok(out)
 }
 
-/// The `task` and `resource` params of an `assignment.*` command.
-fn assignment_params(v: &Value) -> Result<(TaskId, ResourceId), CmdError> {
-    let task = opt_id_param(v, "task")?.ok_or_else(|| CmdError::Params("`task` (a task's Unique ID) is required".into()))?;
+/// The tasks and resource of an `assignment.*` command: `task` (one Unique ID) or `tasks` (a
+/// list, as the Assign Resources dialog sends a selection), never both; each task must exist.
+/// A task listed twice counts once.
+fn assignment_params(p: &Project, v: &Value) -> Result<(Vec<TaskId>, ResourceId), CmdError> {
     let resource = opt_resource_param(v, "resource")?.ok_or_else(|| CmdError::Params("`resource` (a resource's Unique ID) is required".into()))?;
-    Ok((task, resource))
+    let tasks = match (opt_id_param(v, "task")?, v.get("tasks")) {
+        (Some(_), Some(_)) => return Err(CmdError::Params("give `task` or `tasks`, not both".into())),
+        (Some(t), None) => vec![t],
+        (None, Some(list)) => {
+            let list = list.as_array().ok_or_else(|| CmdError::Params("`tasks` must be a list of Unique IDs".into()))?;
+            if list.len() > model::MAX_TASKS {
+                return Err(CmdError::Params(format!("`tasks` lists more than {} tasks", model::MAX_TASKS)));
+            }
+            let mut out: Vec<TaskId> = Vec::with_capacity(list.len());
+            for n in list {
+                let t = n
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .map(TaskId)
+                    .ok_or_else(|| CmdError::Params("`tasks` must be Unique IDs (whole numbers)".into()))?;
+                if !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+            out
+        }
+        (None, None) => return Err(CmdError::Params("`task` (a task's Unique ID) or `tasks` (a list of them) is required".into())),
+    };
+    if tasks.is_empty() {
+        return Err(CmdError::Params("`tasks` lists no task".into()));
+    }
+    for t in &tasks {
+        p.task(*t)?;
+    }
+    Ok((tasks, resource))
+}
+
+/// Of `tasks`, those the resource is (`true`) or isn't (`false`) assigned to.
+fn holding(p: &Project, tasks: &[TaskId], resource: ResourceId, assigned: bool) -> Vec<TaskId> {
+    tasks.iter().copied().filter(|t| p.assignments_of(*t).any(|a| a.resource == resource) == assigned).collect()
+}
+
+/// The `task`/`tasks` pair of an `assignment.*` command's schema.
+fn assignment_tasks(what: &str) -> Value {
+    json!({
+        "task": task_id(),
+        "tasks": {"type": "array", "items": task_id(), "description": format!("instead of `task`: the selected tasks' Unique IDs, changed together as one undo step; {what}")},
+    })
+}
+
+/// An `assignment.*` schema: `task` or `tasks`, `resource`, and these other properties.
+fn assignment_schema(what: &str, more: Value, required: &[&str]) -> Value {
+    let mut props = assignment_tasks(what);
+    if let (Some(props), Some(more)) = (props.as_object_mut(), more.as_object()) {
+        props.insert("resource".into(), resource_id(""));
+        props.extend(more.clone());
+    }
+    object(props, required)
 }
 
 /// The `units` param read for the resource's type; `None` when absent.
@@ -957,19 +1010,20 @@ const COMMANDS: &[CommandSpec] = &[
         label: "Assign Resource",
         effect: Effect::Edit,
         schema: || {
-            object(
-                json!({
-                    "task": task_id(),
-                    "resource": resource_id(""),
-                    "units": units("absent: 100% (or the resource's Max Units if lower), one of a material's label, no cost"),
-                }),
-                &["task", "resource"],
+            assignment_schema(
+                "those it is already assigned to keep their units",
+                json!({"units": units("absent: 100% (or the resource's Max Units if lower), one of a material's label, no cost")}),
+                &["resource"],
             )
         },
         run: |p, v| {
-            let (task, resource) = assignment_params(v)?;
+            let (tasks, resource) = assignment_params(p, v)?;
             let units = units_param(p, resource, v)?;
-            p.assign(task, resource, units)?;
+            // Refused (as already assigned) only when every task has it.
+            let todo = holding(p, &tasks, resource, false);
+            for task in if todo.is_empty() { tasks } else { todo } {
+                p.assign(task, resource, units)?;
+            }
             Ok(())
         },
     },
@@ -977,11 +1031,15 @@ const COMMANDS: &[CommandSpec] = &[
         id: "assignment.setUnits",
         label: "Assignment Units",
         effect: Effect::Edit,
-        schema: || object(json!({"task": task_id(), "resource": resource_id(""), "units": units("the new units")}), &["task", "resource", "units"]),
+        schema: || assignment_schema("those it isn't assigned to are left alone", json!({"units": units("the new units")}), &["resource", "units"]),
         run: |p, v| {
-            let (task, resource) = assignment_params(v)?;
+            let (tasks, resource) = assignment_params(p, v)?;
             let units = units_param(p, resource, v)?.ok_or_else(|| CmdError::Params("`units` (text) is required".into()))?;
-            p.set_assignment_units(task, resource, units)?;
+            // Refused (as not assigned) only when no task has it.
+            let todo = holding(p, &tasks, resource, true);
+            for task in if todo.is_empty() { tasks } else { todo } {
+                p.set_assignment_units(task, resource, units)?;
+            }
             Ok(())
         },
     },
@@ -989,10 +1047,13 @@ const COMMANDS: &[CommandSpec] = &[
         id: "assignment.remove",
         label: "Remove Assignment",
         effect: Effect::Edit,
-        schema: || object(json!({"task": task_id(), "resource": resource_id("")}), &["task", "resource"]),
+        schema: || assignment_schema("those it isn't assigned to are left alone", json!({}), &["resource"]),
         run: |p, v| {
-            let (task, resource) = assignment_params(v)?;
-            p.unassign(task, resource)?;
+            let (tasks, resource) = assignment_params(p, v)?;
+            let todo = holding(p, &tasks, resource, true);
+            for task in if todo.is_empty() { tasks } else { todo } {
+                p.unassign(task, resource)?;
+            }
             Ok(())
         },
     },
@@ -1302,6 +1363,43 @@ mod tests {
             s.run("edit.undo", &json!({})).unwrap();
         }
         assert_eq!(s.project, before);
+    }
+
+    /// `tasks` in place of `task`: the Assign Resources dialog's selection, changed by one command
+    /// (one undo step). Tasks that already have the resource keep their units; Remove and new
+    /// units leave the tasks without it alone.
+    #[test]
+    fn assignment_commands_take_a_list_of_tasks_as_one_step() {
+        let mut s = sample();
+        let before = s.project.clone();
+        s.run("assignment.add", &json!({"tasks": [2, 4, 5], "resource": 1})).unwrap();
+        assert_eq!(s.project.resource_names(TaskId(2)), "Priya Shah[50%], Tom Okafor[50%]", "already assigned: kept as it was");
+        assert_eq!(s.project.resource_names(TaskId(4)), "Priya Shah");
+        assert_eq!(s.project.resource_names(TaskId(5)), "Tom Okafor[50%], Priya Shah");
+        s.run("assignment.setUnits", &json!({"tasks": [2, 4, 8], "resource": 1, "units": "25%"})).unwrap();
+        assert_eq!(s.project.resource_names(TaskId(2)), "Priya Shah[25%], Tom Okafor[50%]");
+        assert_eq!(s.project.resource_names(TaskId(4)), "Priya Shah[25%]");
+        assert_eq!(s.project.resource_names(TaskId(8)), "");
+        s.run("assignment.remove", &json!({"tasks": [2, 4, 8], "resource": 1})).unwrap();
+        assert_eq!(s.project.resource_names(TaskId(2)), "Tom Okafor[50%]");
+        assert_eq!(s.project.resource_names(TaskId(4)), "");
+        let now = s.project.clone();
+        for bad in [
+            ("assignment.add", json!({"task": 4, "tasks": [4], "resource": 1})),
+            ("assignment.add", json!({"tasks": [], "resource": 1})),
+            ("assignment.add", json!({"tasks": [4, 99], "resource": 1})),
+            ("assignment.add", json!({"tasks": [4, 2], "resource": 4, "units": "lots"})),
+            ("assignment.add", json!({"tasks": [5, 5], "resource": 2})),
+            ("assignment.remove", json!({"tasks": [4, 8], "resource": 1})),
+            ("assignment.setUnits", json!({"tasks": [4, 8], "resource": 1, "units": "50%"})),
+        ] {
+            assert!(s.run(bad.0, &bad.1).is_err(), "{bad:?}");
+            assert_eq!(s.project, now, "{bad:?}");
+        }
+        for _ in 0..3 {
+            s.run("edit.undo", &json!({})).unwrap();
+        }
+        assert_eq!(s.project, before, "three commands, three undo steps");
     }
 
     #[test]
