@@ -19,6 +19,7 @@ macro_rules! tl {
 
 pub mod i18n;
 pub mod theme;
+pub mod timescale;
 
 use theme::Tokens;
 mod files;
@@ -98,10 +99,11 @@ pub struct App {
     keeper: Option<recovery::Keeper>,
     /// The Change Working Time dialog, while it is open.
     working_time: Option<WorkingTime>,
+    /// The Gantt Chart's day width in points: view state, not saved and not undone.
+    day_w: f32,
 }
 
 const ROW_H: f32 = 22.0;
-const DAY_W: f32 = 18.0;
 /// The ID column: room for five digits.
 const ID_W: f32 = 40.0;
 /// How far each outline level indents a task name.
@@ -128,6 +130,7 @@ impl App {
             title: String::new(),
             keeper: None,
             working_time: None,
+            day_w: timescale::Preset::Days.day_w(),
         }
     }
 
@@ -138,6 +141,16 @@ impl App {
             Err(e) => e.to_string(),
         };
         self.status.is_empty()
+    }
+
+    /// The Gantt Chart's timescale preset (from the View menu).
+    pub fn set_timescale(&mut self, preset: timescale::Preset) {
+        self.day_w = preset.day_w();
+    }
+
+    /// One zoom step in (wider days) or out.
+    pub fn zoom(&mut self, zoom_in: bool) {
+        self.day_w = if zoom_in { timescale::zoom_in(self.day_w) } else { timescale::zoom_out(self.day_w) };
     }
 
     /// Opens the Change Working Time dialog on the project calendar.
@@ -160,6 +173,16 @@ impl App {
         if let Some((id, params)) = outline_key(self.editing.as_ref().map(|(id, _, _)| *id), indent, outdent) {
             self.run(id, params);
         }
+        let (zoom_in, zoom_out) = ctx.input_mut(|i| {
+            let zoom_in = i.consume_key(egui::Modifiers::COMMAND, Key::Equals) | i.consume_key(egui::Modifiers::COMMAND, Key::Plus);
+            (zoom_in, i.consume_key(egui::Modifiers::COMMAND, Key::Minus))
+        });
+        if zoom_in {
+            self.zoom(true);
+        }
+        if zoom_out {
+            self.zoom(false);
+        }
         if undo {
             self.run("edit.undo", json!({}));
         }
@@ -175,6 +198,7 @@ impl App {
                         self.open_change_working_time();
                     }
                 });
+                self.view_menu(ui);
                 ui.separator();
                 ui.heading(&self.session.project.name);
                 ui.separator();
@@ -193,6 +217,8 @@ impl App {
                 if ui.button(tl!("Save")).clicked() {
                     self.save();
                 }
+                ui.separator();
+                self.zoom_control(ui);
             });
         });
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -213,6 +239,50 @@ impl App {
         self.unsaved_prompt(&ctx);
         self.recovery_prompt(&ctx);
         self.update_title(&ctx);
+    }
+
+    /// View: the timescale presets and zoom.
+    fn view_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button(tl!("View"), |ui| {
+            ui.label(RichText::new(tl!("Timescale")).color(Tokens::get(ui.ctx()).text_dim));
+            let current = timescale::Preset::of(self.day_w);
+            for preset in timescale::Preset::ALL {
+                if ui.radio(current == preset, tl!(preset.label())).clicked() {
+                    self.set_timescale(preset);
+                    ui.close();
+                }
+            }
+            ui.separator();
+            // "Ctrl+=" rather than egui's "Ctrl+Equals".
+            let shortcut = |key: Key, sign: &str| {
+                ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key)).replace(key.name(), sign)
+            };
+            let (in_keys, out_keys) = (shortcut(Key::Equals, "="), shortcut(Key::Minus, "-"));
+            if ui.add_enabled(self.day_w < timescale::MAX_DAY_W, egui::Button::new(tl!("Zoom In")).shortcut_text(in_keys)).clicked() {
+                self.zoom(true);
+            }
+            if ui.add_enabled(self.day_w > timescale::MIN_DAY_W, egui::Button::new(tl!("Zoom Out")).shortcut_text(out_keys)).clicked() {
+                self.zoom(false);
+            }
+        });
+    }
+
+    /// The toolbar's zoom control: out, the preset showing, in.
+    fn zoom_control(&mut self, ui: &mut egui::Ui) {
+        if ui.add_enabled(self.day_w > timescale::MIN_DAY_W, egui::Button::new("−")).on_hover_text(tl!("Zoom Out")).clicked() {
+            self.zoom(false);
+        }
+        let current = timescale::Preset::of(self.day_w);
+        egui::ComboBox::from_id_salt("timescale").selected_text(tl!(current.label())).width(72.0).show_ui(ui, |ui| {
+            for preset in timescale::Preset::ALL {
+                if ui.selectable_label(current == preset, tl!(preset.label())).clicked() {
+                    self.set_timescale(preset);
+                }
+            }
+        });
+        if ui.add_enabled(self.day_w < timescale::MAX_DAY_W, egui::Button::new("+")).on_hover_text(tl!("Zoom In")).clicked() {
+            self.zoom(true);
+        }
     }
 
     /// Change Working Time: tick the working weekdays, add and remove exceptions. Every change is
@@ -300,16 +370,24 @@ impl App {
     }
 
     fn sheet(&mut self, ui: &mut egui::Ui) {
-        let start = self.session.project.start;
+        let scale = timescale::Scale::for_project(self.session.project.start, self.day_w);
+        let finish = self.session.schedule.as_ref().map_or(self.session.project.start, |s| s.finish);
+        // The chart reaches past the last deadline it can draw, too.
+        let finish = self.session.project.tasks.iter().filter_map(|t| t.deadline).filter(|d| timescale::in_range(scale, *d)).fold(finish, Date::max);
+        // At least as wide as the view, so the shading reaches its right edge.
+        let chart_w = timescale::chart_width(scale, finish, ui.clip_rect().width());
+        let calendar = self.session.project.calendar.clone();
         let mut commands: Vec<(&'static str, Value)> = Vec::new();
         egui::Grid::new("sheet").striped(true).min_row_height(ROW_H).min_col_width(0.0).show(ui, |ui| {
             // The unnamed column after ID holds indicators, as Project's Indicators column.
             // ID and the indicators are narrow, fixed-width columns.
             ui.add_sized([ID_W, ROW_H], egui::Label::new(RichText::new(tl!("ID")).strong()));
             ui.add_sized([ROW_H, ROW_H], egui::Label::new(""));
-            for h in ["Task Name", "Duration", "Start", "Finish", "Predecessors", "Deadline", ""] {
+            for h in ["Task Name", "Duration", "Start", "Finish", "Predecessors", "Deadline"] {
                 ui.label(RichText::new(tl!(h)).strong());
             }
+            let (header, _) = ui.allocate_exact_size(Vec2::new(chart_w, timescale::TIER_H * 2.0), Sense::hover());
+            timescale::header(ui, header, scale);
             ui.end_row();
             let p = &self.session.project;
             let outline = Outline::of(p);
@@ -357,7 +435,7 @@ impl App {
                     (false, 0) => Bar::Milestone,
                     (false, _) => Bar::Task,
                 };
-                gantt_bar(ui, start, dates, shape, deadline);
+                gantt_bar(ui, scale, chart_w, &calendar, dates, shape, deadline);
                 ui.end_row();
             }
         });
@@ -422,22 +500,27 @@ enum Bar {
     Summary,
 }
 
-/// How far past the project start a deadline marker is drawn, in calendar days; one further out
-/// (a hostile date in year 9999) would make the chart absurdly wide, so it isn't drawn.
-const MARKER_MAX_DAYS: i64 = 36_600;
-
-fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::model::TaskDates>, shape: Bar, deadline: Option<Date>) {
-    let Some(d) = dates else {
-        ui.label("");
-        return;
-    };
-    // Calendar days, so weekends show as gaps.
-    let x0 = d.start.days_since(start) as f32 * DAY_W;
-    let x1 = (d.finish.days_since(start) + 1) as f32 * DAY_W;
-    // The deadline marker sits at the end of its day, as a finish does.
-    let marker = deadline.map(|dl| dl.days_since(start)).filter(|n| (0..MARKER_MAX_DAYS).contains(n)).map(|n| (n + 1) as f32 * DAY_W);
-    let width = x1.max(x0 + DAY_W).max(marker.unwrap_or(0.0)) + DAY_W;
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::hover());
+/// One row's chart cell: the non-working days shaded, then the task's bar and its deadline
+/// marker on the timescale.
+fn gantt_bar(
+    ui: &mut egui::Ui,
+    scale: timescale::Scale,
+    chart_w: f32,
+    calendar: &projectcraft_engine::model::Calendar,
+    dates: Option<projectcraft_engine::model::TaskDates>,
+    shape: Bar,
+    deadline: Option<Date>,
+) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(chart_w, ROW_H), Sense::hover());
+    // Through the gaps between rows too, so the shading runs top to bottom unbroken.
+    timescale::shade(ui, rect.expand2(Vec2::new(0.0, ui.spacing().item_spacing.y / 2.0)), scale, calendar);
+    let Some(d) = dates else { return };
+    // Calendar days, so weekends show as gaps. Kept within the chart, whatever a file's dates.
+    let x0 = scale.x(d.start).clamp(0.0, chart_w);
+    let x1 = scale.x(d.finish.add_days(1).unwrap_or(d.finish)).clamp(0.0, chart_w);
+    // The deadline marker sits at the end of its day, as a finish does; a date off the chart
+    // (a hostile one in year 9999) isn't drawn.
+    let marker = deadline.and_then(|dl| timescale::end_of_day_x(scale, dl, chart_w));
     let t = Tokens::get(ui.ctx());
     let colour = if d.critical { t.bar_critical } else { t.bar };
     let p = ui.painter();
@@ -494,6 +577,7 @@ mod tests {
             ("i18n.rs", include_str!("i18n.rs")),
             ("files.rs", include_str!("files.rs")),
             ("recovery.rs", include_str!("recovery.rs")),
+            ("timescale.rs", include_str!("timescale.rs")),
         ] {
             let code = src.split("#[cfg(test)]").next().unwrap_or(src);
             for needle in ["Color32", "from_rgb", "from_gray", "from_black_alpha", "from_white_alpha"] {
@@ -539,6 +623,32 @@ mod tests {
         h.get_by_label("Close").click();
         h.run_steps(2);
         assert!(h.state().working_time.is_none());
+    }
+
+    /// Zoom is view state: Ctrl+= and Ctrl+- and the View menu change the timescale, never the
+    /// project or its undo history.
+    #[test]
+    fn zoom_and_timescale_presets_are_view_state() {
+        use egui_kittest::kittest::Queryable;
+        let app = App::new(projectcraft_engine::sample(), None);
+        let before = app.session.project.clone();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        h.run_steps(2);
+        assert_eq!(h.state().day_w, timescale::Preset::Days.day_w());
+        h.key_press_modifiers(egui::Modifiers::COMMAND, Key::Equals);
+        h.run_steps(2);
+        assert_eq!(h.state().day_w, timescale::zoom_in(timescale::Preset::Days.day_w()));
+        h.key_press_modifiers(egui::Modifiers::COMMAND, Key::Minus);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, Key::Minus);
+        h.run_steps(2);
+        assert_eq!(h.state().day_w, timescale::zoom_out(timescale::Preset::Days.day_w()));
+        h.get_by_label("View").click();
+        h.run_steps(2);
+        h.get_by_label("Months").click();
+        h.run_steps(2);
+        assert_eq!(timescale::Preset::of(h.state().day_w), timescale::Preset::Months);
+        assert_eq!(h.state().session.project, before);
+        assert!(!h.state().session.can_undo());
     }
 
     /// Worked example 15 (sheet side): a typed Start sets SNET, a typed Finish FNET. The

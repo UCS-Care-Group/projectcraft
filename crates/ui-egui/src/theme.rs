@@ -37,6 +37,8 @@ pub struct Tokens {
     pub deadline: Color32,
     /// A missed deadline: its marker and the indicator.
     pub deadline_missed: Color32,
+    /// Behind the bars: a day that is not worked (a weekend day, a non-working exception).
+    pub nonworking: Color32,
 }
 
 impl Tokens {
@@ -64,6 +66,7 @@ impl Tokens {
             bar_summary: Color32::from_rgb(0x30, 0x30, 0x30),
             deadline: Color32::from_rgb(0x2E, 0x7D, 0x32),
             deadline_missed: Color32::from_rgb(0xA3, 0x15, 0x7A),
+            nonworking: Color32::from_rgb(0xEB, 0xEB, 0xEE),
         }
     }
 
@@ -91,6 +94,7 @@ impl Tokens {
             bar_summary: Color32::from_rgb(0xD2, 0xD2, 0xD2),
             deadline: Color32::from_rgb(0x6C, 0xC0, 0x70),
             deadline_missed: Color32::from_rgb(0xF0, 0x6A, 0xC8),
+            nonworking: Color32::from_rgb(0x31, 0x31, 0x36),
         }
     }
 
@@ -112,6 +116,8 @@ pub fn apply(ctx: &egui::Context, preference: egui::ThemePreference) {
     ctx.options_mut(|o| {
         o.fallback_theme = egui::Theme::Light;
         o.theme_preference = preference;
+        // Ctrl with = and - zoom the Gantt Chart's timescale; the window itself never zooms.
+        o.zoom_with_keyboard = false;
     });
 }
 
