@@ -16,8 +16,10 @@ struct Shell {
 
 impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, frame: &mut eframe::Frame) {
-        if let Some((request, path)) = self.dialogs.answer() {
-            self.app.file_picked(request, path);
+        match self.dialogs.answer() {
+            Some((request, dialogs::Answer::Picked(path))) => self.app.file_picked(request, path),
+            Some((request, dialogs::Answer::Unavailable)) => self.app.file_unavailable(request),
+            None => {}
         }
         self.app.tick(self.started.elapsed());
         // Wake now and then so autosave and the recovery copy run while the window is idle.

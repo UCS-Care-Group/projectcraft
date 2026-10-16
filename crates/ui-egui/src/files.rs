@@ -3,7 +3,8 @@
 //! The UI never shows a native dialog itself: it asks for one with a [`FileRequest`] that the
 //! desktop shell takes ([`App::take_file_request`]), shows with `rfd`, and answers through
 //! [`App::file_picked`]. So this crate stays free of `rfd`, and nothing programmatic (the CLI,
-//! tests, later the control channel) can ever open a dialog.
+//! tests, later the control channel) can ever open a dialog. When the shell can't show a system
+//! dialog it calls [`App::file_unavailable`] and the built-in browser takes over.
 
 use std::path::{Path, PathBuf};
 
@@ -76,6 +77,14 @@ impl App {
     /// The recent-files list, if it changed since the last call (for the shell to persist).
     pub fn take_recent_changed(&mut self) -> Option<&[PathBuf]> {
         std::mem::take(&mut self.recent_changed).then_some(self.recent.as_slice())
+    }
+
+    /// The name Save As suggests: the file's own, or the project's name made fit for a file name.
+    pub fn save_as_name(&self) -> String {
+        self.path
+            .as_deref()
+            .and_then(Path::file_name)
+            .map_or_else(|| format!("{}.{EXTENSION}", safe_name(&self.session.project.name)), |n| n.to_string_lossy().into_owned())
     }
 
     /// The answer to a [`FileRequest`]: the chosen path, or `None` when cancelled (or no dialog
@@ -281,7 +290,7 @@ impl App {
 
     /// Ctrl+O, Ctrl+S, Ctrl+Shift+S (Cmd on macOS). Ignored while the prompt is open.
     pub(crate) fn file_keys(&mut self, ctx: &egui::Context) {
-        if self.prompt.is_some() || self.recovery_offered() {
+        if self.prompt.is_some() || self.recovery_offered() || self.browser.is_some() {
             return;
         }
         // Save As first: Ctrl+S would match Ctrl+Shift+S too.
@@ -307,6 +316,14 @@ const OPEN: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers
 const SAVE: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
 const SAVE_AS: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT), egui::Key::S);
 
+/// A project name made fit for a file name: path separators and other characters some systems
+/// refuse become spaces; an empty result is "Untitled".
+fn safe_name(name: &str) -> String {
+    let s: String = name.chars().take(100).map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { ' ' } else { c }).collect();
+    let s = s.trim().trim_matches('.').trim();
+    if s.is_empty() { "Untitled".into() } else { s.to_owned() }
+}
+
 /// A Save As name without an extension gets `.projectcraft` (some dialogs don't add it).
 fn with_extension(p: PathBuf) -> PathBuf {
     if p.extension().is_some() { p } else { p.with_extension(EXTENSION) }
@@ -326,6 +343,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("projectcraft-ui-files-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn safe_name_strips_what_file_systems_refuse() {
+        assert_eq!(safe_name("Office move"), "Office move");
+        assert_eq!(safe_name("a/b\\c:d"), "a b c d");
+        assert_eq!(safe_name("  ..  "), "Untitled");
+        assert_eq!(safe_name(""), "Untitled");
+        assert_eq!(safe_name(&"x".repeat(500)).len(), 100);
     }
 
     #[test]
