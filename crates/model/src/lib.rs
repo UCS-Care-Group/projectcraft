@@ -9,6 +9,7 @@ mod outline;
 mod resource;
 mod rows;
 mod schedule;
+mod working_time;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -23,6 +24,10 @@ pub use resource::{
     ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_name, format_money, parse_money, parse_units, units_text,
 };
 pub use schedule::{Driver, Schedule, TaskDates, schedule};
+pub use working_time::{
+    DEFAULT_WORKING_TIMES, MAX_WORKING_TIMES, MINUTES_IN_DAY, Options, WorkingTime, check_working_times, clock, minutes_of, parse_clock,
+    parse_working_time,
+};
 
 /// Longest duration or lag accepted, in working days (about 400 years): keeps all arithmetic in range.
 pub const MAX_DAYS: i64 = 100_000;
@@ -192,29 +197,43 @@ fn is_top_level(l: &u32) -> bool {
 /// command from growing the calendar without bound.
 pub const MAX_EXCEPTIONS: usize = 100_000;
 
-/// Which days are worked: working weekdays, and **exceptions** (whole days made non-working, a
-/// holiday, or working, an overtime Saturday), as Microsoft Project's Change Working Time.
-/// An exception wins over its weekday.
+/// Which days are worked, and when: working weekdays with their **working times**, and
+/// **exceptions** (days made non-working, a holiday, or working with their own times, an overtime
+/// Saturday 9:00–13:00), as Microsoft Project's Change Working Time. An exception wins over its
+/// weekday. A day with no working times is non-working.
 ///
-/// Written to the file as `{"working": [Mon…Sun], "exceptions": [{"date": "2026-12-25",
-/// "working": false}]}`. Files from before exceptions held `"holidays": ["2026-12-25"]`; those
-/// load as non-working exceptions and are written back as exceptions.
+/// `working` and `exceptions` say which days are worked (the scheduler counts those); the times
+/// are read through [`Calendar::weekday_times`] and [`Calendar::times_on`]. A working day without
+/// times of its own has the default times ([`DEFAULT_WORKING_TIMES`]), so the two always agree.
 ///
-/// ponytail: one project calendar of whole days; work weeks, hours, resource and task calendars
-/// come later.
+/// Written to the file as `{"working": [Mon…Sun], "times": [[{"from": 480, "to": 720}, …] × 7],
+/// "exceptions": [{"date": "2026-12-25", "working": false}, {"date": "2027-01-09", "working":
+/// true, "times": [{"from": 540, "to": 780}]}]}`. Files without `times` load with the default
+/// times on every working day. Files from before exceptions held `"holidays": ["2026-12-25"]`;
+/// those load as non-working exceptions and are written back as exceptions.
+///
+/// ponytail: one project calendar; work weeks, resource and task calendars come later.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(into = "CalendarFile", from = "CalendarFile")]
+#[serde(into = "CalendarFile", try_from = "CalendarFile")]
 pub struct Calendar {
     /// Monday first.
     pub working: [bool; 7],
     /// Exception days: `true` worked, `false` not worked, whatever the weekday says.
     pub exceptions: BTreeMap<Date, bool>,
+    /// Each weekday's working times when they differ from the default; empty means the default.
+    week_times: [Vec<WorkingTime>; 7],
+    /// A working exception's times when they differ from the default.
+    exception_times: BTreeMap<Date, Vec<WorkingTime>>,
 }
 
 /// The calendar as the file holds it.
 #[derive(Serialize, Deserialize)]
 struct CalendarFile {
     working: [bool; 7],
+    /// Each weekday's working times, Monday first; a weekday with none is non-working. Absent in
+    /// older files: every working weekday has the default times.
+    #[serde(default)]
+    times: Option<[Vec<WorkingTime>; 7]>,
     #[serde(default)]
     exceptions: Vec<ExceptionFile>,
     /// Before exceptions: non-working days. Read, never written.
@@ -227,26 +246,73 @@ struct ExceptionFile {
     date: Date,
     #[serde(default)]
     working: bool,
+    /// A working exception's times; absent means the default times.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    times: Vec<WorkingTime>,
 }
 
-impl From<CalendarFile> for Calendar {
-    fn from(f: CalendarFile) -> Calendar {
-        let mut exceptions: BTreeMap<Date, bool> = f.holidays.into_iter().map(|d| (d, false)).collect();
-        exceptions.extend(f.exceptions.into_iter().map(|e| (e.date, e.working)));
-        Calendar { working: f.working, exceptions }
+/// `times`, or nothing when they are the default (how the calendar stores them).
+fn own_times(times: Vec<WorkingTime>) -> Vec<WorkingTime> {
+    if times == DEFAULT_WORKING_TIMES { Vec::new() } else { times }
+}
+
+impl TryFrom<CalendarFile> for Calendar {
+    type Error = ModelError;
+
+    /// Refuses working times out of order, overlapping or outside the day, and times on a
+    /// non-working exception.
+    fn try_from(f: CalendarFile) -> Result<Calendar, ModelError> {
+        let mut c = Calendar { working: f.working, ..Calendar::default() };
+        if let Some(times) = f.times {
+            for (i, day) in times.into_iter().enumerate() {
+                check_working_times(&day)?;
+                if let (Some(w), Some(t)) = (c.working.get_mut(i), c.week_times.get_mut(i)) {
+                    *w = !day.is_empty();
+                    *t = own_times(day);
+                }
+            }
+        }
+        c.exceptions = f.holidays.into_iter().map(|d| (d, false)).collect();
+        for e in f.exceptions {
+            check_working_times(&e.times)?;
+            if !e.working && !e.times.is_empty() {
+                return Err(ModelError::Invalid(format!("the non-working exception on {} has working times", e.date)));
+            }
+            c.exceptions.insert(e.date, e.working);
+            c.exception_times.remove(&e.date);
+            let times = own_times(e.times);
+            if !times.is_empty() {
+                c.exception_times.insert(e.date, times);
+            }
+        }
+        Ok(c)
     }
 }
 
 impl From<Calendar> for CalendarFile {
     fn from(c: Calendar) -> CalendarFile {
-        let exceptions = c.exceptions.into_iter().map(|(date, working)| ExceptionFile { date, working }).collect();
-        CalendarFile { working: c.working, exceptions, holidays: BTreeSet::new() }
+        let times = std::array::from_fn(|i| c.weekday_times(i).to_vec());
+        let exceptions = c
+            .exceptions
+            .iter()
+            .map(|(&date, &working)| ExceptionFile {
+                date,
+                working,
+                times: c.exception_times.get(&date).filter(|_| working).cloned().unwrap_or_default(),
+            })
+            .collect();
+        CalendarFile { working: c.working, times: Some(times), exceptions, holidays: BTreeSet::new() }
     }
 }
 
 impl Default for Calendar {
     fn default() -> Self {
-        Calendar { working: [true, true, true, true, true, false, false], exceptions: BTreeMap::new() }
+        Calendar {
+            working: [true, true, true, true, true, false, false],
+            exceptions: BTreeMap::new(),
+            week_times: Default::default(),
+            exception_times: BTreeMap::new(),
+        }
     }
 }
 
@@ -260,27 +326,82 @@ impl Calendar {
         self.working.get(usize::from(d.weekday())).copied().unwrap_or(false)
     }
 
+    /// The working times of weekday `i` (0 is Monday); none when it is not worked.
+    pub fn weekday_times(&self, i: usize) -> &[WorkingTime] {
+        match (self.working.get(i), self.week_times.get(i)) {
+            (Some(true), Some(t)) if !t.is_empty() => t,
+            (Some(true), _) => &DEFAULT_WORKING_TIMES,
+            _ => &[],
+        }
+    }
+
+    /// The working times on `d`: its exception's, else its weekday's; none on a day off.
+    pub fn times_on(&self, d: Date) -> &[WorkingTime] {
+        match self.exceptions.get(&d) {
+            Some(true) => self.exception_times.get(&d).map_or(&DEFAULT_WORKING_TIMES[..], Vec::as_slice),
+            Some(false) => &[],
+            None => self.weekday_times(usize::from(d.weekday())),
+        }
+    }
+
     /// Sets the working weekdays (Monday first). Refuses a week with no working day, even when
     /// working exceptions exist: such a calendar would run out of days after its last exception.
+    /// A weekday made working gets the default times; one made non-working loses its times.
     pub fn set_working(&mut self, working: [bool; 7]) -> Result<(), ModelError> {
         if !working.contains(&true) {
             return Err(ModelError::Invalid("a calendar needs at least one working weekday".into()));
+        }
+        for ((old, new), times) in self.working.iter().zip(working).zip(self.week_times.iter_mut()) {
+            if *old != new {
+                times.clear();
+            }
         }
         self.working = working;
         Ok(())
     }
 
-    /// Makes `date` a working (`true`) or non-working day, replacing any exception already on it.
+    /// Sets weekday `i`'s working times (0 is Monday); none makes it non-working. Refuses times
+    /// out of order, overlapping or outside the day, and a week left with no working day.
+    pub fn set_weekday_times(&mut self, i: usize, times: Vec<WorkingTime>) -> Result<(), ModelError> {
+        check_working_times(&times)?;
+        let mut working = self.working;
+        let w = working.get_mut(i).ok_or_else(|| ModelError::Invalid(format!("no weekday {i}")))?;
+        *w = !times.is_empty();
+        if !working.contains(&true) {
+            return Err(ModelError::Invalid("a calendar needs at least one working weekday".into()));
+        }
+        self.working = working;
+        if let Some(t) = self.week_times.get_mut(i) {
+            *t = own_times(times);
+        }
+        Ok(())
+    }
+
+    /// Makes `date` a working (`true`, with the default times) or non-working day, replacing any
+    /// exception already on it.
     pub fn add_exception(&mut self, date: Date, working: bool) -> Result<(), ModelError> {
+        self.set_exception(date, if working { DEFAULT_WORKING_TIMES.to_vec() } else { Vec::new() })
+    }
+
+    /// Makes `date` an exception with these working times (none: a non-working day), replacing
+    /// any exception already on it. Refuses times out of order, overlapping or outside the day.
+    pub fn set_exception(&mut self, date: Date, times: Vec<WorkingTime>) -> Result<(), ModelError> {
+        check_working_times(&times)?;
         if self.exceptions.len() >= MAX_EXCEPTIONS && !self.exceptions.contains_key(&date) {
             return Err(ModelError::Invalid(format!("a calendar holds at most {MAX_EXCEPTIONS} exceptions")));
         }
-        self.exceptions.insert(date, working);
+        self.exceptions.insert(date, !times.is_empty());
+        self.exception_times.remove(&date);
+        let times = own_times(times);
+        if !times.is_empty() {
+            self.exception_times.insert(date, times);
+        }
         Ok(())
     }
 
     /// Removes the exception on `date`; the day goes back to its weekday.
     pub fn remove_exception(&mut self, date: Date) -> Result<(), ModelError> {
+        self.exception_times.remove(&date);
         self.exceptions.remove(&date).map(|_| ()).ok_or_else(|| ModelError::Invalid(format!("there is no exception on {date}")))
     }
 
@@ -335,6 +456,9 @@ pub struct Project {
     /// The Unique ID the next resource gets; repaired on load so none is reused.
     #[serde(default, skip_serializing_if = "is_first_id")]
     pub next_resource_id: u32,
+    /// Hours per day and week, days per month. A file without them has the defaults (8, 40, 20).
+    #[serde(default)]
+    pub options: Options,
 }
 
 fn is_first_id(n: &u32) -> bool {
@@ -343,7 +467,16 @@ fn is_first_id(n: &u32) -> bool {
 
 impl Project {
     pub fn new(name: impl Into<String>, start: Date) -> Self {
-        Project { name: name.into(), start, calendar: Calendar::default(), tasks: Vec::new(), next_id: 1, resources: Vec::new(), next_resource_id: 1 }
+        Project {
+            name: name.into(),
+            start,
+            calendar: Calendar::default(),
+            tasks: Vec::new(),
+            next_id: 1,
+            resources: Vec::new(),
+            next_resource_id: 1,
+            options: Options::default(),
+        }
     }
 
     pub fn task(&self, id: TaskId) -> Result<&Task, ModelError> {
@@ -552,6 +685,49 @@ mod tests {
         assert_eq!(c.workdays(d("2026-01-01"), 1), Some(vec![d("2026-01-14")]));
         assert_eq!(c.workdays(d("2026-01-01"), 2), None);
         assert_eq!(c.workdays_between(d("2026-01-01"), d("2026-02-01")), 1);
+    }
+
+    #[test]
+    fn working_times_per_weekday_and_exception_agree_with_the_working_days() {
+        let mut c = Calendar::default();
+        let d = |s: &str| s.parse::<Date>().unwrap();
+        let t = |s: &str| parse_working_time(s).unwrap();
+        // Default: Mon–Fri 8:00–12:00 and 13:00–17:00, eight hours; the weekend has none.
+        assert_eq!(c.weekday_times(0), &DEFAULT_WORKING_TIMES);
+        assert_eq!(minutes_of(c.weekday_times(4)), 480);
+        assert!(c.weekday_times(5).is_empty() && c.weekday_times(6).is_empty() && c.weekday_times(7).is_empty());
+        // A short Friday; a Saturday given times becomes a working day; a day with none is off.
+        c.set_weekday_times(4, vec![t("8:00-12:00")]).unwrap();
+        c.set_weekday_times(5, vec![t("9:00-13:00")]).unwrap();
+        c.set_weekday_times(2, vec![]).unwrap();
+        assert_eq!(c.working, [true, true, false, true, true, true, false]);
+        assert_eq!(c.times_on(d("2026-01-09")), &[t("8:00-12:00")]);
+        assert!(c.times_on(d("2026-01-07")).is_empty() && !c.is_workday(d("2026-01-07")));
+        // Refused: overlapping, out of order, and a week left with no working day.
+        let before = c.clone();
+        assert!(c.set_weekday_times(0, vec![t("8:00-12:00"), t("11:00-17:00")]).is_err());
+        assert!(c.set_weekday_times(0, vec![t("13:00-17:00"), t("8:00-12:00")]).is_err());
+        let mut one = Calendar::default();
+        one.set_working([true, false, false, false, false, false, false]).unwrap();
+        assert!(one.set_weekday_times(0, vec![]).is_err());
+        assert_eq!(c, before);
+        // Unticking a weekday drops its times; ticking it back gives the default.
+        c.set_working([true, true, true, true, false, true, false]).unwrap();
+        c.set_working([true, true, true, true, true, true, false]).unwrap();
+        assert_eq!(c.weekday_times(4), &DEFAULT_WORKING_TIMES);
+        assert_eq!(c.weekday_times(5), &[t("9:00-13:00")], "unchanged days keep their times");
+        // A worked Saturday with its own hours; a holiday has none; removing goes back to the weekday.
+        c.set_exception(d("2026-01-17"), vec![t("9:00-13:00")]).unwrap();
+        c.set_exception(d("2026-01-12"), vec![]).unwrap();
+        c.add_exception(d("2026-01-18"), true).unwrap();
+        assert_eq!(c.times_on(d("2026-01-17")), &[t("9:00-13:00")]);
+        assert_eq!(c.times_on(d("2026-01-18")), &DEFAULT_WORKING_TIMES);
+        assert_eq!(c.exceptions.get(&d("2026-01-12")), Some(&false));
+        assert!(c.times_on(d("2026-01-12")).is_empty());
+        assert!(c.set_exception(d("2026-01-19"), vec![t("9:00-13:00"), t("12:00-14:00")]).is_err());
+        c.remove_exception(d("2026-01-17")).unwrap();
+        c.add_exception(d("2026-01-17"), true).unwrap();
+        assert_eq!(c.times_on(d("2026-01-17")), &DEFAULT_WORKING_TIMES, "the old times went with the old exception");
     }
 
     #[test]

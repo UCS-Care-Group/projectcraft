@@ -329,6 +329,42 @@ fn weekdays_param(v: &Value) -> Result<[bool; 7], CmdError> {
     Ok(working)
 }
 
+/// Working times as commands take them: `["8:00-12:00", "13:00-17:00"]`; none is a day off.
+fn times_param(v: &Value) -> Result<Vec<model::WorkingTime>, CmdError> {
+    let list = v.get("times").and_then(Value::as_array).ok_or_else(|| CmdError::Params("`times` (a list) is required".into()))?;
+    if list.len() > model::MAX_WORKING_TIMES {
+        return Err(CmdError::Params(format!("a day holds at most {} working times", model::MAX_WORKING_TIMES)));
+    }
+    let times = list
+        .iter()
+        .map(|t| {
+            let text = t.as_str().ok_or_else(|| CmdError::Params("`times` holds working times, e.g. \"8:00-12:00\"".into()))?;
+            Ok(model::parse_working_time(text)?)
+        })
+        .collect::<Result<Vec<_>, CmdError>>()?;
+    model::check_working_times(&times)?;
+    Ok(times)
+}
+
+fn times(what: &str) -> Value {
+    json!({
+        "type": "array",
+        "items": {"type": "string", "description": "from-to in 24-hour time, e.g. 8:00-12:00"},
+        "maxItems": model::MAX_WORKING_TIMES,
+        "description": format!("{what}: in order and not overlapping, whole minutes, within 0:00-24:00"),
+    })
+}
+
+/// Hours as a param, in whole minutes: `7.5` is 450.
+fn hours_param(v: &Value, k: &str) -> Result<Option<u32>, CmdError> {
+    let Some(h) = v.get(k).and_then(Value::as_f64) else { return Ok(None) };
+    let m = h * 60.0;
+    if !m.is_finite() || !(0.0..=f64::from(u32::MAX)).contains(&m) || (m - m.round()).abs() > 1e-6 {
+        return Err(CmdError::Params(format!("`{k}` must be whole minutes of an hour, e.g. 7.5")));
+    }
+    Ok(Some(m.round() as u32))
+}
+
 /// Names are one line and of a sensible length.
 fn name(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(255).collect()
@@ -434,6 +470,36 @@ const COMMANDS: &[CommandSpec] = &[
         schema: || object(json!({"date": date()}), &["date"]),
         run: |p, v| {
             p.start = date_param(v, "date")?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "project.setOptions",
+        label: "Project Options",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "hoursPerDay": {"type": "number", "minimum": 1, "maximum": 24, "description": "working hours in a day (d); default 8; whole minutes, e.g. 7.5"},
+                    "hoursPerWeek": {"type": "number", "minimum": 1, "maximum": 168, "description": "working hours in a week (w); default 40; whole minutes"},
+                    "daysPerMonth": {"type": "integer", "minimum": 1, "maximum": 31, "description": "working days in a month (mo); default 20"},
+                }),
+                &[],
+            )
+        },
+        run: |p, v| {
+            let mut o = p.options;
+            if let Some(m) = hours_param(v, "hoursPerDay")? {
+                o.minutes_per_day = m;
+            }
+            if let Some(m) = hours_param(v, "hoursPerWeek")? {
+                o.minutes_per_week = m;
+            }
+            if let Some(d) = v.get("daysPerMonth").and_then(Value::as_i64) {
+                o.days_per_month = u32::try_from(d).map_err(|_| CmdError::Params("`daysPerMonth` must be between 1 and 31".into()))?;
+            }
+            o.check()?;
+            p.options = o;
             Ok(())
         },
     },
@@ -603,6 +669,29 @@ const COMMANDS: &[CommandSpec] = &[
         },
     },
     CommandSpec {
+        id: "calendar.setWorkingTimes",
+        label: "Working Times",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "weekday": {"type": "string", "enum": WEEKDAYS},
+                    "times": times("the weekday's working times, e.g. [\"8:00-12:00\", \"13:00-17:00\"]; none makes it non-working (a week with no working day is refused)"),
+                }),
+                &["weekday", "times"],
+            )
+        },
+        run: |p, v| {
+            let day = str_param(v, "weekday")?;
+            let i = WEEKDAYS
+                .iter()
+                .position(|w| *w == day)
+                .ok_or_else(|| CmdError::Params(format!("`weekday` must be one of {}", WEEKDAYS.join(", "))))?;
+            p.calendar.set_weekday_times(i, times_param(v)?)?;
+            Ok(())
+        },
+    },
+    CommandSpec {
         id: "calendar.addException",
         label: "Add Exception",
         effect: Effect::Edit,
@@ -610,15 +699,22 @@ const COMMANDS: &[CommandSpec] = &[
             object(
                 json!({
                     "date": date(),
-                    "working": {"type": "boolean", "description": "true makes the day worked (an overtime Saturday); false or absent makes it non-working (a holiday)"},
+                    "working": {"type": "boolean", "description": "true makes the day worked (an overtime Saturday); false makes it non-working (a holiday); absent, the day is worked if it has times"},
+                    "times": times("a working day's times, e.g. [\"9:00-13:00\"]; absent, the default 8:00-12:00 and 13:00-17:00"),
                 }),
                 &["date"],
             )
         },
         run: |p, v| {
-            let working = v.get("working").and_then(Value::as_bool).unwrap_or(false);
-            p.calendar.add_exception(date_param(v, "date")?, working)?;
-            Ok(())
+            let date = date_param(v, "date")?;
+            let times = if v.get("times").is_some() { Some(times_param(v)?) } else { None };
+            let working = v.get("working").and_then(Value::as_bool).unwrap_or_else(|| times.as_ref().is_some_and(|t| !t.is_empty()));
+            match (working, times) {
+                (false, Some(t)) if !t.is_empty() => Err(CmdError::Params("a non-working exception has no working times".into())),
+                (true, Some(t)) if t.is_empty() => Err(CmdError::Params("a working exception needs working times".into())),
+                (true, Some(t)) => Ok(p.calendar.set_exception(date, t)?),
+                (w, _) => Ok(p.calendar.add_exception(date, w)?),
+            }
         },
     },
     CommandSpec {
@@ -887,6 +983,49 @@ mod tests {
             s.run("edit.undo", &json!({})).unwrap();
         }
         assert_eq!(s.project, before, "each resource command is one undo step");
+    }
+
+    #[test]
+    fn working_times_and_project_options_are_commands() {
+        let mut s = sample();
+        let before = s.project.clone();
+        let dates = s.schedule.as_ref().unwrap().finish;
+        s.run("calendar.setWorkingTimes", &json!({"weekday": "Fri", "times": ["8:00-12:00"]})).unwrap();
+        assert_eq!(s.project.calendar.weekday_times(4), &[model::parse_working_time("8:00-12:00").unwrap()]);
+        // Times alone never move a date yet: the scheduler counts working days.
+        assert_eq!(s.schedule.as_ref().unwrap().finish, dates);
+        s.run("calendar.setWorkingTimes", &json!({"weekday": "Sat", "times": ["9:00-13:00"]})).unwrap();
+        assert!(s.project.calendar.working[5]);
+        s.run("calendar.setWorkingTimes", &json!({"weekday": "Sat", "times": []})).unwrap();
+        assert!(!s.project.calendar.working[5]);
+        for bad in
+            [json!(["13:00-17:00", "8:00-12:00"]), json!(["8:00-13:00", "12:00-17:00"]), json!(["17:00-8:00"]), json!(["25:00-26:00"]), json!([480])]
+        {
+            let after = s.project.clone();
+            assert!(s.run("calendar.setWorkingTimes", &json!({"weekday": "Mon", "times": bad})).is_err(), "{bad}");
+            assert_eq!(s.project, after);
+        }
+        // A worked Saturday with its own hours; a holiday has none.
+        s.run("calendar.addException", &json!({"date": "2026-11-07", "times": ["9:00-13:00"]})).unwrap();
+        let sat = Date::from_ymd(2026, 11, 7).unwrap();
+        assert_eq!(s.project.calendar.exceptions.get(&sat), Some(&true));
+        assert_eq!(s.project.calendar.times_on(sat), &[model::parse_working_time("9:00-13:00").unwrap()]);
+        let e = s.run("calendar.addException", &json!({"date": "2026-11-04", "working": false, "times": ["9:00-13:00"]})).unwrap_err().to_string();
+        assert!(e.contains("non-working exception has no working times"), "{e}");
+        assert!(s.run("calendar.addException", &json!({"date": "2026-11-04", "working": true, "times": []})).is_err());
+        // Options: defaults 8/40/20, whole minutes, bounded.
+        assert_eq!(s.project.options, model::Options::default());
+        s.run("project.setOptions", &json!({"hoursPerDay": 7.5, "daysPerMonth": 21})).unwrap();
+        assert_eq!((s.project.options.minutes_per_day, s.project.options.minutes_per_week, s.project.options.days_per_month), (450, 2400, 21));
+        for bad in [json!({"hoursPerDay": 7.501}), json!({"hoursPerDay": 0}), json!({"hoursPerWeek": 200}), json!({"daysPerMonth": 1.5})] {
+            assert!(s.run("project.setOptions", &bad).is_err(), "{bad}");
+        }
+        let round = Session::load_json(&s.save_json().unwrap()).unwrap();
+        assert_eq!(round.project, s.project);
+        while s.can_undo() {
+            s.run("edit.undo", &json!({})).unwrap();
+        }
+        assert_eq!(s.project, before);
     }
 
     /// Valid params from a schema, then junk built from it: each property wrong-typed, out of

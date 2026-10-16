@@ -10,7 +10,9 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
-use projectcraft_engine::model::{Outline, TaskId, parse_duration, preds_text};
+use projectcraft_engine::model::{
+    MAX_WORKING_TIMES, Outline, TaskId, WorkingTime, check_working_times, clock, parse_clock, parse_duration, preds_text,
+};
 use projectcraft_engine::{Session, WEEKDAYS, time::Date};
 use serde_json::{Value, json};
 
@@ -98,12 +100,43 @@ pub enum View {
     ResourceSheet,
 }
 
-/// The Change Working Time dialog's own state: the exception being typed. Everything else it
-/// shows is the project calendar, and every change it makes is a `calendar.*` command.
+/// The Change Working Time dialog's own state: the weekday's working times and the exception
+/// being typed. Everything else it shows is the project calendar, and every change it makes is a
+/// `calendar.*` command.
 #[derive(Default)]
-struct WorkingTime {
+struct WorkingTimeForm {
     date: String,
     working: bool,
+    /// The exception's own hours; blank for the default.
+    from: String,
+    to: String,
+    /// The weekday whose working times are shown (0 is Monday), and its from/to rows as typed.
+    day: usize,
+    rows: Vec<(String, String)>,
+    /// The weekday `rows` were read from; `None` reads them again from the calendar.
+    loaded: Option<usize>,
+}
+
+/// Weekday names for the working-times picker, Monday first.
+const DAY_NAMES: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+/// From/to rows as typed, blank rows skipped, as working times for a command (`8:00-12:00`); or
+/// why they can't be.
+fn typed_times(rows: &[(String, String)]) -> Result<Vec<String>, &'static str> {
+    let mut times = Vec::new();
+    for (from, to) in rows.iter().filter(|(f, t)| !(f.trim().is_empty() && t.trim().is_empty())) {
+        let (Ok(f), Ok(t)) = (parse_clock(from), parse_clock(to)) else {
+            return Err(tl!("Enter times as H:MM, such as 8:00 or 17:30."));
+        };
+        times.push(WorkingTime::new(f, t).map_err(|_| tl!("Each working time must end after it starts."))?);
+    }
+    check_working_times(&times).map_err(|_| tl!("Working times must be in order and must not overlap."))?;
+    Ok(times.iter().map(ToString::to_string).collect())
+}
+
+/// Working times as the dialog lists them: `9:00–13:00, 14:00–16:00`.
+fn times_text(times: &[WorkingTime]) -> String {
+    times.iter().map(|w| format!("{}–{}", clock(w.from), clock(w.to))).collect::<Vec<_>>().join(", ")
 }
 
 pub struct App {
@@ -142,7 +175,7 @@ pub struct App {
     /// Autosave and the recovery copy; `None` keeps nothing (the sample, screenshots).
     keeper: Option<recovery::Keeper>,
     /// The Change Working Time dialog, while it is open.
-    working_time: Option<WorkingTime>,
+    working_time: Option<WorkingTimeForm>,
     /// The built-in file browser, while it is open (when the system dialog can't be shown).
     browser: Option<Box<browser::FileBrowser>>,
     /// The folder the built-in browser showed last; it opens there next time.
@@ -221,7 +254,7 @@ impl App {
 
     /// Opens the Change Working Time dialog on the project calendar.
     pub fn open_change_working_time(&mut self) {
-        self.working_time = Some(WorkingTime::default());
+        self.working_time = Some(WorkingTimeForm::default());
         self.status.clear();
     }
 
@@ -552,17 +585,23 @@ impl App {
         }
     }
 
-    /// Change Working Time: tick the working weekdays, add and remove exceptions. Every change is
-    /// a command, so each is one undo step and a refused one (no working weekday) changes nothing.
+    /// Change Working Time: tick the working weekdays, set each weekday's working times, add and
+    /// remove exceptions (a working one with its own times). Every change is a command, so each is
+    /// one undo step and a refused one (no working weekday, overlapping times) changes nothing.
     fn change_working_time(&mut self, ctx: &egui::Context) {
         let Some(mut form) = self.working_time.take() else { return };
         let calendar = self.session.project.calendar.clone();
+        if form.loaded != Some(form.day) {
+            form.rows = calendar.weekday_times(form.day).iter().map(|w| (clock(w.from), clock(w.to))).collect();
+            form.loaded = Some(form.day);
+        }
         let error = self.status.clone();
         let t = Tokens::get(ctx);
         let mut commands: Vec<(&'static str, Value)> = Vec::new();
+        let mut invalid: Option<&'static str> = None;
         let (mut add, mut close) = (false, false);
         let modal = egui::Modal::new(egui::Id::new("change_working_time")).show(ctx, |ui| {
-            ui.set_width(460.0);
+            ui.set_width(520.0);
             ui.heading(tl!("Change Working Time"));
             ui.label(RichText::new(tl!("Project calendar")).color(t.text_dim));
             ui.add_space(10.0);
@@ -580,17 +619,61 @@ impl App {
             }
             ui.add_space(10.0);
 
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(tl!("Working times for")).strong());
+                let shown = DAY_NAMES.get(form.day).copied().unwrap_or("");
+                egui::ComboBox::from_id_salt("working_times_day").selected_text(tl!(shown)).show_ui(ui, |ui| {
+                    for (i, name) in DAY_NAMES.iter().enumerate() {
+                        ui.selectable_value(&mut form.day, i, tl!(name));
+                    }
+                });
+            });
+            if form.rows.is_empty() {
+                ui.label(RichText::new(tl!("Non-working: add working times to work this day.")).color(t.text_dim));
+            }
+            let mut remove = None;
+            for (i, (from, to)) in form.rows.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(tl!("From"));
+                    ui.add(egui::TextEdit::singleline(from).hint_text("8:00").desired_width(56.0));
+                    ui.label(tl!("To"));
+                    ui.add(egui::TextEdit::singleline(to).hint_text("12:00").desired_width(56.0));
+                    if ui.small_button(tl!("Delete")).on_hover_text(tl!("Delete these working times")).clicked() {
+                        remove = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                form.rows.remove(i);
+            }
+            ui.horizontal(|ui| {
+                if ui.add_enabled(form.rows.len() < MAX_WORKING_TIMES, egui::Button::new(tl!("Add Times"))).clicked() {
+                    form.rows.push((String::new(), String::new()));
+                }
+                if ui.button(tl!("Apply")).clicked() {
+                    match typed_times(&form.rows) {
+                        Ok(times) => {
+                            let weekday = WEEKDAYS.get(form.day).copied().unwrap_or("Mon");
+                            commands.push(("calendar.setWorkingTimes", json!({"weekday": weekday, "times": times})));
+                        }
+                        Err(why) => invalid = Some(why),
+                    }
+                }
+            });
+            ui.add_space(10.0);
+
             ui.label(RichText::new(tl!("Exceptions")).strong());
             if calendar.exceptions.is_empty() {
                 ui.label(RichText::new(tl!("None: every day follows its weekday.")).color(t.text_dim));
             } else {
                 egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                    egui::Grid::new("exceptions").striped(true).num_columns(4).spacing([16.0, 4.0]).show(ui, |ui| {
+                    egui::Grid::new("exceptions").striped(true).num_columns(5).spacing([16.0, 4.0]).show(ui, |ui| {
                         for (date, worked) in &calendar.exceptions {
                             ui.label(date.to_string());
                             let weekday = WEEKDAYS.get(usize::from(date.weekday())).copied().unwrap_or("");
                             ui.label(RichText::new(tl!(weekday)).color(t.text_dim));
                             ui.label(if *worked { tl!("Working") } else { tl!("Non-working") });
+                            ui.label(RichText::new(times_text(calendar.times_on(*date))).color(t.text_dim));
                             if ui.small_button(tl!("Remove")).clicked() {
                                 commands.push(("calendar.removeException", json!({"date": date.to_string()})));
                             }
@@ -608,10 +691,29 @@ impl App {
                 ui.radio_value(&mut form.working, true, tl!("Working"));
                 let typed = !form.date.trim().is_empty();
                 if (ui.add_enabled(typed, egui::Button::new(tl!("Add Exception"))).clicked() || enter) && typed {
-                    commands.push(("calendar.addException", json!({"date": form.date.trim(), "working": form.working})));
-                    add = true;
+                    let mut params = json!({"date": form.date.trim(), "working": form.working});
+                    let row = [(form.from.clone(), form.to.clone())];
+                    match typed_times(if form.working { &row[..] } else { &[] }) {
+                        Ok(times) if !times.is_empty() => params["times"] = json!(times),
+                        Ok(_) => {}
+                        Err(why) => invalid = Some(why),
+                    }
+                    if invalid.is_none() {
+                        commands.push(("calendar.addException", params));
+                        add = true;
+                    }
                 }
             });
+            if form.working {
+                ui.horizontal(|ui| {
+                    ui.label(tl!("Exception hours"));
+                    ui.label(tl!("From"));
+                    ui.add(egui::TextEdit::singleline(&mut form.from).hint_text("9:00").desired_width(56.0));
+                    ui.label(tl!("To"));
+                    ui.add(egui::TextEdit::singleline(&mut form.to).hint_text("13:00").desired_width(56.0));
+                    ui.label(RichText::new(tl!("Blank: the default hours")).color(t.text_dim));
+                });
+            }
 
             if !error.is_empty() {
                 ui.add_space(6.0);
@@ -625,11 +727,20 @@ impl App {
             });
         });
         let mut ran = true;
+        let changed = !commands.is_empty();
         for (id, params) in commands {
             ran &= self.run(id, params);
         }
-        if add && ran {
-            form.date.clear();
+        if let Some(why) = invalid {
+            self.status = why.to_owned();
+        } else if changed && ran {
+            // Show the calendar as it now is.
+            form.loaded = None;
+            if add {
+                form.date.clear();
+                form.from.clear();
+                form.to.clear();
+            }
         }
         if !(close || modal.should_close()) {
             self.working_time = Some(form);
@@ -943,6 +1054,55 @@ mod tests {
         h.get_by_label("Close").click();
         h.run_steps(2);
         assert!(h.state().working_time.is_none());
+    }
+
+    /// Working times are edited as from/to rows: Apply sets the weekday's times in one command;
+    /// times that aren't H:MM, run backwards or overlap are refused with a message and change
+    /// nothing. A working exception takes its own hours.
+    #[test]
+    fn change_working_time_edits_working_times_and_exception_hours() {
+        use egui_kittest::kittest::Queryable;
+        use projectcraft_engine::model::parse_working_time;
+        let mut app = App::new(projectcraft_engine::sample(), None);
+        app.open_change_working_time();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        h.run_steps(3);
+        // Monday shows the default rows.
+        let form = h.state().working_time.as_ref().unwrap();
+        assert_eq!(form.rows, vec![("8:00".into(), "12:00".into()), ("13:00".into(), "17:00".into())]);
+        // A short Monday: delete the afternoon, apply.
+        h.get_all_by_label("Delete").nth(1).unwrap().click();
+        h.run_steps(2);
+        h.get_by_label("Apply").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.project.calendar.weekday_times(0), &[parse_working_time("8:00-12:00").unwrap()]);
+        assert!(h.state().session.can_undo());
+        // Typed nonsense and overlaps are refused with a message; the calendar is unchanged.
+        for rows in [
+            vec![("8".into(), "noon".into())],
+            vec![("13:00".into(), "9:00".into())],
+            vec![("8:00".into(), "13:00".into()), ("12:00".into(), "17:00".into())],
+        ] {
+            let before = h.state().session.project.clone();
+            h.state_mut().working_time.as_mut().unwrap().rows = rows;
+            h.get_by_label("Apply").click();
+            h.run_steps(3);
+            assert_eq!(h.state().session.project, before);
+            assert!(!h.state().status.is_empty());
+        }
+        // A worked Saturday, 9:00–13:00.
+        h.get_by_label("Date").focus();
+        h.run_steps(1);
+        h.get_by_label("Date").type_text("2026-11-07");
+        h.get_by_label("Working").click();
+        h.run_steps(2);
+        let form = h.state_mut().working_time.as_mut().unwrap();
+        (form.from, form.to) = ("9:00".into(), "13:00".into());
+        h.get_by_label("Add Exception").click();
+        h.run_steps(3);
+        let sat = Date::from_ymd(2026, 11, 7).unwrap();
+        assert_eq!(h.state().session.project.calendar.times_on(sat), &[parse_working_time("9:00-13:00").unwrap()], "{}", h.state().status);
+        h.get_by_label("9:00–13:00");
     }
 
     /// Zoom is view state: Ctrl+= and Ctrl+- and the View menu change the timescale, never the
