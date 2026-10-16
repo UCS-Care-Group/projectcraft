@@ -2,12 +2,16 @@
 //! dates, slack as the difference. Times are working-day offsets from the project start, turned
 //! into dates through the calendar at the end.
 //!
-//! ponytail: schedules from the project start only, with no constraints, no actual progress and
-//! no resource levelling; each is its own step on the roadmap.
+//! Constraints: Start No Earlier Than raises the early start to its date, Finish No Earlier Than
+//! the early finish (ES = max(ES, CD), EF = max(EF, CD)). A constraint date on a non-working day
+//! counts as the next working day for a start type and the previous one for a finish type.
+//!
+//! ponytail: schedules forward from the project start, with no hard constraints (#12), no actual
+//! progress and no resource levelling; each is its own step on the roadmap.
 
 use std::collections::HashMap;
 
-use crate::{Date, LinkKind, ModelError, Project, TaskId};
+use crate::{Constraint, Date, LinkKind, ModelError, Project, TaskId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskDates {
@@ -61,6 +65,21 @@ pub(crate) fn order(p: &Project) -> Result<Vec<usize>, ModelError> {
     Err(ModelError::Cycle(stuck))
 }
 
+/// The offset of the first working day on or after `cd`: where a task constrained to start
+/// there begins. Before the project start, 0.
+fn start_offset(p: &Project, cd: Date) -> i64 {
+    p.calendar.workdays_between(p.start, cd)
+}
+
+/// The offset just after the last working day on or before `cd`: where a task constrained to
+/// finish there ends. Before the project start, 0.
+fn finish_offset(p: &Project, cd: Date) -> i64 {
+    if cd < p.start {
+        return 0;
+    }
+    p.calendar.workdays_between(p.start, cd) + i64::from(p.calendar.is_workday(cd))
+}
+
 pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     let order = order(p)?;
     let n = p.tasks.len();
@@ -84,6 +103,12 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
                 LinkKind::SF => pes + lag - d(i),
             };
             start = start.max(s);
+        }
+        match t.constraint {
+            Constraint::StartNoEarlierThan(cd) => start = start.max(start_offset(p, cd)),
+            Constraint::FinishNoEarlierThan(cd) => start = start.max(finish_offset(p, cd) - d(i)),
+            // Hard types are honoured from #12; ASAP has nothing to add.
+            _ => {}
         }
         if let (Some(a), Some(b)) = (es.get_mut(i), ef.get_mut(i)) {
             *a = start;
