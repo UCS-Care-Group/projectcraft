@@ -28,7 +28,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] Calendar exceptions and the timescale (weeks/months, zoom)
 - [ ] Constraints (Start No Earlier Than, Must Finish On…) and deadlines; negative slack warning
 - [ ] Atomic save, Open/Save dialogs, autosave (on by default), recovery copy, recent files
-- [ ] About 15 worked examples citing Project's documentation; 200 tasks under 10 ms
+- [x] About 15 worked examples citing Project's documentation; 200 tasks under 10 ms
 - [x] Theme tokens (light/dark), `tl!` translation, look checked in screenshots (`ui_shot`)
 
 ## Later
@@ -61,6 +61,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | M1.3: deadlines: `task.setDeadline` (no date clears); a deadline never moves a task but caps its late finish, so finishing after it gives negative slack back through the predecessors; missed deadlines flagged (sheet indicator, CLI `>`); deadline marker on the Gantt; Deadline column; worked examples (#13) |
 | 2026-10-16 | M1.4: Gantt timescale in two tiers (weeks over days, months over weeks, years over months) from View ▸ Timescale or the toolbar; Zoom In / Zoom Out (Ctrl+= / Ctrl+-) in steps, clamped; zoom is view state (not saved, not undone); weekends and non-working exceptions shaded behind the bars, working exceptions not; only visible columns drawn (#15) |
 | 2026-10-16 | M1.2: `task.insert` (above a task, at its outline level), `task.move` and `task.delete` on several tasks at once, each one undo step; a summary moves or deletes with its subtasks; Unique IDs kept and never reused, links survive reorder. Sheet: click, Shift-click and Ctrl-click select rows; arrows, Enter, F2, typing to edit, Escape, Insert, Delete, Alt+Shift+→/← on the selection (#10) |
+| 2026-10-16 | M1.7: worked examples for SS, FF and SF links with lag moving a successor later and earlier, lead time, a refused A→B→A loop, and a loop in a loaded file reported (a 50,000-task ring included); a deterministic plan generator (summaries three levels deep, all link types with lag and lead, every constraint type, deadlines, holidays and working Saturdays); `cargo xtask perf` (part of `cargo xtask ci`) gates the median 200-task reschedule under 10 ms in release (about 0.1 ms) and reports 2,000 tasks (about 0.9 ms) (#19) |
 
 ## Revision history
 | Date | Change | Summary |
