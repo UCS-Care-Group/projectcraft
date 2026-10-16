@@ -1,5 +1,7 @@
 //! ProjectCraft command line.
 
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
 use std::process::ExitCode;
 
 use projectcraft_engine::Session;
@@ -26,8 +28,21 @@ fn main() -> ExitCode {
 fn open(source: Option<&String>) -> Result<Session, String> {
     match source.map(String::as_str) {
         Some("--sample") => Ok(projectcraft_engine::sample()),
-        Some(f) => Session::open(std::path::Path::new(f)).map_err(|e| e.to_string()),
+        Some(f) => {
+            let path = std::path::Path::new(f);
+            let s = Session::open(path).map_err(|e| e.to_string())?;
+            sweep(path);
+            Ok(s)
+        }
         None => Err(USAGE.into()),
+    }
+}
+
+/// Removes the temporary files that unfinished saves left beside `path`, after an open or a save.
+/// Never fatal: one that can't be removed is left where it is, with one line on stderr.
+fn sweep(path: &std::path::Path) {
+    if projectcraft_engine::sweep_stale_temps(path).failed {
+        eprintln!("warning: couldn't remove a temporary file left by an unfinished save beside {}", path.display());
     }
 }
 
@@ -55,7 +70,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
                         let params = serde_json::from_str(params).map_err(|e| format!("{id}: params aren't JSON: {e}"))?;
                         s.run(id, &params).map_err(|e| format!("{id}: {e}"))?;
                     }
-                    "--save" => s.save_to(std::path::Path::new(v)).map_err(|e| e.to_string())?,
+                    "--save" => {
+                        let path = std::path::Path::new(v);
+                        s.save_to(path).map_err(|e| e.to_string())?;
+                        sweep(path);
+                    }
                     _ => return Err(format!("unknown option {a}\n\n{USAGE}")),
                 }
             }
