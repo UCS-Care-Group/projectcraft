@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M1.1 summary tasks and summary links; M1.3 hard constraints; M1.5 Open/Save dialogs; M1.5 autosave and recovery copy; planning docs made private; roadmap format as MailCraft; security hardening) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (all 16 M1 tickets landed; headline numbers refreshed; three follow-ups open before M1 is called reached) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -8,10 +8,11 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 
 | Number | Value | Kind |
 |---|---|---|
-| M1 tickets done | **12 / 16** | measured (GitHub issues) |
-| Commands / crates | 12 commands · 4 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
-| Tests | 115 `#[test]`s; property tests on the file reader, the duration and predecessor parsers, outline changes and the scheduler (summaries with any links and constraints) | measured (source) |
+| M1 tickets done | **16 / 16**; 3 follow-ups open (#26, #28, #39) | measured (GitHub issues) |
+| Commands / crates | 18 commands · 4 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
+| Tests | 161 `#[test]`s; 6 property-test suites; property tests on the file reader, the duration and predecessor parsers, outline changes and the scheduler (summaries with any links and constraints) | measured (source) |
 | Builds verified | Windows, macOS and Linux (CI on each), the browser build (wasm) | measured |
+| Reschedule time | 200 tasks: ~0.07 ms (gate 10 ms); 2,000 tasks: ~0.9 ms | measured (`cargo xtask perf`, release) |
 | Releases | none yet | measured |
 
 ## M0 — Foundations ✅ (2026-10-15)
@@ -22,12 +23,14 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] Gantt Chart view (task sheet + bars), `.projectcraft` JSON, CLI
 
 ## M1 — A plan you can run a real project on
+Every item below has landed. M1 is reached once the follow-ups #26 (milestone with a Start No Earlier Than date), #39 (exact finish holds from a summary) and #28 (file dialogs without a portal on Linux) are fixed.
+
 - [x] Command param schemas and effects; `format_version`
 - [x] Summary tasks (outline levels, indent/outdent, rolled-up dates; summary links and constraints hold their subtasks; circular outline changes refused)
 - [x] ID as row number, Unique ID stable; insert, move and delete rows; selection and keyboard
 - [x] Calendar exceptions and the timescale (weeks/months, zoom)
-- [ ] Constraints (Start No Earlier Than, Must Finish On…) and deadlines; negative slack warning
-- [ ] Atomic save, Open/Save dialogs, autosave (on by default), recovery copy, recent files
+- [x] Constraints (Start No Earlier Than, Must Finish On…) and deadlines; negative slack warning
+- [x] Atomic save, Open/Save dialogs, autosave (on by default), recovery copy, recent files
 - [x] About 15 worked examples citing Project's documentation; 200 tasks under 10 ms
 - [x] Theme tokens (light/dark), `tl!` translation, look checked in screenshots (`ui_shot`)
 
@@ -73,3 +76,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | M1.5 autosave and recovery copy |
 | 2026-10-16 | minor | M1.4 calendar exceptions |
 | 2026-10-16 | minor | M1.1 summary links |
+| 2026-10-16 | minor | All M1 tickets landed; headline numbers refreshed; reschedule timings added |
