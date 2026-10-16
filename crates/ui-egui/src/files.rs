@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use projectcraft_engine::Session;
 
-use crate::{App, i18n};
+use crate::{App, Selection, i18n};
 
 /// Longest the recent-files list gets.
 pub const MAX_RECENT: usize = 10;
@@ -107,6 +107,7 @@ impl App {
                 self.session = session;
                 self.path = Some(path.to_path_buf());
                 self.editing = None;
+                self.sel = Selection::default();
                 self.status = i18n::fmt(tl!("Opened {path}"), &[("path", &path.display().to_string())]);
                 push_recent(&mut self.recent, path);
                 self.recent_changed = true;

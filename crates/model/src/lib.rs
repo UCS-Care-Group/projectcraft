@@ -6,6 +6,7 @@
 
 mod duration;
 mod outline;
+mod rows;
 mod schedule;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -338,34 +339,12 @@ impl Project {
         self.tasks.iter_mut().find(|t| t.id == id).ok_or(ModelError::NoTask(id))
     }
 
-    /// Adds a task at the end and returns its id.
+    /// Adds a task at the end, at the top level, and returns its Unique ID.
     pub fn add_task(&mut self, name: impl Into<String>, duration: i64) -> Result<TaskId, ModelError> {
-        if self.tasks.len() >= MAX_TASKS {
-            return Err(ModelError::Invalid(format!("a project holds at most {MAX_TASKS} tasks")));
-        }
-        let id = TaskId(self.next_id.max(1));
-        self.next_id = id.0.checked_add(1).ok_or_else(|| ModelError::Invalid("out of task ids".into()))?;
-        self.tasks.push(Task {
-            id,
-            name: name.into(),
-            duration: check_days(duration)?,
-            preds: Vec::new(),
-            constraint: Constraint::Asap,
-            outline_level: 1,
-            deadline: None,
-        });
+        let task = self.new_task(name.into(), duration, 1)?;
+        let id = task.id;
+        self.tasks.push(task);
         Ok(id)
-    }
-
-    /// Removes a task and every link to it. Rows below take the nearest level the outline rule allows.
-    pub fn delete_task(&mut self, id: TaskId) -> Result<(), ModelError> {
-        self.task(id)?;
-        self.tasks.retain(|t| t.id != id);
-        for t in &mut self.tasks {
-            t.preds.retain(|l| l.pred != id);
-        }
-        self.normalize_outline();
-        Ok(())
     }
 
     /// The 1-based row a task is on: its ID, which renumbers as rows are inserted, moved or deleted.
@@ -496,7 +475,7 @@ mod tests {
         let b = p.add_task("b", 1).unwrap();
         let c = p.add_task("c", 1).unwrap();
         // Rows 1, 2 after a is deleted: b is row 1, c is row 2.
-        p.delete_task(a).unwrap();
+        p.delete_tasks(&[a]).unwrap();
         assert_eq!((p.row_of(b), p.row_of(c), p.row_of(a)), (Some(1), Some(2), None));
         let links = p.parse_preds_rows("1SS+2").unwrap();
         assert_eq!(links, vec![Link { pred: b, kind: LinkKind::SS, lag: 2 }]);

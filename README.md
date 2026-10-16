@@ -9,10 +9,10 @@ ProjectCraft is a clean-room reimplementation of the project planner people alre
 ProjectCraft follows the architecture and conventions of [MailCraft](https://github.com/UCS-Care-Group/mailcraft), [WordCraft](https://github.com/storytold/wordcraft) and the other Craft apps: the same layered crates, the same "everything is a command" engine, the same egui front end, tooling and quality gates.
 
 ## What works today
-- **Tasks:** add, rename, change duration, delete; milestones (duration 0).
+- **Tasks:** add, insert, move, rename, change duration, delete (a summary moves or deletes with its subtasks); milestones (duration 0).
 - **Links:** finish-to-start, start-to-start, finish-to-finish, start-to-finish, with lag or lead, typed in the Predecessors column (`3, 5SS+2, 7FF-1`). Loops are refused.
 - **Scheduling:** forward and backward pass over working days (Monday to Friday, plus holidays in the file); total slack; critical tasks in red.
-- **Gantt Chart:** the task sheet with bars and milestone diamonds; undo and redo for every change.
+- **Gantt Chart:** the task sheet with bars and milestone diamonds; select rows with click, Shift-click and Ctrl-click; arrows, Enter, F2, Insert, Delete and Alt+Shift+→/← work as in a spreadsheet; undo and redo for every change.
 - **Files:** `.projectcraft` (JSON).
 - **Command line:** every command, and the schedule printed as a table.
 

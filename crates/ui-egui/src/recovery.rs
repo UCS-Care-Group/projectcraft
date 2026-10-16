@@ -53,7 +53,7 @@ pub(crate) struct Keeper {
     /// The recovery copy on disk that belongs to the open project.
     written: Option<PathBuf>,
     /// A recovery copy waiting for the owner's Restore / Discard.
-    offer: Option<PathBuf>,
+    pub(crate) offer: Option<PathBuf>,
 }
 
 impl App {

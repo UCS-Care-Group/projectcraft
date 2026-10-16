@@ -24,7 +24,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 ## M1 — A plan you can run a real project on
 - [x] Command param schemas and effects; `format_version`
 - [x] Summary tasks (outline levels, indent/outdent, rolled-up dates; summary links and constraints hold their subtasks; circular outline changes refused)
-- [ ] ID as row number, Unique ID stable; insert, move and delete rows; selection and keyboard
+- [x] ID as row number, Unique ID stable; insert, move and delete rows; selection and keyboard
 - [x] Calendar exceptions and the timescale (weeks/months, zoom)
 - [ ] Constraints (Start No Earlier Than, Must Finish On…) and deadlines; negative slack warning
 - [ ] Atomic save, Open/Save dialogs, autosave (on by default), recovery copy, recent files
@@ -60,6 +60,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | SEC: on Unix every file ProjectCraft writes (project file via its atomic-save temp, `.bak`, recovery copy, settings files) is created 0600, and new settings and recovery folders 0700; no-op on Windows and the web (#37) |
 | 2026-10-16 | M1.3: deadlines: `task.setDeadline` (no date clears); a deadline never moves a task but caps its late finish, so finishing after it gives negative slack back through the predecessors; missed deadlines flagged (sheet indicator, CLI `>`); deadline marker on the Gantt; Deadline column; worked examples (#13) |
 | 2026-10-16 | M1.4: Gantt timescale in two tiers (weeks over days, months over weeks, years over months) from View ▸ Timescale or the toolbar; Zoom In / Zoom Out (Ctrl+= / Ctrl+-) in steps, clamped; zoom is view state (not saved, not undone); weekends and non-working exceptions shaded behind the bars, working exceptions not; only visible columns drawn (#15) |
+| 2026-10-16 | M1.2: `task.insert` (above a task, at its outline level), `task.move` and `task.delete` on several tasks at once, each one undo step; a summary moves or deletes with its subtasks; Unique IDs kept and never reused, links survive reorder. Sheet: click, Shift-click and Ctrl-click select rows; arrows, Enter, F2, typing to edit, Escape, Insert, Delete, Alt+Shift+→/← on the selection (#10) |
 
 ## Revision history
 | Date | Change | Summary |

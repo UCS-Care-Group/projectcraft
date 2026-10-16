@@ -271,6 +271,27 @@ fn ids() -> Value {
     json!({"type": "array", "items": task_id(), "description": "the tasks' Unique IDs (not their row IDs); each moves with its subtasks"})
 }
 
+/// A list of Unique IDs, described for one command.
+fn ids_for(what: &str) -> Value {
+    json!({"type": "array", "items": task_id(), "description": format!("the tasks' Unique IDs (not their row IDs); {what}")})
+}
+
+/// An optional Unique ID param naming the row to go above; absent means the end.
+fn above(what: &str) -> Value {
+    json!({"type": "integer", "minimum": 1, "maximum": u32::MAX, "description": format!("the Unique ID (not the row ID) of the task to {what} above; the end if absent")})
+}
+
+fn opt_id_param(v: &Value, k: &str) -> Result<Option<TaskId>, CmdError> {
+    match v.get(k) {
+        None | Some(Value::Null) => Ok(None),
+        Some(n) => n
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .map(|n| Some(TaskId(n)))
+            .ok_or_else(|| CmdError::Params(format!("`{k}` must be a Unique ID"))),
+    }
+}
+
 fn id_param(v: &Value) -> Result<TaskId, CmdError> {
     let n = int_param(v, "id")?;
     u32::try_from(n).map(TaskId).map_err(|_| CmdError::Params(format!("no task {n}")))
@@ -342,6 +363,27 @@ const COMMANDS: &[CommandSpec] = &[
         run: |p, v| {
             let n = v.get("name").and_then(Value::as_str).map_or_else(|| "New task".to_owned(), name);
             p.add_task(n, v.get("duration").and_then(Value::as_i64).unwrap_or(1))?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.insert",
+        label: "Insert Task",
+        effect: Effect::Edit,
+        schema: || object(json!({"before": above("insert"), "name": {"type": "string"}, "duration": days()}), &[]),
+        run: |p, v| {
+            let n = v.get("name").and_then(Value::as_str).map_or_else(|| "New task".to_owned(), name);
+            p.insert_task(opt_id_param(v, "before")?, n, v.get("duration").and_then(Value::as_i64).unwrap_or(1))?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.move",
+        label: "Move Task",
+        effect: Effect::Edit,
+        schema: || object(json!({"ids": ids_for("each moves with its subtasks"), "to": above("move")}), &["ids"]),
+        run: |p, v| {
+            p.move_tasks(&ids_param(v)?, opt_id_param(v, "to")?)?;
             Ok(())
         },
     },
@@ -453,9 +495,9 @@ const COMMANDS: &[CommandSpec] = &[
         id: "task.delete",
         label: "Delete Task",
         effect: Effect::Destructive,
-        schema: || object(json!({"id": task_id()}), &["id"]),
+        schema: || object(json!({"ids": ids_for("each is deleted with its subtasks")}), &["ids"]),
         run: |p, v| {
-            p.delete_task(id_param(v)?)?;
+            p.delete_tasks(&ids_param(v)?)?;
             Ok(())
         },
     },
@@ -589,13 +631,13 @@ mod tests {
     fn commands_take_unique_ids_that_survive_deletes_and_save() {
         for c in commands() {
             for (k, p) in (c.schema)()["properties"].as_object().unwrap() {
-                if k == "id" || k == "ids" || k == "text" {
+                if ["id", "ids", "text", "before", "to"].contains(&k.as_str()) {
                     assert!(p["description"].as_str().unwrap().contains("Unique ID"), "{}.{k}", c.id);
                 }
             }
         }
         let mut s = sample();
-        s.run("task.delete", &json!({"id": 1})).unwrap();
+        s.run("task.delete", &json!({"ids": [1]})).unwrap();
         // Task 3 is now on row 2; commands still name it 3, and links name Unique IDs.
         assert_eq!(s.project.row_of(TaskId(3)), Some(2));
         s.run("task.setPredecessors", &json!({"id": 4, "text": "3SS+1"})).unwrap();
