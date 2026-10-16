@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::resource::{check_money, fixed_text, parse_fixed};
 use crate::{
-    DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS, DurationUnit, FULL_TIME, MAX_UNITS, ModelError, Options, Outline, Project, ResourceId,
-    ResourceType, TaskId, check_name, format_money, parse_money, parse_units, units_text,
+    Currency, DurationUnit, FULL_TIME, MAX_UNITS, ModelError, Options, Outline, Project, ResourceId, ResourceType, TaskId, check_name, parse_units,
+    units_text,
 };
 
 /// Most assignments in one project. ponytail: a cap, not a measured limit.
@@ -128,11 +128,12 @@ pub fn assignment_work(units: Units, duration: i64, options: &Options) -> Assign
 
 /// Reads the text between an assignment's brackets for a resource of `kind`: a percentage for a
 /// work resource (`50%`, `50`), a quantity with an optional label and rate for a material
-/// (`5 tons`, `5`, `2 tons/d`, `2/day`), an amount for a cost resource (`£200`).
-pub fn parse_assignment_units(kind: ResourceType, text: &str) -> Result<Units, ModelError> {
+/// (`5 tons`, `5`, `2 tons/d`, `2/day`), an amount in the project `currency` for a cost resource
+/// (`£200`).
+pub fn parse_assignment_units(kind: ResourceType, text: &str, currency: &Currency) -> Result<Units, ModelError> {
     match kind {
         ResourceType::Work => Ok(Units::Work(parse_units(text)?)),
-        ResourceType::Cost => Ok(Units::Cost(parse_money(text, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS)?)),
+        ResourceType::Cost => Ok(Units::Cost(currency.parse(text)?)),
         ResourceType::Material => {
             let bad = || {
                 let text: String = text.trim().chars().take(30).collect();
@@ -234,7 +235,7 @@ impl Project {
             Units::Work(u) => units_text(u),
             Units::Fixed(q) => with_label(q),
             Units::Rate { quantity, per } => format!("{}/{}", with_label(quantity), per.suffix()),
-            Units::Cost(m) => format_money(m, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS),
+            Units::Cost(m) => self.currency.format(m),
         }
     }
 
@@ -242,7 +243,7 @@ impl Project {
     pub fn units_text_full(&self, a: &Assignment) -> String {
         match a.units {
             Units::Work(u) => units_text(u),
-            Units::Cost(m) => format_money(m, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS),
+            Units::Cost(m) => self.currency.format(m),
             _ => self.units_text(a),
         }
     }
@@ -331,7 +332,7 @@ impl Project {
             }
             let r = p.resource(id)?;
             let units = match units {
-                Some(u) => parse_assignment_units(r.kind, &u).map_err(|e| ModelError::Invalid(format!("{}: {e}", r.name)))?,
+                Some(u) => parse_assignment_units(r.kind, &u, &p.currency).map_err(|e| ModelError::Invalid(format!("{}: {e}", r.name)))?,
                 // Unchanged when it was already assigned with units Project leaves unshown.
                 None => p
                     .assignments_of(task)
@@ -530,14 +531,14 @@ mod tests {
         let (mut p, t) = project();
         p.task_mut(t).unwrap().duration = 2 * D;
         let o = p.options;
-        let fixed = parse_assignment_units(ResourceType::Material, "80 tons").unwrap();
-        let variable = parse_assignment_units(ResourceType::Material, "80 tons/day").unwrap();
+        let fixed = parse_assignment_units(ResourceType::Material, "80 tons", &Currency::default()).unwrap();
+        let variable = parse_assignment_units(ResourceType::Material, "80 tons/day", &Currency::default()).unwrap();
         assert_eq!(assignment_work(fixed, 2 * D, &o), AssignmentWork::Quantity(8_000));
         assert_eq!(assignment_work(variable, 2 * D, &o), AssignmentWork::Quantity(16_000));
         assert_eq!(assignment_work(fixed, 4 * D, &o), AssignmentWork::Quantity(8_000), "fixed: the same whatever the duration");
         assert_eq!(assignment_work(variable, 4 * D, &o), AssignmentWork::Quantity(32_000), "variable: in proportion");
         // A rate per hour over half a day: 4 hours × 2.5 = 10.
-        let hourly = parse_assignment_units(ResourceType::Material, "2.5/h").unwrap();
+        let hourly = parse_assignment_units(ResourceType::Material, "2.5/h", &Currency::default()).unwrap();
         assert_eq!(assignment_work(hourly, 240, &o), AssignmentWork::Quantity(1_000));
         assert_eq!(assignment_work(Units::Cost(500), 2 * D, &o), AssignmentWork::None);
     }
@@ -613,7 +614,7 @@ mod tests {
                 proptest::prop_assert_eq!(&p, &before);
             }
             for kind in ResourceType::ALL {
-                let _ = parse_assignment_units(kind, &s);
+                let _ = parse_assignment_units(kind, &s, &Currency::default());
             }
         }
 

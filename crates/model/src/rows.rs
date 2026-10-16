@@ -116,6 +116,7 @@ impl Project {
             constraint: Constraint::Asap,
             outline_level,
             deadline: None,
+            fixed_cost: 0,
         })
     }
 

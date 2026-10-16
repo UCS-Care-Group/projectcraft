@@ -10,8 +10,7 @@ use std::collections::BTreeMap;
 
 use egui::{Key, RichText};
 use projectcraft_engine::model::{
-    Assignment, AssignmentWork, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS, DurationUnit, Project, ResourceId, ResourceType, TaskId,
-    assignment_work, default_units, duration_text, format_money, quantity_text,
+    Assignment, AssignmentWork, DurationUnit, Project, ResourceId, ResourceType, TaskId, assignment_work, default_units, duration_text, quantity_text,
 };
 use serde_json::{Value, json};
 
@@ -33,7 +32,7 @@ pub(crate) fn assignment_work_text(project: &Project, a: &Assignment) -> String 
         AssignmentWork::Quantity(q) if label.is_empty() => quantity_text(q),
         AssignmentWork::Quantity(q) => format!("{} {label}", quantity_text(q)),
         AssignmentWork::None => match a.units {
-            projectcraft_engine::model::Units::Cost(m) => format_money(m, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS),
+            projectcraft_engine::model::Units::Cost(m) => project.currency.format(m),
             _ => String::new(),
         },
     }
@@ -49,6 +48,36 @@ pub(crate) fn work_lines(project: &Project, task: TaskId) -> String {
         })
         .collect();
     if lines.is_empty() { tl!("No resources assigned").to_owned() } else { lines.join("\n") }
+}
+
+/// The Cost cell's tooltip: each assignment's cost, the fixed cost, and for a summary what its
+/// subtasks add (`Ann: £1,000.00`).
+pub(crate) fn cost_lines(project: &Project, task: TaskId) -> String {
+    let money = |m: i64| project.currency.format(m);
+    let mut lines: Vec<String> = project
+        .assignments_of(task)
+        .map(|a| {
+            let name = project.resource(a.resource).map(|r| r.name.clone()).unwrap_or_default();
+            format!("{name}: {}", money(project.assignment_cost(a)))
+        })
+        .collect();
+    let fixed = project.task(task).map_or(0, |t| t.fixed_cost);
+    if fixed != 0 {
+        lines.push(format!("{}: {}", tl!("Fixed cost"), money(fixed)));
+    }
+    let own = lines.len();
+    let total = project.cost_by_task().get(&task).copied().unwrap_or(0);
+    let mine = project.assignments_of(task).fold(fixed, |sum, a| sum.saturating_add(project.assignment_cost(a)));
+    if total != mine {
+        lines.push(format!("{}: {}", tl!("Subtasks"), money(total.saturating_sub(mine))));
+    }
+    if lines.is_empty() {
+        return tl!("No costs").to_owned();
+    }
+    if own < lines.len() || lines.len() > 1 {
+        lines.push(format!("{}: {}", tl!("Total"), money(total)));
+    }
+    lines.join("\n")
 }
 
 /// The status line after Resource Names made new resources: their names, or nothing.

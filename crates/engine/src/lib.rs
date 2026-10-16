@@ -490,11 +490,11 @@ fn assignment_params(v: &Value) -> Result<(TaskId, ResourceId), CmdError> {
 /// The `units` param read for the resource's type; `None` when absent.
 fn units_param(p: &Project, resource: ResourceId, v: &Value) -> Result<Option<model::Units>, CmdError> {
     let Some(text) = v.get("units").and_then(Value::as_str) else { return Ok(None) };
-    Ok(Some(model::parse_assignment_units(p.resource(resource)?.kind, text)?))
+    Ok(Some(model::parse_assignment_units(p.resource(resource)?.kind, text, &p.currency)?))
 }
 
 fn units(what: &str) -> Value {
-    json!({"type": "string", "description": format!("{what}; as the Resource Names column writes them: a work resource's percent of its working time (50%), a material's quantity, fixed (5 tons) or per time (2 tons/d, with m, h, d, w or mo), or a cost resource's amount (£200)")})
+    json!({"type": "string", "description": format!("{what}; as the Resource Names column writes them: a work resource's percent of its working time (50%), a material's quantity, fixed (5 tons) or per time (2 tons/d, with m, h, d, w or mo), or a cost resource's amount in the project currency (£200)")})
 }
 
 const COMMANDS: &[CommandSpec] = &[
@@ -528,6 +528,9 @@ const COMMANDS: &[CommandSpec] = &[
                     "hoursPerDay": {"type": "number", "minimum": 1, "maximum": 24, "description": "working hours in a day (d); default 8; whole minutes, e.g. 7.5"},
                     "hoursPerWeek": {"type": "number", "minimum": 1, "maximum": 168, "description": "working hours in a week (w); default 40; whole minutes"},
                     "daysPerMonth": {"type": "integer", "minimum": 1, "maximum": 31, "description": "working days in a month (mo); default 20"},
+                    "currency": {"type": "string", "description": "the project's one currency, as its ISO 4217 code (GBP, the default; EUR, USD, JPY, BHD…). No exchange rates: amounts keep their value, rounded half to even when the new currency has fewer decimal places. A known code brings its symbol and decimal places"},
+                    "currencySymbol": {"type": "string", "description": "the symbol amounts show with (£, €, $, CHF); at most 8 characters, no digits, signs, commas or full stops. Absent: the currency's own"},
+                    "currencyDigits": {"type": "integer", "minimum": 0, "maximum": model::MAX_CURRENCY_DIGITS, "description": "decimal places of the currency's minor unit (2 for pence, 0 for yen, 3 for fils). Absent: the currency's own"},
                 }),
                 &[],
             )
@@ -545,6 +548,23 @@ const COMMANDS: &[CommandSpec] = &[
             }
             o.check()?;
             p.options = o;
+            let symbol = v.get("currencySymbol").and_then(Value::as_str);
+            let digits = match v.get("currencyDigits").and_then(Value::as_i64) {
+                Some(d) => Some(
+                    u32::try_from(d)
+                        .map_err(|_| CmdError::Params(format!("`currencyDigits` must be between 0 and {}", model::MAX_CURRENCY_DIGITS)))?,
+                ),
+                None => None,
+            };
+            if v.get("currency").is_some() || symbol.is_some() || digits.is_some() {
+                // A symbol or places alone keep the code; a new code alone brings its own.
+                let code = v.get("currency").and_then(Value::as_str);
+                let same = code.is_none_or(|c| c.trim().eq_ignore_ascii_case(&p.currency.code));
+                let (symbol, digits) =
+                    if same { (symbol.or(Some(p.currency.symbol.as_str())), digits.or(Some(p.currency.digits))) } else { (symbol, digits) };
+                let c = model::Currency::new(code.unwrap_or(&p.currency.code), symbol, digits)?;
+                p.set_currency(c)?;
+            }
             Ok(())
         },
     },
@@ -671,6 +691,21 @@ const COMMANDS: &[CommandSpec] = &[
                 None => None,
             };
             p.task_mut(id_param(v)?)?.deadline = date;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.setFixedCost",
+        label: "Fixed Cost",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({"id": task_id(), "amount": money("the task's own cost, not a resource's; 0 clears it. Summary tasks take one too")}),
+                &["id", "amount"],
+            )
+        },
+        run: |p, v| {
+            p.set_fixed_cost(id_param(v)?, int_param(v, "amount")?)?;
             Ok(())
         },
     },
@@ -974,6 +1009,10 @@ pub fn sample() -> Session {
     for (id, text) in assigned {
         let _ = s.run("task.setResourceNames", &json!({"id": id, "text": text}));
     }
+    // Costs of the tasks themselves: the furniture, and the cabling contractor's quote.
+    for (id, amount) in [(3, 480_000), (5, 125_000)] {
+        let _ = s.run("task.setFixedCost", &json!({"id": id, "amount": amount}));
+    }
     // The sample opens with nothing to undo.
     s.undo.clear();
     s
@@ -1187,6 +1226,67 @@ mod tests {
             s.run("edit.undo", &json!({})).unwrap();
         }
         assert_eq!(s.project, before, "each command is one undo step");
+    }
+
+    /// The sample's costs to the penny, worked by hand: Priya £45.00/hr, Tom £52.50/hr, the
+    /// removals crew £38.00/hr and £150.00 a use, packing boxes £2.50 each, travel £150.00.
+    #[test]
+    fn sample_costs_to_the_penny_and_cost_commands() {
+        let mut s = sample();
+        let cost = |s: &Session, id: u32| s.project.cost_by_task()[&TaskId(id)];
+        // 16h × £45 = £720; 12h × £45 + 12h × £52.50 = £1,170; 8h × £45 + £4,800 fixed.
+        assert_eq!((cost(&s, 1), cost(&s, 2), cost(&s, 3)), (72_000, 117_000, 516_000));
+        // 20h × £52.50 + £1,250 fixed; 32h × £38 + £150 + 32 boxes × £2.50; 24h × £38 + £150 + 8h × £45 + £150.
+        assert_eq!((cost(&s, 5), cost(&s, 6), cost(&s, 7)), (230_000, 144_600, 157_200));
+        assert_eq!(s.project.total_cost(), 1_236_800);
+        let before = s.project.clone();
+        s.run("task.setFixedCost", &json!({"id": 4, "amount": 99})).unwrap();
+        assert_eq!(cost(&s, 4), 99);
+        for bad in [
+            json!({"id": 4, "amount": -1}),
+            json!({"id": 4, "amount": model::MAX_MONEY + 1}),
+            json!({"id": 99, "amount": 1}),
+            json!({"id": 4, "amount": 1.5}),
+        ] {
+            assert!(s.run("task.setFixedCost", &bad).is_err(), "{bad}");
+        }
+        // Currency: a known code brings its symbol and places; amounts keep their value.
+        s.run("project.setOptions", &json!({"currency": "eur"})).unwrap();
+        assert_eq!(s.project.currency.format(s.project.total_cost()), "€12,368.99");
+        assert_eq!(s.project.resource_names(TaskId(7)), "Removals crew[300%], Priya Shah, Travel[€150.00]");
+        s.run("project.setOptions", &json!({"currencySymbol": "E"})).unwrap();
+        assert_eq!((s.project.currency.code.as_str(), s.project.currency.symbol.as_str()), ("EUR", "E"));
+        s.run("project.setOptions", &json!({"currency": "JPY"})).unwrap();
+        // Rates round half to even to whole yen (£52.50 → ¥52, £2.50 → ¥2, £0.99 → ¥1), so the
+        // total is recosted from them: 720 + 1,164 + 5,160 + 1 + 2,290 + 1,430 + 1,572.
+        assert_eq!(s.project.currency.format(s.project.total_cost()), "¥12,337");
+        s.run("assignment.setUnits", &json!({"task": 7, "resource": 5, "units": "¥2,000"})).unwrap();
+        assert!(s.run("assignment.setUnits", &json!({"task": 7, "resource": 5, "units": "¥1.50"})).is_err());
+        s.run("project.setOptions", &json!({"currency": "BHD", "currencyDigits": 3})).unwrap();
+        assert_eq!(s.project.currency.format(s.project.resource(ResourceId(1)).unwrap().standard_rate), "BD45.000");
+        for bad in [
+            json!({"currency": "POUNDS"}),
+            json!({"currencyDigits": 5}),
+            json!({"currencySymbol": "1"}),
+            json!({"currency": "GBP", "hoursPerDay": 0}),
+        ] {
+            let after = s.project.clone();
+            assert!(s.run("project.setOptions", &bad).is_err(), "{bad}");
+            assert_eq!(s.project, after);
+        }
+        let round = Session::load_json(&s.save_json().unwrap()).unwrap();
+        assert_eq!(round.project, s.project);
+        while s.can_undo() {
+            s.run("edit.undo", &json!({})).unwrap();
+        }
+        assert_eq!(s.project, before, "each command is one undo step");
+        // A file with a damaged currency or fixed cost is refused.
+        let mut v: Value = serde_json::from_str(&round.save_json().unwrap()).unwrap();
+        v["currency"]["digits"] = json!(9);
+        assert!(Session::load_json(&v.to_string()).is_err());
+        let mut v: Value = serde_json::from_str(&round.save_json().unwrap()).unwrap();
+        v["tasks"][0]["fixed_cost"] = json!(-5);
+        assert!(Session::load_json(&v.to_string()).is_err());
     }
 
     /// Typing an unknown name in Resource Names makes a work resource and assigns it: one command,

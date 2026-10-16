@@ -50,11 +50,14 @@ enum Field {
     Finish,
     Preds,
     Resources,
+    /// Read-only: the task's cost, its assignments' plus its fixed cost (and its subtasks').
+    Cost,
+    FixedCost,
     Deadline,
 }
 
 /// The columns, left to right: each field, its heading and its width.
-const COLUMNS: [(Field, &str, f32); 8] = [
+const COLUMNS: [(Field, &str, f32); 10] = [
     (Field::Name, "Task Name", NAME_W),
     (Field::Duration, "Duration", 60.0),
     (Field::Work, "Work", 60.0),
@@ -62,11 +65,24 @@ const COLUMNS: [(Field, &str, f32); 8] = [
     (Field::Finish, "Finish", 80.0),
     (Field::Preds, "Predecessors", 100.0),
     (Field::Resources, "Resource Names", 170.0),
+    (Field::Cost, "Cost", 84.0),
+    (Field::FixedCost, "Fixed Cost", 84.0),
     (Field::Deadline, "Deadline", 80.0),
 ];
 
 /// The columns the cursor moves across, left to right.
-const FIELDS: [Field; 8] = [Field::Name, Field::Duration, Field::Work, Field::Start, Field::Finish, Field::Preds, Field::Resources, Field::Deadline];
+const FIELDS: [Field; 10] = [
+    Field::Name,
+    Field::Duration,
+    Field::Work,
+    Field::Start,
+    Field::Finish,
+    Field::Preds,
+    Field::Resources,
+    Field::Cost,
+    Field::FixedCost,
+    Field::Deadline,
+];
 
 /// The command a typed Start or Finish issues: Start No Earlier Than or Finish No Earlier Than
 /// that date. The cell keeps showing the scheduler's date, as in Microsoft Project. A typed
@@ -382,10 +398,13 @@ impl App {
         egui::Panel::bottom("status").show(ui, |ui| {
             let text = match &self.session.schedule {
                 Err(e) => i18n::fmt(tl!("Can't schedule: {error}"), &[("error", &e.to_string())]),
-                Ok(s) if self.status.is_empty() => i18n::fmt(
-                    tl!("Start {start} · Finish {finish}"),
-                    &[("start", &self.session.project.start.to_string()), ("finish", &s.finish.to_string())],
-                ),
+                Ok(s) if self.status.is_empty() => {
+                    let p = &self.session.project;
+                    i18n::fmt(
+                        tl!("Start {start} · Finish {finish} · Cost {cost}"),
+                        &[("start", &p.start.to_string()), ("finish", &s.finish.to_string()), ("cost", &p.currency.format(p.total_cost()))],
+                    )
+                }
                 Ok(_) => self.status.clone(),
             };
             ui.label(text);
@@ -545,7 +564,7 @@ impl App {
     }
 
     /// A cell's text as the sheet shows it; `None` where it can't be edited (a summary's duration,
-    /// the work).
+    /// the work, the cost).
     fn cell_text(&self, id: TaskId, field: Field) -> Option<String> {
         let p = &self.session.project;
         let t = p.task(id).ok()?;
@@ -555,7 +574,8 @@ impl App {
             Field::Name => t.name.clone(),
             Field::Duration if p.is_summary(id) => return None,
             Field::Duration => duration_text(t.duration, t.duration_unit, &p.options),
-            Field::Work => return None,
+            Field::Work | Field::Cost => return None,
+            Field::FixedCost => p.currency.format(t.fixed_cost),
             Field::Start => date(dates.map(|d| d.start)),
             Field::Finish => date(dates.map(|d| d.finish)),
             Field::Preds => p.preds_text_rows(&t.preds),
@@ -596,7 +616,14 @@ impl App {
                     self.status = assign::created_message(&before, &self.session.project).unwrap_or_default();
                 }
             }
-            Field::Work => {}
+            // Read in the project currency; the command takes whole minor units.
+            Field::FixedCost => match self.session.project.currency.parse(&text) {
+                Ok(amount) => {
+                    self.run("task.setFixedCost", json!({"id": id.0, "amount": amount}));
+                }
+                Err(e) => self.status = e.to_string(),
+            },
+            Field::Work | Field::Cost => {}
         }
     }
 
@@ -836,14 +863,25 @@ impl App {
             // ID and the indicators are narrow, fixed-width columns.
             ui.add_sized([ID_W, ROW_H], egui::Label::new(RichText::new(tl!("ID")).strong()));
             ui.add_sized([ROW_H, ROW_H], egui::Label::new(""));
-            for (_, h, _) in COLUMNS {
-                ui.label(RichText::new(tl!(h)).strong());
+            for (field, h, width) in COLUMNS {
+                if matches!(field, Field::Cost | Field::FixedCost) {
+                    // Over the amounts, on the right as they are.
+                    let text = tl!(h);
+                    let (rect, r) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::hover());
+                    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+                    let font = egui::TextStyle::Body.resolve(ui.style());
+                    let colour = ui.visuals().strong_text_color();
+                    ui.painter().with_clip_rect(rect).text(rect.right_center() - Vec2::new(4.0, 0.0), egui::Align2::RIGHT_CENTER, text, font, colour);
+                } else {
+                    ui.label(RichText::new(tl!(h)).strong());
+                }
             }
             let (header, _) = ui.allocate_exact_size(Vec2::new(chart_w, timescale::TIER_H * 2.0), Sense::hover());
             timescale::header(ui, header, scale);
             ui.end_row();
             let outline = Outline::of(&self.session.project);
             let work = self.session.project.work_by_task();
+            let costs = self.session.project.cost_by_task();
             // The ID column is the row number; commands get Unique IDs.
             for (i, id) in order.iter().copied().enumerate() {
                 let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
@@ -869,6 +907,7 @@ impl App {
                     let shown = match &value {
                         Some(v) => v.clone(),
                         None if field == Field::Work => assign::work_text(work.get(&id).copied().unwrap_or(0), p),
+                        None if field == Field::Cost => p.currency.format(costs.get(&id).copied().unwrap_or(0)),
                         // A summary's rolled-up duration shows in days.
                         None => duration_text(duration, DurationUnit::Days, &p.options),
                     };
@@ -948,12 +987,19 @@ impl App {
         let t = Tokens::get(ui.ctx());
         let colour = if editable { t.text } else { t.text_dim };
         let font = egui::TextStyle::Body.resolve(ui.style());
-        ui.painter().with_clip_rect(rect).text(rect.left_center() + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, value, font, colour);
+        // Amounts sit on the right, so their digits line up.
+        let painter = ui.painter().with_clip_rect(rect);
+        if matches!(field, Field::Cost | Field::FixedCost) {
+            painter.text(rect.right_center() - Vec2::new(4.0, 0.0), egui::Align2::RIGHT_CENTER, value, font, colour);
+        } else {
+            painter.text(rect.left_center() + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, value, font, colour);
+        }
         if self.sel.cursor == Some(id) && self.field == field {
             ui.painter().rect_stroke(rect.shrink(1.0), 2.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
         }
         let r = match field {
             Field::Work => r.on_hover_text(assign::work_lines(&self.session.project, id)),
+            Field::Cost => r.on_hover_text(assign::cost_lines(&self.session.project, id)),
             _ if !editable => r.on_hover_text(tl!("A summary task's duration is rolled up from its subtasks")),
             _ => r,
         };
@@ -1333,7 +1379,7 @@ mod tests {
     fn the_deadline_column_is_reached_by_the_arrows_and_typed_into() {
         let mut h = sheet(projectcraft_engine::sample());
         click(&mut h, "Order furniture", Modifiers::NONE);
-        for _ in 0..8 {
+        for _ in 0..10 {
             key(&mut h, Modifiers::NONE, Key::ArrowRight);
         }
         assert_eq!(h.state().field, Field::Deadline, "the last column, and no further");
@@ -1342,6 +1388,39 @@ mod tests {
         let d = h.state().session.project.task(TaskId(3)).unwrap().deadline;
         assert_eq!(d.map(|d| d.to_string()).as_deref(), Some("2026-11-13"));
         assert_eq!(picked(&h), [4]);
+    }
+
+    /// Fixed Cost is typed in the project currency; Cost is read-only and adds it to the
+    /// assignments' costs; the status bar shows the project total.
+    #[test]
+    fn fixed_cost_is_typed_and_cost_rolls_it_up() {
+        let mut h = sheet(projectcraft_engine::sample());
+        click(&mut h, "Furniture delivered", Modifiers::NONE);
+        for _ in 0..7 {
+            key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        }
+        assert_eq!(h.state().field, Field::Cost);
+        assert_eq!(h.state().cell_text(TaskId(4), Field::Cost), None, "the cost is read-only");
+        key(&mut h, Modifiers::NONE, Key::F2);
+        assert!(h.state().editing.is_none());
+        key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        typed(&mut h, "£1,099.50");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        let p = &h.state().session.project;
+        assert_eq!(p.task(TaskId(4)).unwrap().fixed_cost, 109_950);
+        assert_eq!(p.cost_by_task()[&TaskId(4)], 109_950);
+        assert_eq!(h.state().cell_text(TaskId(4), Field::FixedCost).as_deref(), Some("£1,099.50"));
+        assert_eq!(assign::cost_lines(p, TaskId(4)), "Fixed cost: £1,099.50");
+        assert_eq!(assign::cost_lines(p, TaskId(7)), "Removals crew: £1,062.00\nPriya Shah: £360.00\nTravel: £150.00\nTotal: £1,572.00");
+        assert_eq!(assign::cost_lines(p, TaskId(8)), "No costs");
+        assert!(h.query_all_by_label_contains("Cost £13,467.50").next().is_some(), "the project total in the status bar");
+        // Back up to task 4 and type something that isn't money: nothing changes, the status says why.
+        key(&mut h, Modifiers::NONE, Key::ArrowUp);
+        let before = h.state().session.project.clone();
+        typed(&mut h, "-5");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        assert_eq!(h.state().session.project, before);
+        assert!(h.state().status.contains("not an amount of money"), "{}", h.state().status);
     }
 
     #[test]
