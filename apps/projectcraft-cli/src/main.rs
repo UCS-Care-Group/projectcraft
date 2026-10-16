@@ -65,15 +65,18 @@ fn run(args: Vec<String>) -> Result<(), String> {
             let sched = s.schedule.as_ref().map_err(|e| format!("can't schedule: {e}"))?;
             println!("{}  (start {}, finish {})", s.project.name, s.project.start, sched.finish);
             println!("{:>4}  {:<28} {:>5}  {:<10}  {:<10}  {:>5}  preds", "UID", "Task Name", "Dur", "Start", "Finish", "Slack");
-            for t in &s.project.tasks {
+            let levels = projectcraft_engine::model::Outline::of(&s.project).levels;
+            for (t, level) in s.project.tasks.iter().zip(levels) {
                 let Some(d) = sched.tasks.get(&t.id) else { continue };
                 let crit = if d.critical { "*" } else { " " };
                 // `!`: a constraint overrides a link (constraint conflict).
                 let warn = if d.constraint_conflict { "!" } else { " " };
+                // Subtasks indent two spaces a level.
+                let name = format!("{}{}", "  ".repeat(level.saturating_sub(1).min(20) as usize), t.name);
                 println!(
                     "{:>4}{crit} {:<28} {:>4}d  {}  {}  {:>5}{warn} {}",
                     t.id,
-                    t.name,
+                    name,
                     t.duration,
                     d.start,
                     d.finish,

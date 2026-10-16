@@ -5,6 +5,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod duration;
+mod outline;
 mod schedule;
 
 use std::collections::BTreeSet;
@@ -13,6 +14,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 pub use duration::{DAYS_PER_MONTH, DAYS_PER_WEEK, parse_duration};
+pub use outline::{CIRCULAR_OUTLINE, MAX_OUTLINE_LEVEL, Outline};
 pub use projectcraft_time::Date;
 pub use schedule::{Driver, Schedule, TaskDates, schedule};
 
@@ -163,6 +165,17 @@ pub struct Task {
     pub preds: Vec<Link>,
     #[serde(default, skip_serializing_if = "Constraint::is_asap")]
     pub constraint: Constraint,
+    /// Depth in the outline, 1 at the top ([`Outline`]). A file without one is level 1.
+    #[serde(default = "top_level", skip_serializing_if = "is_top_level")]
+    pub outline_level: u32,
+}
+
+fn top_level() -> u32 {
+    1
+}
+
+fn is_top_level(l: &u32) -> bool {
+    *l == 1
 }
 
 /// Which days are worked. ponytail: one project calendar; resource and task calendars come with resources.
@@ -252,17 +265,25 @@ impl Project {
         }
         let id = TaskId(self.next_id.max(1));
         self.next_id = id.0.checked_add(1).ok_or_else(|| ModelError::Invalid("out of task ids".into()))?;
-        self.tasks.push(Task { id, name: name.into(), duration: check_days(duration)?, preds: Vec::new(), constraint: Constraint::Asap });
+        self.tasks.push(Task {
+            id,
+            name: name.into(),
+            duration: check_days(duration)?,
+            preds: Vec::new(),
+            constraint: Constraint::Asap,
+            outline_level: 1,
+        });
         Ok(id)
     }
 
-    /// Removes a task and every link to it.
+    /// Removes a task and every link to it. Rows below take the nearest level the outline rule allows.
     pub fn delete_task(&mut self, id: TaskId) -> Result<(), ModelError> {
         self.task(id)?;
         self.tasks.retain(|t| t.id != id);
         for t in &mut self.tasks {
             t.preds.retain(|l| l.pred != id);
         }
+        self.normalize_outline();
         Ok(())
     }
 
@@ -300,6 +321,7 @@ impl Project {
 
     /// Replaces a task's predecessors, refusing links to missing tasks, to itself, or that close a loop.
     pub fn set_preds(&mut self, id: TaskId, preds: Vec<Link>) -> Result<(), ModelError> {
+        self.check_summary_links(id, !preds.is_empty())?;
         for l in &preds {
             self.task(l.pred)?;
             if l.pred == id {

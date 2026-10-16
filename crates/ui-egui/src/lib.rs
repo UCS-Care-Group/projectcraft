@@ -5,7 +5,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use egui::{Key, RichText, Sense, Stroke, Vec2};
-use projectcraft_engine::model::{TaskId, parse_duration, preds_text};
+use projectcraft_engine::model::{Outline, TaskId, parse_duration, preds_text};
 use projectcraft_engine::{Session, time::Date};
 use serde_json::{Value, json};
 
@@ -44,6 +44,18 @@ fn typed_date(field: Field, id: TaskId, text: &str) -> Option<(&'static str, Val
     Some(("task.setConstraint", json!({"id": id.0, "type": ty, "date": text.trim()})))
 }
 
+/// The command Alt+Shift+→ (indent) or Alt+Shift+← (outdent) issues for the selected row.
+/// ponytail: the selected row is the one whose cell has focus; multi-select comes with #10.
+fn outline_key(selected: Option<TaskId>, indent: bool, outdent: bool) -> Option<(&'static str, Value)> {
+    let id = selected?;
+    let cmd = match (indent, outdent) {
+        (true, false) => "task.indent",
+        (false, true) => "task.outdent",
+        _ => return None,
+    };
+    Some((cmd, json!({"ids": [id.0]})))
+}
+
 pub struct App {
     pub session: Session,
     /// Where Save writes, if anywhere.
@@ -74,6 +86,9 @@ const ROW_H: f32 = 22.0;
 const DAY_W: f32 = 18.0;
 /// The ID column: room for five digits.
 const ID_W: f32 = 40.0;
+/// How far each outline level indents a task name.
+const INDENT_W: f32 = 16.0;
+const NAME_W: f32 = 220.0;
 
 impl App {
     pub fn new(session: Session, path: Option<std::path::PathBuf>) -> Self {
@@ -112,6 +127,11 @@ impl App {
         self.intercept_close(&ctx);
         self.file_keys(&ctx);
         let (undo, redo) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::COMMAND, Key::Z), i.consume_key(egui::Modifiers::COMMAND, Key::Y)));
+        let alt_shift = egui::Modifiers::ALT | egui::Modifiers::SHIFT;
+        let (indent, outdent) = ctx.input_mut(|i| (i.consume_key(alt_shift, Key::ArrowRight), i.consume_key(alt_shift, Key::ArrowLeft)));
+        if let Some((id, params)) = outline_key(self.editing.as_ref().map(|(id, _, _)| *id), indent, outdent) {
+            self.run(id, params);
+        }
         if undo {
             self.run("edit.undo", json!({}));
         }
@@ -173,16 +193,27 @@ impl App {
             }
             ui.end_row();
             let p = &self.session.project;
+            let outline = Outline::of(p);
             let rows: Vec<_> = p.tasks.iter().map(|t| (t.id, t.name.clone(), t.duration, p.preds_text_rows(&t.preds))).collect();
             // The ID column is the row number; commands get Unique IDs.
-            for (row, (id, name, duration, preds)) in (1..).zip(rows) {
+            for (i, (id, name, duration, preds)) in rows.into_iter().enumerate() {
                 let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
-                ui.add_sized([ID_W, ROW_H], egui::Label::new(row.to_string()));
+                let summary = outline.is_summary(i);
+                ui.add_sized([ID_W, ROW_H], egui::Label::new(i.saturating_add(1).to_string()));
                 indicator(ui, dates);
-                if let Some(c) = self.cell(ui, id, Field::Name, &name, 220.0) {
+                let indent = (outline.level(i).saturating_sub(1).min(20) as f32) * INDENT_W;
+                let renamed = ui.horizontal(|ui| {
+                    ui.add_space(indent);
+                    self.cell(ui, id, Field::Name, &name, NAME_W - indent)
+                });
+                if let Some(c) = renamed.inner {
                     commands.push(("task.rename", json!({"id": id.0, "name": c})));
                 }
-                if let Some(c) = self.cell(ui, id, Field::Duration, &format!("{duration}d"), 60.0) {
+                let duration_text = format!("{duration}d");
+                if summary {
+                    // Rolled up from the subtasks; not editable while a summary.
+                    ui.label(&duration_text).on_hover_text(tl!("A summary task's duration is rolled up from its subtasks"));
+                } else if let Some(c) = self.cell(ui, id, Field::Duration, &duration_text, 60.0) {
                     match parse_duration(&c) {
                         Ok(d) => commands.push(("task.setDuration", json!({"id": id.0, "duration": d}))),
                         Err(e) => self.status = e.to_string(),
@@ -199,7 +230,12 @@ impl App {
                         Err(e) => self.status = e.to_string(),
                     }
                 }
-                gantt_bar(ui, start, dates, duration == 0);
+                let shape = match (summary, duration) {
+                    (true, _) => Bar::Summary,
+                    (false, 0) => Bar::Milestone,
+                    (false, _) => Bar::Task,
+                };
+                gantt_bar(ui, start, dates, shape);
                 ui.end_row();
             }
         });
@@ -243,7 +279,15 @@ fn indicator(ui: &mut egui::Ui, dates: Option<projectcraft_engine::model::TaskDa
     response.on_hover_text(tl!("Constraint conflict: a link can't be honoured, so this task keeps its constraint date and has negative slack."));
 }
 
-fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::model::TaskDates>, milestone: bool) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bar {
+    Task,
+    Milestone,
+    /// A thin bar over its subtasks' span with a point down at each end.
+    Summary,
+}
+
+fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::model::TaskDates>, shape: Bar) {
     let Some(d) = dates else {
         ui.label("");
         return;
@@ -255,7 +299,16 @@ fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::
     let t = Tokens::get(ui.ctx());
     let colour = if d.critical { t.bar_critical } else { t.bar };
     let p = ui.painter();
-    if milestone {
+    if shape == Bar::Summary {
+        let (left, right) = (rect.left() + x0, rect.left() + x1.max(x0 + 1.0));
+        let (top, bottom) = (rect.top() + 7.0, rect.top() + 12.0);
+        p.rect_filled(egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom)), 0.0, t.bar_summary);
+        let point = 6.0;
+        for (outer, inner) in [(left, left + point), (right, right - point)] {
+            let tip = egui::pos2(outer, bottom + point);
+            p.add(egui::Shape::convex_polygon(vec![egui::pos2(outer, bottom), egui::pos2(inner, bottom), tip], t.bar_summary, Stroke::NONE));
+        }
+    } else if shape == Bar::Milestone {
         let c = egui::pos2(rect.left() + x1, rect.center().y); // the end of its day
         let r = ROW_H * 0.3;
         p.add(egui::Shape::convex_polygon(
@@ -297,5 +350,21 @@ mod tests {
         assert_eq!(params["type"], "FNET");
         assert!(typed_date(Field::Name, TaskId(5), "x").is_none());
         assert!(s.run(cmd, &typed_date(Field::Start, TaskId(5), "next week").unwrap().1).is_err());
+    }
+
+    /// Alt+Shift+→ / ← indent or outdent the selected row; with no row selected the keys do nothing.
+    #[test]
+    fn alt_shift_arrows_indent_and_outdent_the_selected_row() {
+        assert_eq!(outline_key(Some(TaskId(3)), true, false), Some(("task.indent", json!({"ids": [3]}))));
+        assert_eq!(outline_key(Some(TaskId(3)), false, true), Some(("task.outdent", json!({"ids": [3]}))));
+        assert_eq!(outline_key(None, true, false), None);
+        assert_eq!(outline_key(Some(TaskId(3)), false, false), None);
+        assert_eq!(outline_key(Some(TaskId(3)), true, true), None);
+        let mut s = projectcraft_engine::sample();
+        s.run("task.setPredecessors", &json!({"id": 8, "text": ""})).unwrap();
+        s.run("task.add", &json!({"name": "Unlinked"})).unwrap();
+        let (cmd, params) = outline_key(Some(TaskId(9)), true, false).unwrap();
+        s.run(cmd, &params).unwrap();
+        assert!(s.project.is_summary(TaskId(8)));
     }
 }
