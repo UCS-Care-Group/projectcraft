@@ -168,6 +168,10 @@ pub struct Task {
     /// Depth in the outline, 1 at the top ([`Outline`]). A file without one is level 1.
     #[serde(default = "top_level", skip_serializing_if = "is_top_level")]
     pub outline_level: u32,
+    /// A target finish, as Microsoft Project's Deadline field. Not a constraint: it never moves the
+    /// task, but caps its late finish, so finishing after it gives negative slack.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<Date>,
 }
 
 fn top_level() -> u32 {
@@ -348,6 +352,7 @@ impl Project {
             preds: Vec::new(),
             constraint: Constraint::Asap,
             outline_level: 1,
+            deadline: None,
         });
         Ok(id)
     }

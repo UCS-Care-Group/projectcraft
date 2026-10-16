@@ -206,10 +206,24 @@ mod tests {
         p.calendar.exceptions.insert(Date::from_ymd(2026, 4, 4).unwrap(), true);
         p.tasks = vec![
             Task {
-                id: TaskId(2), name: "Dig «foundations» ✓".into(), duration: 4, preds: vec![], constraint: Constraint::Asap, outline_level: 1
+                id: TaskId(2),
+                name: "Dig «foundations» ✓".into(),
+                duration: 4,
+                preds: vec![],
+                constraint: Constraint::Asap,
+                outline_level: 1,
+                deadline: None,
             },
             // A subtask of task 2, which is a summary storing its rolled-up duration.
-            Task { id: TaskId(7), name: "Excavate".into(), duration: 4, preds: vec![], constraint: Constraint::Asap, outline_level: 2 },
+            Task {
+                id: TaskId(7),
+                name: "Excavate".into(),
+                duration: 4,
+                preds: vec![],
+                constraint: Constraint::Asap,
+                outline_level: 2,
+                deadline: None,
+            },
             Task {
                 id: TaskId(5),
                 name: "Pour".into(),
@@ -217,6 +231,7 @@ mod tests {
                 preds: vec![Link { pred: TaskId(2), kind: LinkKind::SF, lag: -3 }],
                 constraint: Constraint::StartNoEarlierThan(Date::from_ymd(2026, 3, 9).unwrap()),
                 outline_level: 1,
+                deadline: Date::from_ymd(2026, 3, 20),
             },
         ];
         p.next_id = 9;

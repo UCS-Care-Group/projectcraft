@@ -69,8 +69,14 @@ fn run(args: Vec<String>) -> Result<(), String> {
             for (t, level) in s.project.tasks.iter().zip(levels) {
                 let Some(d) = sched.tasks.get(&t.id) else { continue };
                 let crit = if d.critical { "*" } else { " " };
-                // `!`: a constraint overrides a link (constraint conflict).
-                let warn = if d.constraint_conflict { "!" } else { " " };
+                // `!`: a constraint overrides a link (constraint conflict); `>`: it finishes after its deadline.
+                let warn = if d.constraint_conflict {
+                    "!"
+                } else if d.deadline_missed {
+                    ">"
+                } else {
+                    " "
+                };
                 // Subtasks indent two spaces a level.
                 let name = format!("{}{}", "  ".repeat(level.saturating_sub(1).min(20) as usize), t.name);
                 println!(
