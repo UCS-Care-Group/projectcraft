@@ -188,7 +188,16 @@ impl Crew {
 
     /// A new duration: Fixed Units and Fixed Duration keep the units and recalculate the work;
     /// Fixed Work keeps the work and recalculates the units. Every work assignment then lasts the
-    /// new duration.
+    /// new duration, even when they were of different lengths.
+    ///
+    /// Why every one: Microsoft's published pages give the task-type rule for one assignment
+    /// ("Change the task type for more accurate scheduling", "How Project schedules tasks: Behind
+    /// the scenes") and say what a duration is ("Duration (task field)", "Change a task
+    /// duration"), but none says what happens to assignments of different lengths when a new
+    /// duration is typed. ProjectCraft's choice: the duration typed is the task's, and a task's
+    /// duration is its longest assignment's, so each assignment takes it; one that kept its own
+    /// length would leave the task at a duration other than the one typed whenever the longest
+    /// changed. Pinned by worked example tt19 in `crates/engine/tests/task_types.rs`.
     fn set_duration(&mut self, duration: i64) -> Result<(), ModelError> {
         for a in &mut self.list {
             let Some(u) = Crew::work_units(a) else { continue };
@@ -422,8 +431,8 @@ impl Project {
     /// keep the units and recalculate the work; Fixed Work keeps the work and recalculates the
     /// units. Every work assignment then lasts the new duration, even when they were of different
     /// lengths: Microsoft's published pages don't say what happens to assignments of different
-    /// lengths when a new duration is typed, so that is ProjectCraft's choice. A summary's is
-    /// rolled up.
+    /// lengths when a new duration is typed, so that is ProjectCraft's choice (why: see
+    /// [`Crew`]'s `set_duration`). A summary's is rolled up.
     pub fn set_duration(&mut self, id: TaskId, duration: i64, unit: crate::DurationUnit) -> Result<(), ModelError> {
         if self.is_summary(id) {
             return Err(ModelError::Invalid("a summary task's duration is rolled up from its subtasks and can't be set".into()));
