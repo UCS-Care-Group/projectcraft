@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M1 reached: all tickets and follow-ups landed) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change list:** minor (M2 scope agreed) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -32,8 +32,18 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] About 15 worked examples citing Project's documentation; 200 tasks under 10 ms
 - [x] Theme tokens (light/dark), `tl!` translation, look checked in screenshots (`ui_shot`)
 
+## M2 — Resources and assignments
+- [ ] Working time in hours and minutes: part-day durations, working hours in calendars, files from M1 open with the same dates
+- [ ] Resource Sheet: work, material and cost resources
+- [ ] Assignments: Resource Names column, Assign Resources dialog, material quantities
+- [ ] Task types (Fixed Units, Fixed Duration, Fixed Work) and effort-driven scheduling, as Microsoft Project documents them
+- [ ] Resource calendars (leave and part-time working)
+- [ ] Costs: rates, cost per use, fixed costs, cost resources, rolled up to the penny
+- [ ] Overallocation shown in red; Resource Usage view
+- [ ] Stretch: manual resource levelling (delays only)
+- [ ] 200 tasks with 30 resources reschedule under 10 ms
+
 ## Later
-- M2 — Resources and assignments (work, units, effort-driven), resource sheet, overallocation
 - M3 — Baselines, % complete, actuals, tracking Gantt
 - M4 — Microsoft Project XML (MSPDI) and CSV in and out; XER
 - M5 — Control channel and MCP server; web build (`apps/projectcraft-web`)
@@ -79,3 +89,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | M1.1 summary links |
 | 2026-10-16 | minor | All M1 tickets landed; headline numbers refreshed; reschedule timings added |
 | 2026-10-16 | minor | M1 reached |
+| 2026-10-16 | minor | M2 checklist added |
