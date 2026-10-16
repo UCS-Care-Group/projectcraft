@@ -5,7 +5,9 @@
 //! change is a `resource.*` command.
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
-use projectcraft_engine::model::{self, AccrueAt, Project, Resource, ResourceId, ResourceType, parse_units_as, units_text_as};
+use projectcraft_engine::model::{
+    self, AccrueAt, Project, Resource, ResourceId, ResourceType, material_rate_text, parse_material_rate, parse_units_as, units_text_as,
+};
 use serde_json::{Value, json};
 
 use crate::selection::Selection;
@@ -73,7 +75,7 @@ pub(crate) fn cell_text(r: &Resource, field: RField, p: &Project) -> Option<Stri
         RField::Group => r.group.clone(),
         RField::MaxUnits if work => units_text_as(r.max_units, p.options.units_format),
         RField::StandardRate if work => per_hour(r.standard_rate),
-        RField::StandardRate if r.kind == ResourceType::Material => money(r.standard_rate),
+        RField::StandardRate if r.kind == ResourceType::Material => material_rate_text(r.standard_rate, &r.material_label, &p.currency),
         RField::OvertimeRate if work => per_hour(r.overtime_rate),
         RField::CostPerUse if r.kind != ResourceType::Cost => money(r.cost_per_use),
         RField::AccrueAt => tl!(r.accrue_at.name()).to_owned(),
@@ -97,7 +99,13 @@ pub(crate) fn typed(id: ResourceId, field: RField, text: &str, p: &Project) -> R
             let percent = format!("{}.{:02}", u / model::UNITS_PER_PERCENT, u % model::UNITS_PER_PERCENT);
             set("maxUnits", serde_json::from_str::<Value>(&percent).map_err(|e| e.to_string())?)
         }
-        RField::StandardRate => set("standardRate", json!(amount(text)?)),
+        RField::StandardRate => match p.resource(id) {
+            // A material's rate may be typed with its label: `£2.50/ton`.
+            Ok(r) if r.kind == ResourceType::Material => {
+                set("standardRate", json!(parse_material_rate(text, &r.material_label, &p.currency).map_err(|e| e.to_string())?))
+            }
+            _ => set("standardRate", json!(amount(text)?)),
+        },
         RField::OvertimeRate => set("overtimeRate", json!(amount(text)?)),
         RField::CostPerUse => set("costPerUse", json!(amount(text)?)),
         RField::AccrueAt => set("accrueAt", json!(AccrueAt::from_name(text).map_err(|e| e.to_string())?.name())),
@@ -478,8 +486,23 @@ mod tests {
             assert!(typed(id, field, text, &s.project).is_err(), "{text}");
         }
         let boxes = s.project.resource(ResourceId(4)).unwrap();
-        assert_eq!(cell_text(boxes, RField::StandardRate, &s.project).as_deref(), Some("£2.50"));
+        assert_eq!(cell_text(boxes, RField::StandardRate, &s.project).as_deref(), Some("£2.50/boxes"));
         assert_eq!(cell_text(boxes, RField::MaxUnits, &s.project), None);
+    }
+
+    /// A material's rate shows per its label and is typed with it or without.
+    #[test]
+    fn material_rates_show_their_label() {
+        let mut s = projectcraft_engine::sample();
+        let boxes = ResourceId(4);
+        for (text, rate) in [("£3.00/boxes", 300), ("4", 400), ("£1.25 / Boxes", 125)] {
+            let (cmd, params) = typed(boxes, RField::StandardRate, text, &s.project).unwrap();
+            s.run(cmd, &params).unwrap();
+            assert_eq!(s.project.resource(boxes).unwrap().standard_rate, rate, "{text}");
+        }
+        assert!(typed(boxes, RField::StandardRate, "£1/tons", &s.project).is_err(), "another label");
+        s.run("resource.set", &json!({"id": 4, "materialLabel": ""})).unwrap();
+        assert_eq!(cell_text(s.project.resource(boxes).unwrap(), RField::StandardRate, &s.project).as_deref(), Some("£1.25"));
     }
 
     /// Max Units follow the project's units format: `0.5` as a decimal, `50%` still read.

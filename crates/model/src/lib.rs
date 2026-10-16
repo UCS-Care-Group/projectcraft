@@ -30,8 +30,8 @@ pub use outline::{CIRCULAR_OUTLINE, MAX_OUTLINE_LEVEL, Outline};
 pub use projectcraft_time::Date;
 pub use resource::{
     AccrueAt, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS, FULL_TIME, MAX_MONEY, MAX_RESOURCE_TEXT, MAX_RESOURCES, MAX_UNITS, Resource,
-    ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_money, check_name, format_money, parse_money, parse_units, parse_units_as,
-    units_text, units_text_as,
+    ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_money, check_name, format_money, material_rate_text, parse_material_rate,
+    parse_money, parse_units, parse_units_as, units_text, units_text_as,
 };
 pub use schedule::{Driver, Moment, Schedule, TaskDates, schedule};
 pub use task_type::{MAX_WORK, TaskType};

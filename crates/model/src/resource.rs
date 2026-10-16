@@ -12,7 +12,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ModelError, Project, TaskId, UnitsFormat};
+use crate::{Currency, ModelError, Project, TaskId, UnitsFormat};
 
 /// Most resources in one project. ponytail: a cap, not a measured limit.
 pub const MAX_RESOURCES: usize = 100_000;
@@ -384,6 +384,32 @@ pub fn parse_money(text: &str, symbol: &str, digits: u32) -> Result<i64, ModelEr
     check_money(n)
 }
 
+/// A material's Standard Rate as shown: the amount per one of its material label (`£2.50/ton`),
+/// as Microsoft Project shows a material rate; the amount alone when it has no label. See
+/// "Material Label (resource field)",
+/// <https://support.microsoft.com/en-us/office/material-label-resource-field-58199492-c314-4ae1-95ca-f20f475dd13a>.
+pub fn material_rate_text(minor: i64, label: &str, currency: &Currency) -> String {
+    match label {
+        "" => currency.format(minor),
+        label => format!("{}/{label}", currency.format(minor)),
+    }
+}
+
+/// A material's rate as typed: an amount ([`Currency::parse`]), with or without `/` and its
+/// material label after it (`£2.50/ton`, `2.50 / Ton`, `£2.50`).
+pub fn parse_material_rate(text: &str, label: &str, currency: &Currency) -> Result<i64, ModelError> {
+    let t = text.trim();
+    // The `/` whose remainder is the label; a label may itself hold a `/` (`m/s`).
+    let amount = match label.trim() {
+        "" => None,
+        label => t.char_indices().filter(|(_, c)| *c == '/').find_map(|(i, _)| {
+            let rest = t.get(i.saturating_add(1)..)?;
+            rest.trim().eq_ignore_ascii_case(label).then(|| t.get(..i)).flatten()
+        }),
+    };
+    currency.parse(amount.unwrap_or(t))
+}
+
 /// An amount as the sheet shows it: `£1,234.50`.
 pub fn format_money(minor: i64, symbol: &str, digits: u32) -> String {
     let text = fixed_text(minor, digits);
@@ -687,6 +713,27 @@ mod tests {
         assert_eq!(format_money(MAX_MONEY, "£", 2), "£10,000,000,000.00");
     }
 
+    /// A material's rate shows per its label, as Project's material rates do ("Material Label
+    /// (resource field)",
+    /// <https://support.microsoft.com/en-us/office/material-label-resource-field-58199492-c314-4ae1-95ca-f20f475dd13a>);
+    /// it is typed with the label or without.
+    #[test]
+    fn material_rates_show_and_read_their_label() {
+        let c = Currency::default();
+        assert_eq!(material_rate_text(250, "ton", &c), "£2.50/ton");
+        assert_eq!(material_rate_text(250, "", &c), "£2.50");
+        assert_eq!(material_rate_text(123_456, "m/s", &c), "£1,234.56/m/s");
+        for (text, label) in [("£2.50/ton", "ton"), ("2.50 / TON", "ton"), ("£2.50", "ton"), ("2.5", ""), ("£2.50/m/s", "m/s"), ("2.5/h", "box")] {
+            assert_eq!(parse_material_rate(text, label, &c).unwrap(), 250, "{text}");
+        }
+        for (text, label) in [("£2.50/box", "ton"), ("£2.50/", "ton"), ("/ton", "ton"), ("-1/ton", "ton"), ("ton", "ton"), ("£2.50/ton", "")] {
+            assert!(parse_material_rate(text, label, &c).is_err(), "{text}");
+        }
+        let jpy = Currency::new("JPY", None, None).unwrap();
+        assert_eq!(material_rate_text(1_000, "bags", &jpy), "¥1,000/bags");
+        assert_eq!(parse_material_rate("¥1,000/bags", "bags", &jpy).unwrap(), 1_000);
+    }
+
     #[test]
     fn a_loaded_resource_list_is_checked_and_next_id_repaired() {
         let mut p = project();
@@ -729,6 +776,13 @@ mod tests {
             if let Ok(m) = parse_money(&s, "£", 2) {
                 proptest::prop_assert_eq!(parse_money(&format_money(m, "£", 2), "£", 2).ok(), Some(m));
             }
+            if let Ok(m) = parse_material_rate(&s, "ton", &Currency::default()) {
+                for label in ["ton", "", "m/s"] {
+                    let shown = material_rate_text(m, label, &Currency::default());
+                    proptest::prop_assert_eq!(parse_material_rate(&shown, label, &Currency::default()).ok(), Some(m));
+                }
+            }
+            let _ = parse_material_rate(&s, &s, &Currency::default());
             let _ = check_name(&s);
             let _ = ResourceType::from_name(&s);
         }

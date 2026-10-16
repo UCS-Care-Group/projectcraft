@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (assignment units as decimals) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (assignment units as decimals; material rates show their label) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -104,6 +104,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | M2: Assign Resources acts on every selected task, as Microsoft Project's: Assign adds the resource to the tasks without it (the others keep their units), new units and Remove go to those with it, each one command and one undo step; a tick where all selected tasks have the resource, a dash where only some do; units and work shown are the focused task's. `assignment.add`, `assignment.setUnits` and `assignment.remove` take `tasks` (a list) in place of `task` (#82) |
 | 2026-10-16 | M2: deleting resources that have assignments in the Resource Sheet asks first (Delete / Cancel), naming how many tasks they are assigned to; Cancel or Escape changes nothing, Delete is one `resource.delete` and one undo step; a resource on no task is deleted at once (#83) |
 | 2026-10-17 | M2: assignment units shown as decimals on request, as Project's "Show assignment units as a" option: `project.setOptions` takes `assignmentUnitsAs` (Percentage, the default, or Decimal), shown under Assignment units in Project › Options…; with Decimal, Resource Names (`Ann[0.5]`), Max Units in the Resource Sheet and Assign Resources show `0.5` and `1` and read a bare number as a decimal (up to four places); a number with `%` always reads as a percentage; additive file field, written only when Decimal, so older files load and save unchanged (#84) |
+| 2026-10-17 | M2: a material resource's standard rate shows its material label, as Project shows material rates: `£2.50/ton` in the Resource Sheet and in the rate shown on a resource's name in Assign Resources (work resources `£45.00/hr`); typed with the label or without (`£2.50/ton`, `2.50 / Ton`, `£2.50`), any other label refused; a material with no label shows the amount alone (#85) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -132,3 +133,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | minor | Asking before deleting an assigned resource (#83) |
 | 2026-10-17 | minor | Resource-calendar gap listed (#95) |
 | 2026-10-17 | minor | Assignment units as decimals (#84) |
+| 2026-10-17 | minor | Material rates show their label (#85) |
