@@ -11,7 +11,7 @@
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{
-    DurationUnit, MAX_WORKING_TIMES, Outline, TaskId, TaskType, WorkingTime, check_working_times, clock, duration_text, parse_clock,
+    Column, Columns, DurationUnit, MAX_WORKING_TIMES, Outline, TaskId, TaskType, WorkingTime, check_working_times, clock, duration_text, parse_clock,
 };
 use projectcraft_engine::{Session, WEEKDAYS, time::Date};
 use serde_json::{Value, json};
@@ -76,21 +76,35 @@ const COLUMNS: [(Field, &str, f32); 12] = [
     (Field::EffortDriven, "Effort Driven", 90.0),
 ];
 
-/// The columns the cursor moves across, left to right.
-const FIELDS: [Field; 12] = [
-    Field::Name,
-    Field::Duration,
-    Field::Work,
-    Field::Start,
-    Field::Finish,
-    Field::Preds,
-    Field::Resources,
-    Field::Cost,
-    Field::FixedCost,
-    Field::Deadline,
-    Field::Type,
-    Field::EffortDriven,
-];
+impl Field {
+    /// The cell field a hideable column shows.
+    fn of(c: Column) -> Field {
+        match c {
+            Column::Duration => Field::Duration,
+            Column::Work => Field::Work,
+            Column::Start => Field::Start,
+            Column::Finish => Field::Finish,
+            Column::Predecessors => Field::Preds,
+            Column::ResourceNames => Field::Resources,
+            Column::Cost => Field::Cost,
+            Column::FixedCost => Field::FixedCost,
+            Column::Deadline => Field::Deadline,
+            Column::Type => Field::Type,
+            Column::EffortDriven => Field::EffortDriven,
+        }
+    }
+
+    /// Its heading and width.
+    fn column(self) -> (&'static str, f32) {
+        COLUMNS.iter().find(|c| c.0 == self).map_or(("", 80.0), |c| (c.1, c.2))
+    }
+}
+
+/// The columns the sheet shows, left to right: Task Name, then the project's columns. The cursor
+/// moves across these.
+fn shown_fields(columns: &Columns) -> Vec<Field> {
+    std::iter::once(Field::Name).chain(columns.shown().iter().map(|c| Field::of(*c))).collect()
+}
 
 /// The Effort Driven column's text.
 fn yes_no(b: bool) -> &'static str {
@@ -249,6 +263,8 @@ pub struct App {
     resources: resource_sheet::ResourceSheet,
     /// The Assign Resources dialog, while it is open.
     assign: Option<assign::AssignForm>,
+    /// The Columns dialog is open.
+    columns_open: bool,
 }
 
 const ROW_H: f32 = 22.0;
@@ -290,6 +306,7 @@ impl App {
             view: View::default(),
             resources: resource_sheet::ResourceSheet::default(),
             assign: None,
+            columns_open: false,
         }
     }
 
@@ -368,6 +385,14 @@ impl App {
         if self.resources.editing.as_ref().is_some_and(|(id, _, _)| !resource_order.contains(id)) {
             self.resources.editing = None;
         }
+        // Undo, redo or a file opened can hide the focused column.
+        let fields = shown_fields(&self.session.project.columns);
+        if !fields.contains(&self.field) {
+            self.field = Field::Name;
+        }
+        if self.editing.as_ref().is_some_and(|(_, f, _)| !fields.contains(f)) {
+            self.editing = None;
+        }
         self.sheet_keys(&ctx);
 
         egui::Panel::top("toolbar").show(ui, |ui| {
@@ -444,6 +469,7 @@ impl App {
         self.change_working_time(&ctx);
         self.project_options(&ctx);
         self.assign_resources(&ctx);
+        self.columns_dialog(&ctx);
         self.retype_prompt(&ctx);
         self.unsaved_prompt(&ctx);
         self.recovery_prompt(&ctx);
@@ -459,6 +485,7 @@ impl App {
             || self.working_time.is_some()
             || self.options.is_some()
             || self.assign.is_some()
+            || self.columns_open
             || self.resources.retype.is_some()
             || self.browser.is_some()
             || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
@@ -487,8 +514,9 @@ impl App {
             self.sel.step(&order, k.rows, k.extend);
         }
         if k.cols != 0 {
-            let at = FIELDS.iter().position(|f| *f == self.field).unwrap_or(0);
-            self.field = FIELDS.get(at.saturating_add_signed(k.cols)).copied().unwrap_or(self.field);
+            let fields = shown_fields(&self.session.project.columns);
+            let at = fields.iter().position(|f| *f == self.field).unwrap_or(0);
+            self.field = fields.get(at.saturating_add_signed(k.cols)).copied().unwrap_or(self.field);
             if self.sel.cursor.is_none() {
                 self.sel.step(&order, 0, false);
             }
@@ -681,6 +709,11 @@ impl App {
                     ui.close();
                 }
             }
+            let columns = egui::Button::new(tl!("Columns…"));
+            if ui.add_enabled(self.view == View::GanttChart, columns).on_hover_text(tl!("Show or hide the task sheet's columns")).clicked() {
+                self.open_columns();
+                ui.close();
+            }
             ui.separator();
             ui.label(RichText::new(tl!("Timescale")).color(Tokens::get(ui.ctx()).text_dim));
             let current = timescale::Preset::of(self.day_w);
@@ -703,6 +736,60 @@ impl App {
                 self.zoom(false);
             }
         });
+    }
+
+    /// Opens the Columns dialog. An edit in progress is committed first, as its column may go.
+    pub fn open_columns(&mut self) {
+        if let Some((id, field, text)) = self.editing.take() {
+            self.commit(id, field, text);
+        }
+        self.columns_open = true;
+    }
+
+    /// The Columns dialog: a checkbox for each task sheet column. Each tick shows or hides its
+    /// column at once (`view.setColumns`, one undo step); ID and Task Name always show.
+    fn columns_dialog(&mut self, ctx: &egui::Context) {
+        if !self.columns_open {
+            return;
+        }
+        let t = Tokens::get(ctx);
+        let current = self.session.project.columns.clone();
+        let mut chosen: Option<Columns> = None;
+        let mut close = false;
+        let modal = egui::Modal::new(egui::Id::new("columns")).show(ctx, |ui| {
+            ui.set_width(260.0);
+            ui.heading(tl!("Columns"));
+            ui.label(RichText::new(tl!("The task sheet's columns; saved with the project")).color(t.text_dim));
+            ui.add_space(8.0);
+            for always in ["ID", "Task Name"] {
+                ui.add_enabled(false, egui::Checkbox::new(&mut true, tl!(always))).on_disabled_hover_text(tl!("Always shown"));
+            }
+            for c in Column::ALL {
+                let mut on = current.contains(c);
+                if ui.checkbox(&mut on, tl!(c.name())).changed() {
+                    chosen = Some(current.with(c, on));
+                }
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.add_enabled(!current.is_default(), egui::Button::new(tl!("Show All"))).clicked() {
+                    chosen = Some(Columns::default());
+                }
+                if ui.button(tl!("Close")).clicked() {
+                    close = true;
+                }
+            });
+            if !self.status.is_empty() {
+                ui.label(RichText::new(self.status.as_str()).color(t.warning));
+            }
+        });
+        if let Some(cols) = chosen {
+            let names: Vec<&str> = cols.shown().iter().map(|c| c.name()).collect();
+            self.run("view.setColumns", json!({"columns": names}));
+        }
+        if close || modal.should_close() {
+            self.columns_open = false;
+        }
     }
 
     /// The toolbar's zoom control: out, the preset showing, in.
@@ -908,7 +995,9 @@ impl App {
             // ID and the indicators are narrow, fixed-width columns.
             ui.add_sized([ID_W, ROW_H], egui::Label::new(RichText::new(tl!("ID")).strong()));
             ui.add_sized([ROW_H, ROW_H], egui::Label::new(""));
-            for (field, h, width) in COLUMNS {
+            let fields = shown_fields(&self.session.project.columns);
+            for &field in &fields {
+                let (h, width) = field.column();
                 if matches!(field, Field::Cost | Field::FixedCost) {
                     // Over the amounts, on the right as they are.
                     let text = tl!(h);
@@ -945,7 +1034,8 @@ impl App {
                 self.take_click(ui, &r, id, None);
                 indicator(ui, dates);
                 let indent = (outline.level(i).saturating_sub(1).min(20) as f32) * INDENT_W;
-                for (field, _, width) in COLUMNS {
+                for &field in &fields {
+                    let width = field.column().1;
                     let lead = if field == Field::Name { indent } else { 0.0 };
                     let value = self.cell_text(id, field);
                     let p = &self.session.project;
@@ -1737,6 +1827,54 @@ mod tests {
 
     /// Changing an assigned resource's type asks first: Cancel keeps everything, Change Type
     /// drops its assignments.
+    /// View > Columns… hides and shows task sheet columns, one undo step each; the arrows skip a
+    /// hidden column and a focused column that goes hidden hands the focus to Task Name.
+    #[test]
+    fn the_columns_dialog_hides_and_shows_columns() {
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::NodeT;
+        let mut h = sheet(projectcraft_engine::sample());
+        let headings =
+            |h: &Harness<'static, App>, label: &str| h.query_all_by_label(label).filter(|n| n.accesskit_node().role() != Role::CheckBox).count();
+        assert_eq!(headings(&h, "Work"), 1, "every column shows at first");
+        click(&mut h, "View", Modifiers::NONE);
+        click(&mut h, "Columns…", Modifiers::NONE);
+        assert!(h.state().columns_open);
+        assert!(h.query_all_by_role(Role::CheckBox).count() >= 13, "ID, Task Name and every column");
+        h.get_by_role_and_label(Role::CheckBox, "Work").click();
+        h.run_steps(3);
+        assert!(!h.state().session.project.columns.contains(Column::Work));
+        assert_eq!(headings(&h, "Work"), 0, "the Work column is gone");
+        h.get_by_role_and_label(Role::CheckBox, "Cost").click();
+        h.run_steps(3);
+        click(&mut h, "Close", Modifiers::NONE);
+        assert!(!h.state().columns_open);
+
+        // The arrows skip the hidden column.
+        click(&mut h, "Order furniture", Modifiers::NONE);
+        key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        key(&mut h, Modifiers::NONE, Key::ArrowRight);
+        assert_eq!(h.state().field, Field::Start, "Duration, then Start: Work is hidden");
+
+        // Each tick is one undo step.
+        key(&mut h, Modifiers::COMMAND, Key::Z);
+        assert!(h.state().session.project.columns.contains(Column::Cost));
+        assert!(!h.state().session.project.columns.contains(Column::Work));
+        key(&mut h, Modifiers::COMMAND, Key::Z);
+        assert!(h.state().session.project.columns.is_default());
+        assert_eq!(headings(&h, "Work"), 1);
+
+        // A focused column hidden (here by a command) leaves the focus on Task Name.
+        h.state_mut().field = Field::Deadline;
+        h.state_mut().run("view.setColumns", json!({"columns": ["Duration", "Start"]}));
+        h.run_steps(3);
+        assert_eq!(h.state().field, Field::Name);
+        click(&mut h, "View", Modifiers::NONE);
+        click(&mut h, "Columns…", Modifiers::NONE);
+        click(&mut h, "Show All", Modifiers::NONE);
+        assert!(h.state().session.project.columns.is_default());
+    }
+
     #[test]
     fn changing_an_assigned_resources_type_asks_first() {
         use projectcraft_engine::model::{ResourceId, ResourceType};

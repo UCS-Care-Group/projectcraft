@@ -494,6 +494,9 @@ fn units(what: &str) -> Value {
     json!({"type": "string", "description": format!("{what}; as the Resource Names column writes them: a work resource's percent of its working time (50%), a material's quantity, fixed (5 tons) or per time (2 tons/d, with m, h, d, w or mo), or a cost resource's amount in the project currency (£200)")})
 }
 
+/// Most headings `view.setColumns` reads: every column and Task Name and ID, with room for repeats.
+const MAX_COLUMN_NAMES: usize = 64;
+
 const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: "project.rename",
@@ -1008,6 +1011,36 @@ const COMMANDS: &[CommandSpec] = &[
             Ok(())
         },
     },
+    CommandSpec {
+        id: "view.setColumns",
+        label: "Columns",
+        effect: Effect::Edit,
+        schema: || {
+            let names: Vec<&str> = model::Column::ALL.iter().map(|c| c.name()).collect();
+            object(
+                json!({"columns": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": names},
+                    "maxItems": MAX_COLUMN_NAMES,
+                    "description": "the task sheet's columns to show after ID and Task Name, left to right, by heading (any case); the rest are hidden. ID and Task Name always show (listing them changes nothing); a repeat counts once. Saved with the project",
+                }}),
+                &["columns"],
+            )
+        },
+        run: |p, v| {
+            let list =
+                v.get("columns").and_then(Value::as_array).ok_or_else(|| CmdError::Params("`columns` (a list of headings) is required".into()))?;
+            if list.len() > MAX_COLUMN_NAMES {
+                return Err(CmdError::Params(format!("`columns` lists more than {MAX_COLUMN_NAMES} headings")));
+            }
+            let names = list
+                .iter()
+                .map(|n| n.as_str().ok_or_else(|| CmdError::Params("`columns` holds headings, e.g. \"Duration\"".into())))
+                .collect::<Result<Vec<_>, _>>()?;
+            p.columns = model::Columns::from_names(names)?;
+            Ok(())
+        },
+    },
     // Undo and redo are handled by `Session::run`; they're here for their metadata.
     CommandSpec { id: "edit.undo", label: "Undo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
     CommandSpec { id: "edit.redo", label: "Redo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
@@ -1088,6 +1121,31 @@ mod tests {
         assert!(s.run("nope", &json!({})).is_err());
         let round = Session::load_json(&s.save_json().unwrap()).unwrap();
         assert_eq!(round.project, s.project);
+    }
+
+    #[test]
+    fn columns_are_one_undo_step_and_saved_with_the_project() {
+        use model::Column;
+        let mut s = sample();
+        let before = s.project.clone();
+        assert!(s.project.columns.is_default());
+        // Older files have no columns: every column shows, and a default project writes none.
+        let text = s.save_json().unwrap();
+        assert!(!text.contains("\"columns\""), "{text}");
+        s.run("view.setColumns", &json!({"columns": ["ID", "Task Name", "start", "Finish", "Resource Names"]})).unwrap();
+        assert_eq!(s.project.columns.shown(), &[Column::Start, Column::Finish, Column::ResourceNames]);
+        let round = Session::load_json(&s.save_json().unwrap()).unwrap();
+        assert_eq!(round.project.columns, s.project.columns);
+        s.run("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.project, before, "one undo step");
+        let err = s.run("view.setColumns", &json!({"columns": ["Start", "Colour"]})).unwrap_err().to_string();
+        assert!(err.contains("not a column"), "{err}");
+        assert_eq!(s.project, before);
+        // A column a newer version added is dropped, not refused.
+        let mut v: Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
+        v["columns"] = json!(["Finish", "Sparkle", 7, "Finish", "Cost"]);
+        let newer = Session::load_json(&v.to_string()).unwrap();
+        assert_eq!(newer.project.columns.shown(), &[Column::Finish, Column::Cost]);
     }
 
     #[test]
