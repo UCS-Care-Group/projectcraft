@@ -16,7 +16,8 @@ commands:
   layers   enforce the crate dependency layering (docs/architecture.md)
   wasm     cargo check --target wasm32-unknown-unknown for the wasm-safe crates
   deny     cargo deny check (advisories, licences, bans, sources; see deny.toml)
-  ci       fmt --check, clippy -D warnings, test, assets, layers, wasm, deny (stops at first failure)
+  perf     the rescheduling speed gate, in release (200 tasks under 10 ms; 2,000 reported)
+  ci       fmt --check, clippy -D warnings, test, perf, assets, layers, wasm, deny (stops at first failure)
 ";
 
 fn main() -> ExitCode {
@@ -26,6 +27,7 @@ fn main() -> ExitCode {
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
         Some("deny") => cmd_deny(),
+        Some("perf") => cmd_perf(),
         Some("ci") => cmd_ci(),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
@@ -149,6 +151,14 @@ fn cmd_deny() -> Result<(), String> {
     run(c, "cargo deny check")
 }
 
+/// The rescheduling speed gate: an `#[ignore]`d test, timed in release only (a debug build's
+/// timings mean nothing). It takes the median of several runs and prints the timings.
+fn cmd_perf() -> Result<(), String> {
+    let mut c = cargo();
+    c.args(["test", "--release", "-p", "projectcraft-engine", "--test", "performance", "--", "--ignored", "--nocapture"]);
+    run(c, "cargo test --release -p projectcraft-engine --test performance -- --ignored --nocapture")
+}
+
 fn cmd_ci() -> Result<(), String> {
     type Step = (&'static str, Box<dyn Fn() -> Result<(), String>>);
     let steps: Vec<Step> = vec![
@@ -176,6 +186,7 @@ fn cmd_ci() -> Result<(), String> {
                 run(c, "cargo test --workspace")
             }),
         ),
+        ("perf", Box::new(cmd_perf)),
         ("assets", Box::new(|| assets::run(&root()))),
         ("layers", Box::new(cmd_layers)),
         ("wasm", Box::new(cmd_wasm)),

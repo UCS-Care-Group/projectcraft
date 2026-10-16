@@ -33,7 +33,7 @@ People trust ProjectCraft with plans that run for years; a crash loses their wor
 - **Rust only** (no handwritten JS/TS). **Never break wasm** (`cargo xtask wasm`).
 
 ## Quality gates
-Before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, assets, layers, wasm, deny). Commit after every arc of work that builds, with a task id in the message (`M1.2: task calendars`). Work follows a spec and an implementation plan; decisions that constrain later work get an architecture decision record (all private, in `plan/`). No AI attribution anywhere: no `Co-Authored-By` trailer and no "Generated with" line in commits, pull requests, issues or comments. Use a `CARGO_TARGET_DIR` under `~/.cache`, not `/tmp`.
+Before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, the release-mode speed gate, assets, layers, wasm, deny). Commit after every arc of work that builds, with a task id in the message (`M1.2: task calendars`). Work follows a spec and an implementation plan; decisions that constrain later work get an architecture decision record (all private, in `plan/`). No AI attribution anywhere: no `Co-Authored-By` trailer and no "Generated with" line in commits, pull requests, issues or comments. Use a `CARGO_TARGET_DIR` under `~/.cache`, not `/tmp`.
 
 ## Running it
 - `cargo run --release -p projectcraft -- --sample` (the sample project; keeps nothing).

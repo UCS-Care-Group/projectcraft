@@ -31,7 +31,7 @@ projectcraft-cli run --sample --cmd 'task.add={"name":"Snag list","duration":3}'
 projectcraft-cli commands
 ```
 
-**Everything CI runs:** `cargo xtask ci` (formatting, clippy with warnings as errors, the tests, asset attribution, crate layering, the wasm build, and `cargo deny` for advisories, licences and sources once `cargo install cargo-deny --locked` has run).
+**Everything CI runs:** `cargo xtask ci` (formatting, clippy with warnings as errors, the tests, the rescheduling speed gate in release, asset attribution, crate layering, the wasm build, and `cargo deny` for advisories, licences and sources once `cargo install cargo-deny --locked` has run).
 
 ## How it is put together
 | Layer | Crates | Job |
