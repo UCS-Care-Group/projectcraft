@@ -192,6 +192,11 @@ impl App {
             if self.is_dirty() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.prompt = Some(Then::Close);
+                // Closed while minimized: bring the window back so the prompt can be answered.
+                if ctx.input(|i| i.viewport().minimized == Some(true)) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
             } else {
                 self.closing = true;
             }

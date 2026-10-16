@@ -5,6 +5,7 @@ use projectcraft_engine::Session;
 use projectcraft_ui_egui::App;
 
 mod dialogs;
+mod quit;
 mod settings;
 
 struct Shell {
@@ -37,6 +38,13 @@ impl eframe::App for Shell {
             settings::save_autosave(on);
         }
     }
+
+    /// Runs before `ui`, and also while the window is minimized or hidden, when `ui` does not:
+    /// the unsaved-changes check first, then the platform quit.
+    fn logic(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+        self.app.logic(ctx);
+        quit::finish_frame(ctx);
+    }
 }
 
 fn main() -> eframe::Result {
@@ -67,7 +75,14 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "ProjectCraft",
         eframe::NativeOptions::default(),
-        Box::new(|_| Ok(Box::new(Shell { app, dialogs: dialogs::Dialogs::default(), started: std::time::Instant::now() }))),
+        Box::new(|cc| {
+            // macOS: an app menu whose Quit (Cmd+Q) asks about unsaved changes first; nothing
+            // elsewhere. Without it Cmd+Q still quits, only without asking, so the app runs on.
+            if let Err(e) = craft_quit::install_app_menu(&cc.egui_ctx, "ProjectCraft") {
+                eprintln!("app menu: {e}");
+            }
+            Ok(Box::new(Shell { app, dialogs: dialogs::Dialogs::default(), started: std::time::Instant::now() }))
+        }),
     )
 }
 

@@ -81,6 +81,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | M2.0: Project › Options… dialog shows hours per day, hours per week and days per month; Apply sends the changed ones as one `project.setOptions` (one undo step); a value out of range or not a number says why and changes nothing; Cancel changes nothing (#65) |
 | 2026-10-16 | M2.0: the scheduler counts working time in minutes on the calendar's working times; durations, lags and slack are working minutes, starts and finishes moments (date and minute); file format 2 (version-1 files migrate on open, day counts × the file's minutes per day); every M1 worked example keeps its dates (#52) |
 | 2026-10-16 | SEC: the project file, `.bak`, recovery copy and settings files are saved through `craft-atomic` (storytold/craft-libs, pinned by `rev`): staging beside the file, full flush on macOS, Windows rename retry, owner-only from the first byte; ProjectCraft's own temp/rename/fsync code removed; native only (#67) |
+| 2026-10-16 | SEC: on macOS quitting (window close, Cmd+Q from a new app menu whose Quit asks first) goes through `-[NSApplication terminate:]` via `craft-quit` from storytold/craft-libs, after the Save / Don't Save / Cancel prompt, so eframe never closes the window under AppKit; the close check runs in eframe's `logic`, so a close while minimized also asks first (the window comes back for the prompt); other platforms unchanged. `cargo xtask layers` keeps `craft-quit` to the UI and app layers (#66) |
 
 ## Revision history
 | Date | Change | Summary |
