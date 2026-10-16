@@ -39,3 +39,4 @@ Each roadmap milestone has a pass/fail checklist; it is reached when every item 
 | 2026-10-16 | M1.2: the ID column is the row number; Predecessors shows and reads row IDs, links stay by Unique ID; commands documented as taking Unique IDs (#9) |
 | 2026-10-16 | M1.3: Start/Finish No Earlier Than constraints (`task.setConstraint`); typing a Start or Finish sets SNET or FNET; worked examples 5, 11, 14, 15 (#11) |
 | 2026-10-16 | M1.6: theme tokens (light/dark), `tl!` for UI text, `ui_shot` headless screenshots (#5) |
+| 2026-10-16 | M1.5: File menu with Open, Open Recent, Save and Save As through native dialogs (`rfd`, desktop app only); recent files (10, missing ones pruned) kept in the settings folder; Save / Don't Save / Cancel prompt on close or open with unsaved changes; Ctrl+O, Ctrl+S, Ctrl+Shift+S (#17) |

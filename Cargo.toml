@@ -27,6 +27,8 @@ egui = "0.36"
 eframe = { version = "0.36", default-features = false }
 # Headless screenshots (ui-egui's `ui_shot` example), as MailCraft and WordCraft. Dev-only.
 egui_kittest = "0.36"
+# native Open / Save As dialogs; the desktop app only (layers forbid it below L6)
+rfd = "0.17"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

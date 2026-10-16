@@ -21,6 +21,8 @@ pub mod i18n;
 pub mod theme;
 
 use theme::Tokens;
+mod files;
+pub use files::{EXTENSION, FileRequest, MAX_RECENT, parse_recent, push_recent, recent_text};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
@@ -52,6 +54,20 @@ pub struct App {
     /// Light, dark or the system's; put into egui on the next frame.
     pub appearance: egui::ThemePreference,
     themed: Option<egui::ThemePreference>,
+    /// The project as last opened or saved; differing from it means unsaved changes.
+    saved: projectcraft_engine::model::Project,
+    /// Recently opened or saved files, newest first (the shell loads and persists it).
+    pub recent: Vec<std::path::PathBuf>,
+    recent_changed: bool,
+    /// A dialog for the shell to show.
+    file_request: Option<FileRequest>,
+    /// The unsaved-changes prompt, and what follows it.
+    prompt: Option<files::Then>,
+    /// What follows a Save As started from the prompt.
+    after_save: Option<files::Then>,
+    /// The owner chose to close; the window closes.
+    closing: bool,
+    title: String,
 }
 
 const ROW_H: f32 = 22.0;
@@ -59,7 +75,23 @@ const DAY_W: f32 = 18.0;
 
 impl App {
     pub fn new(session: Session, path: Option<std::path::PathBuf>) -> Self {
-        App { session, path, editing: None, status: String::new(), appearance: egui::ThemePreference::System, themed: None }
+        let saved = session.project.clone();
+        App {
+            session,
+            path,
+            editing: None,
+            status: String::new(),
+            appearance: egui::ThemePreference::System,
+            themed: None,
+            saved,
+            recent: Vec::new(),
+            recent_changed: false,
+            file_request: None,
+            prompt: None,
+            after_save: None,
+            closing: false,
+            title: String::new(),
+        }
     }
 
     fn run(&mut self, id: &str, params: Value) {
@@ -69,42 +101,26 @@ impl App {
         };
     }
 
-    fn save(&mut self) {
-        let Some(path) = self.path.clone() else {
-            self.status = tl!("Start ProjectCraft with a file name to save (projectcraft plan.projectcraft)").to_owned();
-            return;
-        };
-        self.status = match self.session.save_to(&path) {
-            Ok(()) => i18n::fmt(tl!("Saved {path}"), &[("path", &path.display().to_string())]),
-            Err(e) => i18n::fmt(tl!("Couldn't save: {error}"), &[("error", &e.to_string())]),
-        };
-    }
-
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         if self.themed != Some(self.appearance) {
             theme::apply(&ctx, self.appearance);
             self.themed = Some(self.appearance);
         }
-        let (undo, redo, save) = ctx.input_mut(|i| {
-            (
-                i.consume_key(egui::Modifiers::COMMAND, Key::Z),
-                i.consume_key(egui::Modifiers::COMMAND, Key::Y),
-                i.consume_key(egui::Modifiers::COMMAND, Key::S),
-            )
-        });
+        self.intercept_close(&ctx);
+        self.file_keys(&ctx);
+        let (undo, redo) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::COMMAND, Key::Z), i.consume_key(egui::Modifiers::COMMAND, Key::Y)));
         if undo {
             self.run("edit.undo", json!({}));
         }
         if redo {
             self.run("edit.redo", json!({}));
         }
-        if save {
-            self.save();
-        }
 
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
+                self.file_menu(ui);
+                ui.separator();
                 ui.heading(&self.session.project.name);
                 ui.separator();
                 if ui.button(tl!("New Task")).clicked() {
@@ -115,6 +131,9 @@ impl App {
                 }
                 if ui.add_enabled(self.session.can_redo(), egui::Button::new(tl!("Redo"))).clicked() {
                     self.run("edit.redo", json!({}));
+                }
+                if ui.button(tl!("Open")).clicked() {
+                    self.request(files::Then::Open(None));
                 }
                 if ui.button(tl!("Save")).clicked() {
                     self.save();
@@ -135,6 +154,8 @@ impl App {
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::both().show(ui, |ui| self.sheet(ui));
         });
+        self.unsaved_prompt(&ctx);
+        self.update_title(&ctx);
     }
 
     fn sheet(&mut self, ui: &mut egui::Ui) {
@@ -233,7 +254,7 @@ mod tests {
     /// Colours live in `theme.rs` only: every other source file takes them from `Tokens`.
     #[test]
     fn no_colours_outside_the_token_set() {
-        for (file, src) in [("lib.rs", include_str!("lib.rs")), ("i18n.rs", include_str!("i18n.rs"))] {
+        for (file, src) in [("lib.rs", include_str!("lib.rs")), ("i18n.rs", include_str!("i18n.rs")), ("files.rs", include_str!("files.rs"))] {
             let code = src.split("#[cfg(test)]").next().unwrap_or(src);
             for needle in ["Color32", "from_rgb", "from_gray", "from_black_alpha", "from_white_alpha"] {
                 assert!(!code.contains(needle), "{file} names a colour ({needle}); add a token in theme.rs");
