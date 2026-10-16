@@ -471,6 +471,7 @@ impl App {
         self.assign_resources(&ctx);
         self.columns_dialog(&ctx);
         self.retype_prompt(&ctx);
+        self.delete_resources_prompt(&ctx);
         self.unsaved_prompt(&ctx);
         self.recovery_prompt(&ctx);
         self.file_browser(&ctx);
@@ -487,6 +488,7 @@ impl App {
             || self.assign.is_some()
             || self.columns_open
             || self.resources.retype.is_some()
+            || self.resources.delete.is_some()
             || self.browser.is_some()
             || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
         if self.view == View::ResourceSheet {
@@ -1737,6 +1739,8 @@ mod tests {
         click(&mut h, "Packing boxes", Modifiers::NONE);
         click(&mut h, "Travel", Modifiers::SHIFT);
         key(&mut h, Modifiers::NONE, Key::Delete);
+        // Both are assigned: Delete in the question deletes them.
+        click(&mut h, "Delete", Modifiers::NONE);
         assert_eq!(resource_ids(&h), [1, 2, 3, 6]);
         key(&mut h, Modifiers::COMMAND, Key::Z);
         assert_eq!(resource_ids(&h), [1, 2, 3, 6, 4, 5], "one undo step brings both back");

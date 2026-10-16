@@ -1,7 +1,8 @@
 //! The Resource Sheet view: one row per resource, as Microsoft Project's. It works as the task
 //! sheet does: click, Shift-click and Ctrl-click select rows; the arrows move the focused cell;
 //! typing or F2 edits it, Enter commits and moves down, Escape cancels; Insert adds a resource
-//! above, Delete deletes the selected ones. Every change is a `resource.*` command.
+//! above, Delete deletes the selected ones (asking first when they have assignments). Every
+//! change is a `resource.*` command.
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{self, AccrueAt, Currency, Resource, ResourceId, ResourceType, parse_units, units_text};
@@ -52,6 +53,9 @@ pub(crate) struct ResourceSheet {
     clicked: Option<(ResourceId, Option<RField>, Modifiers, bool)>,
     /// A type change waiting for the owner to agree: it drops the resource's assignments.
     pub retype: Option<(ResourceId, Value)>,
+    /// A delete waiting for the owner to agree, as the resources have assignments: the resources,
+    /// and the focused row number to keep afterwards.
+    pub delete: Option<(Vec<ResourceId>, Option<usize>)>,
 }
 
 /// A cell's text; `None` where the field doesn't apply to the resource's type (Max Units of a
@@ -152,7 +156,8 @@ impl App {
         }
     }
 
-    /// Delete: the selected resources. The focus stays on the same row number.
+    /// Delete: the selected resources, at once when none is assigned to a task; otherwise after
+    /// asking ([`App::delete_resources_prompt`]). The focus stays on the same row number.
     fn delete_resources(&mut self) {
         let order = self.resource_order();
         let ids = self.resources.sel.ids(&order);
@@ -160,8 +165,56 @@ impl App {
             return;
         }
         let at = self.resources.sel.cursor.and_then(|c| order.iter().position(|r| *r == c));
+        if ids.iter().any(|id| self.session.project.is_assigned(*id)) {
+            self.resources.delete = Some((ids, at));
+        } else {
+            self.run_resource_delete(&ids, at);
+        }
+    }
+
+    fn run_resource_delete(&mut self, ids: &[ResourceId], at: Option<usize>) {
         if self.run("resource.delete", json!({"ids": ids.iter().map(|r| r.0).collect::<Vec<_>>()})) {
             self.resources.sel.prune(&self.resource_order(), at);
+        }
+    }
+
+    /// The question before deleting resources that have assignments, naming how many tasks they
+    /// are on: Delete runs `resource.delete` (one undo step), Cancel (or Escape) changes nothing.
+    pub(crate) fn delete_resources_prompt(&mut self, ctx: &egui::Context) {
+        let Some((ids, at)) = self.resources.delete.take() else { return };
+        let p = &self.session.project;
+        let ids: Vec<ResourceId> = ids.into_iter().filter(|id| p.resource(*id).is_ok()).collect();
+        let Some(first) = ids.first().and_then(|id| p.resource(*id).ok()) else { return };
+        let tasks: std::collections::BTreeSet<_> = p.assignments.iter().filter(|a| ids.contains(&a.resource)).map(|a| a.task).collect();
+        let count = tasks.len().to_string();
+        let text = match ids.len() {
+            1 => crate::i18n::fmt(
+                tl!("{name} is assigned to {count} task(s). Deleting it removes those assignments."),
+                &[("name", &first.name), ("count", &count)],
+            ),
+            n => crate::i18n::fmt(
+                tl!("The {n} resources selected are assigned to {count} task(s). Deleting them removes those assignments."),
+                &[("n", &n.to_string()), ("count", &count)],
+            ),
+        };
+        let t = Tokens::get(ctx);
+        let (mut delete, mut cancel) = (false, false);
+        let modal = egui::Modal::new(egui::Id::new("delete_resource")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.heading(tl!("Delete Resource"));
+            ui.add_space(6.0);
+            ui.label(text);
+            ui.label(RichText::new(tl!("You can undo this.")).color(t.text_dim));
+            ui.add_space(10.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                cancel = ui.button(tl!("Cancel")).clicked();
+                delete = ui.button(tl!("Delete")).clicked();
+            });
+        });
+        if delete {
+            self.run_resource_delete(&ids, at);
+        } else if !(cancel || modal.should_close()) {
+            self.resources.delete = Some((ids, at));
         }
     }
 
@@ -344,6 +397,57 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Deleting a resource with assignments asks first, naming how many tasks it is on: Cancel
+    /// (or Escape) changes nothing, Delete is one undo step. One with none goes at once.
+    #[test]
+    fn deleting_an_assigned_resource_asks_first() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 720.0))
+            .build_ui_state(|ui, app: &mut App| app.ui(ui), App::new(projectcraft_engine::sample(), None));
+        h.run_steps(3);
+        let step = |h: &mut Harness<'static, App>| h.run_steps(3);
+        for label in ["View", "Resource Sheet", "Priya Shah"] {
+            h.get_by_label(label).click();
+            step(&mut h);
+        }
+        let before = h.state().session.project.clone();
+        h.key_press(Key::Delete);
+        step(&mut h);
+        assert!(h.state().resources.delete.is_some());
+        assert!(h.query_by_label_contains("Priya Shah is assigned to 4 task(s)").is_some(), "Agree the brief, Survey, Order furniture, Move day");
+        h.get_by_label("Cancel").click();
+        step(&mut h);
+        assert!(h.state().resources.delete.is_none());
+        assert_eq!(h.state().session.project, before);
+        h.key_press(Key::Delete);
+        step(&mut h);
+        h.key_press(Key::Escape);
+        step(&mut h);
+        assert!(h.state().resources.delete.is_none());
+        assert_eq!(h.state().session.project, before, "Escape is Cancel");
+        h.key_press(Key::Delete);
+        step(&mut h);
+        h.get_by_label("Delete").click();
+        step(&mut h);
+        let p = &h.state().session.project;
+        assert!(p.resource(ResourceId(1)).is_err() && !p.is_assigned(ResourceId(1)));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        step(&mut h);
+        assert_eq!(h.state().session.project, before, "one undo step");
+        // A new resource, on no task, is deleted without a question.
+        h.key_press(Key::Insert);
+        step(&mut h);
+        let added = h.state().session.project.resources.len();
+        h.key_press(Key::Escape);
+        step(&mut h);
+        h.key_press(Key::Delete);
+        step(&mut h);
+        assert!(h.state().resources.delete.is_none());
+        assert_eq!(h.state().session.project.resources.len(), added - 1);
+    }
 
     #[test]
     fn typed_cells_become_resource_commands() {
