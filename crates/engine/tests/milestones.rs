@@ -30,8 +30,14 @@ fn a_then_m() -> Session {
     s
 }
 
+/// The scheduler's dates, with total slack in working days (it counts working minutes), as
+/// these examples count it.
 fn dates(s: &Session, id: u32) -> TaskDates {
-    s.schedule.as_ref().unwrap().tasks[&TaskId(id)]
+    let mut d = s.schedule.as_ref().unwrap().tasks[&TaskId(id)];
+    let day = s.project.minutes_per_day();
+    assert_eq!(d.slack % day, 0, "whole days of slack");
+    d.slack /= day;
+    d
 }
 
 fn shown(s: &Session, id: u32) -> (Date, Date) {

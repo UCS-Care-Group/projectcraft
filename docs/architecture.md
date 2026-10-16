@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (links to private planning docs removed; link to the threat model)
+> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (the scheduler counts working minutes)
 
 ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCS-Care-Group/mailcraft/blob/main/docs/architecture.md).
 
@@ -23,7 +23,7 @@ ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://g
 4. The UI draws the task sheet and bars from `Session::project` and `Session::schedule`.
 
 ## Scheduling
-Times are offsets in working days from the project start. The forward pass gives early start/finish per link kind (FS, SS, FF, SF, with lag); the backward pass from the latest early finish gives late dates; total slack is late start minus early start; slack ≤ 0 is critical. Offsets become dates through one walk of the calendar.
+Times are offsets in working minutes from the first working minute of the project, counted on the calendar's working times; durations, lags and slack are working minutes, and a day of duration is the project's hours per day. The forward pass gives early start/finish per link kind (FS, SS, FF, SF, with lag); the backward pass from the latest early finish gives late dates; total slack is late start minus early start; slack ≤ 0 is critical. Offsets become moments (a date and a minute of the day) through one walk of the calendar.
 
 ## Security
 What the program protects, from whom, and which code does it: [threat-model.md](threat-model.md).
@@ -34,3 +34,4 @@ What the program protects, from whom, and which code does it: [threat-model.md](
 | 2026-10-15 | major | First version |
 | 2026-10-16 | minor | Command schemas and effects; links to private planning docs removed |
 | 2026-10-16 | minor | Link to the threat model |
+| 2026-10-16 | minor | The scheduler counts working minutes |

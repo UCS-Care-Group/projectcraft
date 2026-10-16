@@ -11,7 +11,7 @@
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{
-    MAX_WORKING_TIMES, Outline, TaskId, WorkingTime, check_working_times, clock, parse_clock, parse_duration, preds_text,
+    MAX_WORKING_TIMES, Outline, TaskId, WorkingTime, check_working_times, clock, days_text, parse_clock, parse_duration, preds_text,
 };
 use projectcraft_engine::{Session, WEEKDAYS, time::Date};
 use serde_json::{Value, json};
@@ -505,7 +505,7 @@ impl App {
         Some(match field {
             Field::Name => t.name.clone(),
             Field::Duration if p.is_summary(id) => return None,
-            Field::Duration => format!("{}d", t.duration),
+            Field::Duration => format!("{}d", days_text(t.duration, p.minutes_per_day())),
             Field::Start => date(dates.map(|d| d.start)),
             Field::Finish => date(dates.map(|d| d.finish)),
             Field::Preds => p.preds_text_rows(&t.preds),
@@ -535,7 +535,7 @@ impl App {
             }
             Field::Preds => match self.session.project.parse_preds_rows(&text) {
                 Ok(links) => {
-                    self.run("task.setPredecessors", json!({"id": id.0, "text": preds_text(&links)}));
+                    self.run("task.setPredecessors", json!({"id": id.0, "text": preds_text(&links, self.session.project.minutes_per_day())}));
                 }
                 Err(e) => self.status = e.to_string(),
             },
@@ -813,7 +813,7 @@ impl App {
                 ] {
                     let lead = if field == Field::Name { indent } else { 0.0 };
                     let value = self.cell_text(id, field);
-                    let shown = value.clone().unwrap_or_else(|| format!("{duration}d"));
+                    let shown = value.clone().unwrap_or_else(|| format!("{}d", days_text(duration, self.session.project.minutes_per_day())));
                     let inner = ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.add_space(lead);
@@ -1291,7 +1291,7 @@ mod tests {
         key(&mut h, Modifiers::NONE, Key::ArrowRight);
         typed(&mut h, "2w");
         key(&mut h, Modifiers::NONE, Key::Enter);
-        assert_eq!(h.state().session.project.tasks[2].duration, 10);
+        assert_eq!(h.state().session.project.tasks[2].duration, 10 * 480, "ten 8-hour days, in working minutes");
         // Enter alone moves down too.
         key(&mut h, Modifiers::NONE, Key::Enter);
         assert_eq!(picked(&h), [5]);

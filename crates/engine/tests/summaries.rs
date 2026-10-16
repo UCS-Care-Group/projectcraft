@@ -31,8 +31,11 @@ fn start_finish(s: &Session, id: u32) -> (Date, Date) {
     (d.start, d.finish)
 }
 
+/// A task's duration in working days (it is stored in working minutes).
 fn duration(s: &Session, id: u32) -> i64 {
-    s.project.task(TaskId(id)).unwrap().duration
+    let d = s.project.task(TaskId(id)).unwrap().duration;
+    assert_eq!(d % s.project.minutes_per_day(), 0, "whole days");
+    d / s.project.minutes_per_day()
 }
 
 #[test]

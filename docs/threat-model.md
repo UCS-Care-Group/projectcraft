@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (resources: people's names in project files) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (caps in working minutes; file format 2 migration) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -36,9 +36,9 @@ may be malformed, enormous, or crafted to make the scheduler loop or overflow.
   (`unsafe_code = "forbid"` in the workspace `Cargo.toml`, the clippy denials at every crate root).
   Reading a file (`crates/engine/src/file.rs`) is capped at 128 MB before parsing, must be UTF-8
   JSON, refuses a newer `format_version`, and is validated after: at most `MAX_TASKS` tasks, ids
-  non-zero and unique, durations and lags within `MAX_DAYS`, links only to tasks that exist; at most `MAX_RESOURCES` resources with non-zero, unique Unique IDs, unique names, and Max Units and amounts of money within their caps.
+  non-zero and unique, durations and lags within `MAX_MINUTES` (version-1 day counts within `MAX_DAYS` before they migrate to minutes), links only to tasks that exist; at most `MAX_RESOURCES` resources with non-zero, unique Unique IDs, unique names, and Max Units and amounts of money within their caps.
   A property test feeds arbitrary bytes to the loader.
-- **No runaway scheduling.** Durations and lags are clamped to `MAX_DAYS` again in the scheduler,
+- **No runaway scheduling.** Durations and lags are clamped to `MAX_MINUTES` again in the scheduler, the calendar walk is bounded,
   arithmetic is checked or saturating, and a loop of links is found by the ordering pass
   (`order` in `crates/model/src/schedule.rs`) and reported as an error, never followed.
 - **A bad file is an error, not a crash:** the app prints why and exits, or the Open dialog
@@ -149,3 +149,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 | 2026-10-16 | major | First version: assets, what the program doesn't do, adversaries and mechanisms with their files, known limits |
 | 2026-10-16 | minor | Owner-only permissions on Unix: files written 0600, new settings and recovery folders 0700 (#37) |
 | 2026-10-16 | minor | Resources: project files hold people's names (personal data, no contact details); resources validated on load (#54) |
+| 2026-10-16 | minor | Durations and lags capped in working minutes; version-1 files migrate with the day cap kept (#52) |

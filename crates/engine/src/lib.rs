@@ -85,7 +85,7 @@ impl Session {
     }
 
     /// Schedules the project, after keeping its outline to the rule. Each summary task stores its
-    /// rolled-up duration, so one that stops being a summary keeps its last rolled-up duration
+    /// rolled-up duration (working minutes), so one that stops being a summary keeps its last rolled-up duration
     /// (worked example 13); the scheduler never reads a summary's own duration.
     fn reschedule(&mut self) {
         self.project.normalize_outline();
@@ -173,7 +173,7 @@ fn task_id() -> Value {
 }
 
 fn days() -> Value {
-    json!({"type": "integer", "minimum": 0, "maximum": model::MAX_DAYS, "description": "working days"})
+    json!({"type": "integer", "minimum": 0, "maximum": model::MAX_DAYS, "description": "working days, at the project's hours per day"})
 }
 
 /// Checks params against a command schema. Supports the subset our schemas use: an object with
@@ -510,7 +510,8 @@ const COMMANDS: &[CommandSpec] = &[
         schema: || object(json!({"name": {"type": "string"}, "duration": days()}), &[]),
         run: |p, v| {
             let n = v.get("name").and_then(Value::as_str).map_or_else(|| "New task".to_owned(), name);
-            p.add_task(n, v.get("duration").and_then(Value::as_i64).unwrap_or(1))?;
+            let duration = p.days_to_minutes(v.get("duration").and_then(Value::as_i64).unwrap_or(1))?;
+            p.add_task(n, duration)?;
             Ok(())
         },
     },
@@ -521,7 +522,8 @@ const COMMANDS: &[CommandSpec] = &[
         schema: || object(json!({"before": above("insert"), "name": {"type": "string"}, "duration": days()}), &[]),
         run: |p, v| {
             let n = v.get("name").and_then(Value::as_str).map_or_else(|| "New task".to_owned(), name);
-            p.insert_task(opt_id_param(v, "before")?, n, v.get("duration").and_then(Value::as_i64).unwrap_or(1))?;
+            let duration = p.days_to_minutes(v.get("duration").and_then(Value::as_i64).unwrap_or(1))?;
+            p.insert_task(opt_id_param(v, "before")?, n, duration)?;
             Ok(())
         },
     },
@@ -555,7 +557,8 @@ const COMMANDS: &[CommandSpec] = &[
             if p.is_summary(id) {
                 return Err(CmdError::Params("a summary task's duration is rolled up from its subtasks and can't be set".into()));
             }
-            p.task_mut(id)?.duration = model::check_days(int_param(v, "duration")?)?;
+            let duration = p.days_to_minutes(int_param(v, "duration")?)?;
+            p.task_mut(id)?.duration = duration;
             Ok(())
         },
     },
@@ -564,10 +567,13 @@ const COMMANDS: &[CommandSpec] = &[
         label: "Predecessors",
         effect: Effect::Edit,
         schema: || {
-            object(json!({"id": task_id(), "text": {"type": "string", "description": "predecessors by Unique ID, e.g. 3, 5SS+2"}}), &["id", "text"])
+            object(
+                json!({"id": task_id(), "text": {"type": "string", "description": "predecessors by Unique ID, e.g. 3, 5SS+2; a lag is in working days (or h, m: 5FS+4h)"}}),
+                &["id", "text"],
+            )
         },
         run: |p, v| {
-            let links = model::parse_preds(str_param(v, "text")?)?;
+            let links = model::parse_preds(str_param(v, "text")?, p.minutes_per_day())?;
             p.set_preds(id_param(v)?, links)?;
             Ok(())
         },
@@ -992,8 +998,8 @@ mod tests {
         let dates = s.schedule.as_ref().unwrap().finish;
         s.run("calendar.setWorkingTimes", &json!({"weekday": "Fri", "times": ["8:00-12:00"]})).unwrap();
         assert_eq!(s.project.calendar.weekday_times(4), &[model::parse_working_time("8:00-12:00").unwrap()]);
-        // Times alone never move a date yet: the scheduler counts working days.
-        assert_eq!(s.schedule.as_ref().unwrap().finish, dates);
+        // The scheduler counts working time: a 4-hour Friday takes the plan past its old finish.
+        assert!(s.schedule.as_ref().unwrap().finish > dates);
         s.run("calendar.setWorkingTimes", &json!({"weekday": "Sat", "times": ["9:00-13:00"]})).unwrap();
         assert!(s.project.calendar.working[5]);
         s.run("calendar.setWorkingTimes", &json!({"weekday": "Sat", "times": []})).unwrap();

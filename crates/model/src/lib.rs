@@ -23,14 +23,18 @@ pub use resource::{
     AccrueAt, DEFAULT_CURRENCY_SYMBOL, DEFAULT_MINOR_DIGITS, FULL_TIME, MAX_MONEY, MAX_RESOURCE_TEXT, MAX_RESOURCES, MAX_UNITS, Resource,
     ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_name, format_money, parse_money, parse_units, units_text,
 };
-pub use schedule::{Driver, Schedule, TaskDates, schedule};
+pub use schedule::{Driver, Moment, Schedule, TaskDates, schedule};
 pub use working_time::{
     DEFAULT_WORKING_TIMES, MAX_WORKING_TIMES, MINUTES_IN_DAY, Options, WorkingTime, check_working_times, clock, minutes_of, parse_clock,
     parse_working_time,
 };
 
-/// Longest duration or lag accepted, in working days (about 400 years): keeps all arithmetic in range.
+/// Longest duration or lag accepted in days (about 400 years of working days): keeps all
+/// arithmetic in range.
 pub const MAX_DAYS: i64 = 100_000;
+/// Longest duration or lag accepted, in working minutes: [`MAX_DAYS`] days of 24 hours, so a
+/// day count within [`MAX_DAYS`] fits at any hours per day.
+pub const MAX_MINUTES: i64 = MAX_DAYS * MINUTES_IN_DAY as i64;
 /// Most tasks in one project. ponytail: a cap, not a measured limit; raise with a benchmark.
 pub const MAX_TASKS: usize = 100_000;
 
@@ -72,7 +76,7 @@ pub struct Link {
     pub pred: TaskId,
     #[serde(default)]
     pub kind: LinkKind,
-    /// Working days; negative is lead.
+    /// Working minutes; negative is lead.
     #[serde(default)]
     pub lag: i64,
 }
@@ -170,7 +174,8 @@ impl Constraint {
 pub struct Task {
     pub id: TaskId,
     pub name: String,
-    /// Working days; 0 is a milestone.
+    /// Working minutes; 0 is a milestone. A day of duration is the project's hours per day
+    /// ([`Options::minutes_per_day`]).
     pub duration: i64,
     #[serde(default)]
     pub preds: Vec<Link>,
@@ -405,38 +410,61 @@ impl Calendar {
         self.exceptions.remove(&date).map(|_| ()).ok_or_else(|| ModelError::Invalid(format!("there is no exception on {date}")))
     }
 
-    /// Working days on or after `from` and before `to`; 0 when `to` is not after `from`. Whole
+    /// Working minutes on `d`: none on a day off.
+    pub fn minutes_on(&self, d: Date) -> i64 {
+        i64::from(minutes_of(self.times_on(d)))
+    }
+
+    /// Working minutes of weekday `i` (0 is Monday), ignoring exceptions.
+    fn weekday_minutes(&self, i: usize) -> i64 {
+        i64::from(minutes_of(self.weekday_times(i)))
+    }
+
+    /// Working minutes on or after `from` and before `to`; 0 when `to` is not after `from`. Whole
     /// weeks are counted arithmetically, then each exception in the range corrects its day, so
     /// any range in years 1–9999 is quick.
-    pub fn workdays_between(&self, from: Date, to: Date) -> i64 {
+    pub fn minutes_between(&self, from: Date, to: Date) -> i64 {
         let n = to.days_since(from);
         if n <= 0 {
             return 0;
         }
-        let per_week = self.working.iter().filter(|w| **w).count() as i64;
+        let per_week: i64 = (0..7).map(|i| self.weekday_minutes(i)).sum();
         let (weeks, rest) = (n / 7, n % 7);
-        let tail = (0..rest).filter(|k| from.add_days(weeks * 7 + k).is_some_and(|d| self.works_weekday(d))).count() as i64;
-        let correction: i64 = self.exceptions.range(from..to).map(|(d, w)| i64::from(*w) - i64::from(self.works_weekday(*d))).sum();
+        let tail: i64 = (0..rest).filter_map(|k| from.add_days(weeks * 7 + k)).map(|d| self.weekday_minutes(usize::from(d.weekday()))).sum();
+        let correction: i64 =
+            self.exceptions.range(from..to).map(|(d, _)| self.minutes_on(*d) - self.weekday_minutes(usize::from(d.weekday()))).sum();
         weeks * per_week + tail + correction
     }
 
-    /// The first `count` working days on or after `from`; `None` when the calendar runs out of
-    /// working days, or past year 9999.
-    pub fn workdays(&self, from: Date, count: usize) -> Option<Vec<Date>> {
+    /// The working days from `from` on, each with the working minutes before it (counted from
+    /// `from`), until working minute `last` is covered: the table a minute offset is turned into a
+    /// date with. `None` when the calendar runs out of working days, past year 9999, or past
+    /// `max_days` working days.
+    pub fn working_days(&self, from: Date, last: i64, max_days: usize) -> Option<Vec<(Date, i64)>> {
+        let mut out = Vec::new();
+        let mut before = 0i64;
+        let mut push = |d: Date, m: i64| {
+            if m > 0 && before <= last {
+                out.push((d, before));
+                before += m;
+            }
+            before > last || out.len() > max_days
+        };
         if !self.working.contains(&true) {
             // Only the working exceptions are worked (a damaged file; commands refuse this week).
-            let out: Vec<Date> = self.exceptions.range(from..).filter(|(_, w)| **w).map(|(d, _)| *d).take(count).collect();
-            return (out.len() == count).then_some(out);
-        }
-        let (mut d, mut out) = (from, Vec::with_capacity(count));
-        // Terminates: at least one weekday is worked, exceptions are finite, and add_days stops at year 9999.
-        while out.len() < count {
-            if self.is_workday(d) {
-                out.push(d);
+            for (d, _) in self.exceptions.range(from..).filter(|(_, w)| **w) {
+                if push(*d, self.minutes_on(*d)) {
+                    break;
+                }
             }
-            d = d.add_days(1)?;
+        } else {
+            let mut d = from;
+            // Terminates: at least one weekday is worked, exceptions are finite, and add_days stops at year 9999.
+            while !push(d, self.minutes_on(d)) {
+                d = d.add_days(1)?;
+            }
         }
-        Some(out)
+        (before > last && out.len() <= max_days).then_some(out)
     }
 }
 
@@ -487,7 +515,7 @@ impl Project {
         self.tasks.iter_mut().find(|t| t.id == id).ok_or(ModelError::NoTask(id))
     }
 
-    /// Adds a task at the end, at the top level, and returns its Unique ID.
+    /// Adds a task of `duration` working minutes at the end, at the top level, and returns its Unique ID.
     pub fn add_task(&mut self, name: impl Into<String>, duration: i64) -> Result<TaskId, ModelError> {
         let task = self.new_task(name.into(), duration, 1)?;
         let id = task.id;
@@ -506,19 +534,31 @@ impl Project {
         self.tasks.get(i).map(|t| t.id)
     }
 
+    /// The project's day of duration in working minutes (its hours per day), always in range.
+    pub fn minutes_per_day(&self) -> i64 {
+        self.options.day()
+    }
+
+    /// `days` days of duration or lag in working minutes, at the project's hours per day; refused
+    /// past [`MAX_DAYS`].
+    pub fn days_to_minutes(&self, days: i64) -> Result<i64, ModelError> {
+        Ok(check_days(days)? * self.minutes_per_day())
+    }
+
     /// Predecessors as the Predecessors column shows them: by row ID. A link to a missing task
     /// (only a damaged file could hold one) shows as `?`.
     pub fn preds_text_rows(&self, preds: &[Link]) -> String {
+        let day = self.minutes_per_day();
         let one = |l: &Link| match self.row_of(l.pred) {
-            Some(row) => link_text(row, l),
-            None => link_text('?', l),
+            Some(row) => link_text(row, l, day),
+            None => link_text('?', l, day),
         };
         preds.iter().map(one).collect::<Vec<_>>().join(", ")
     }
 
     /// Reads the Predecessors column: row IDs, returned as links by Unique ID.
     pub fn parse_preds_rows(&self, text: &str) -> Result<Vec<Link>, ModelError> {
-        parse_preds(text)?
+        parse_preds(text, self.minutes_per_day())?
             .into_iter()
             .map(|l| {
                 let pred = self.task_at_row(l.pred.0).ok_or_else(|| ModelError::Invalid(format!("no task with ID {}", l.pred)))?;
@@ -536,7 +576,7 @@ impl Project {
             if l.pred == id {
                 return Err(ModelError::Cycle(id));
             }
-            check_days(l.lag.abs())?;
+            check_minutes(l.lag.saturating_abs())?;
         }
         self.check_outline_links(id, &preds)?;
         let old = std::mem::replace(&mut self.task_mut(id)?.preds, preds);
@@ -548,28 +588,62 @@ impl Project {
     }
 }
 
+/// A day count in range: 0 to [`MAX_DAYS`].
 pub fn check_days(n: i64) -> Result<i64, ModelError> {
     if (0..=MAX_DAYS).contains(&n) { Ok(n) } else { Err(ModelError::Invalid(format!("{n} is not between 0 and {MAX_DAYS} days"))) }
 }
 
-/// Predecessors by Unique ID, as commands take them: `3, 5SS+2, 7FF-1`.
-pub fn preds_text(preds: &[Link]) -> String {
-    preds.iter().map(|l| link_text(l.pred, l)).collect::<Vec<_>>().join(", ")
+/// A duration or lag size in working minutes in range: 0 to [`MAX_MINUTES`].
+pub fn check_minutes(n: i64) -> Result<i64, ModelError> {
+    if (0..=MAX_MINUTES).contains(&n) {
+        Ok(n)
+    } else {
+        Err(ModelError::Invalid(format!("{n} minutes is not between 0 and {MAX_MINUTES} minutes ({MAX_DAYS} days of 24 hours)")))
+    }
+}
+
+/// Working minutes as days of `minutes_per_day`, to at most two decimal places: `3`, `1.5`,
+/// `-2`, `2.13`. Integer arithmetic, rounding half away from zero.
+pub fn days_text(minutes: i64, minutes_per_day: i64) -> String {
+    let day = i128::from(minutes_per_day.max(1));
+    let m = i128::from(minutes);
+    let hundredths = (m.abs() * 200 + day) / (2 * day);
+    let sign = if m < 0 && hundredths > 0 { "-" } else { "" };
+    let (whole, frac) = (hundredths / 100, hundredths % 100);
+    match frac {
+        0 => format!("{sign}{whole}"),
+        f if f % 10 == 0 => format!("{sign}{whole}.{}", f / 10),
+        f => format!("{sign}{whole}.{f:02}"),
+    }
+}
+
+/// Predecessors by Unique ID, as commands take them: `3, 5SS+2, 7FF-1`, lags in days of
+/// `minutes_per_day` (in hours or minutes when not whole days: `4FS+4h`).
+pub fn preds_text(preds: &[Link], minutes_per_day: i64) -> String {
+    preds.iter().map(|l| link_text(l.pred, l, minutes_per_day)).collect::<Vec<_>>().join(", ")
 }
 
 /// One link, its predecessor written as `pred`.
-fn link_text(pred: impl fmt::Display, l: &Link) -> String {
+fn link_text(pred: impl fmt::Display, l: &Link, minutes_per_day: i64) -> String {
     let kind = match l.kind {
         LinkKind::FS if l.lag == 0 => String::new(),
         k => format!("{k:?}"),
     };
-    let lag = if l.lag == 0 { String::new() } else { format!("{:+}", l.lag) };
+    let day = minutes_per_day.max(1);
+    let lag = match l.lag {
+        0 => String::new(),
+        m if m % day == 0 => format!("{:+}", m / day),
+        m if m % 60 == 0 => format!("{:+}h", m / 60),
+        m => format!("{m:+}m"),
+    };
     format!("{pred}{kind}{lag}")
 }
 
-/// Reads what [`preds_text`] writes (an optional trailing `d` on a lag is accepted).
-pub fn parse_preds(text: &str) -> Result<Vec<Link>, ModelError> {
+/// Reads what [`preds_text`] writes. A lag is in days of `minutes_per_day`, with an optional
+/// `d`; `h` (hours) and `m` (minutes) are read too, so a lag that isn't whole days round-trips.
+pub fn parse_preds(text: &str, minutes_per_day: i64) -> Result<Vec<Link>, ModelError> {
     let bad = |p: &str| ModelError::Invalid(format!("not a predecessor: {}", p.chars().take(40).collect::<String>()));
+    let day = minutes_per_day.max(1);
     let mut out = Vec::new();
     for part in text.split([',', ';']).map(str::trim).filter(|p| !p.is_empty()) {
         let digits = part.find(|c: char| !c.is_ascii_digit()).unwrap_or(part.len());
@@ -583,10 +657,19 @@ pub fn parse_preds(text: &str) -> Result<Vec<Link>, ModelError> {
             Some("SF") => (LinkKind::SF, &rest[2..]),
             _ => (LinkKind::FS, rest),
         };
-        let lag = lag.trim().trim_end_matches(['d', 'D']).trim();
-        let lag = if lag.is_empty() { 0 } else { lag.trim_start_matches('+').parse::<i64>().map_err(|_| bad(part))? };
-        check_days(lag.saturating_abs())?;
-        out.push(Link { pred, kind, lag });
+        let lag = lag.trim();
+        let (num, unit) = match lag.char_indices().last() {
+            Some((i, c)) if c.is_ascii_alphabetic() => (lag.get(..i).unwrap_or("").trim(), c.to_ascii_lowercase()),
+            _ => (lag, 'd'),
+        };
+        let n = if num.is_empty() { 0 } else { num.trim_start_matches('+').parse::<i64>().map_err(|_| bad(part))? };
+        let size = match unit {
+            'd' => check_days(n.saturating_abs())? * day,
+            'h' => check_minutes(n.saturating_abs().saturating_mul(60))?,
+            'm' => check_minutes(n.saturating_abs())?,
+            _ => return Err(bad(part)),
+        };
+        out.push(Link { pred, kind, lag: size * n.signum() });
     }
     Ok(out)
 }
@@ -595,73 +678,106 @@ pub fn parse_preds(text: &str) -> Result<Vec<Link>, ModelError> {
 mod tests {
     use super::*;
 
+    /// A day of duration at the default 8 hours.
+    const D: i64 = 480;
+
     #[test]
     fn predecessor_text_round_trips() {
-        let links = parse_preds("3, 5ss+2, 7FF-1d;9").unwrap();
-        assert_eq!(preds_text(&links), "3, 5SS+2, 7FF-1, 9");
-        assert!(parse_preds("x").is_err());
-        assert!(parse_preds("1FS+999999999999999999999").is_err());
-        assert_eq!(parse_preds("").unwrap(), vec![]);
+        let links = parse_preds("3, 5ss+2, 7FF-1d;9", D).unwrap();
+        assert_eq!(links[1].lag, 2 * D, "lags are working minutes");
+        assert_eq!(preds_text(&links, D), "3, 5SS+2, 7FF-1, 9");
+        assert!(parse_preds("x", D).is_err());
+        assert!(parse_preds("1FS+999999999999999999999", D).is_err());
+        assert!(parse_preds(&format!("1FS+{}", MAX_DAYS + 1), D).is_err(), "the day cap holds");
+        assert!(parse_preds("1FS+3w", D).is_err());
+        assert_eq!(parse_preds("", D).unwrap(), vec![]);
+        // A lag that isn't whole days (the hours per day changed) is written exactly and reads back.
+        let odd = vec![Link { pred: TaskId(2), kind: LinkKind::SS, lag: 960 }, Link { pred: TaskId(3), kind: LinkKind::FS, lag: -90 }];
+        assert_eq!(preds_text(&odd, 450), "2SS+16h, 3FS-90m");
+        assert_eq!(parse_preds(&preds_text(&odd, 450), 450).unwrap(), odd);
+        assert_eq!(preds_text(&odd, 480), "2SS+2, 3FS-90m");
+    }
+
+    #[test]
+    fn days_text_shows_up_to_two_decimals() {
+        for (m, day, text) in
+            [(0, D, "0"), (3 * D, D, "3"), (720, D, "1.5"), (-960, D, "-2"), (1, D, "0"), (-1, D, "0"), (960, 450, "2.13"), (5, 1, "5")]
+        {
+            assert_eq!(days_text(m, day), text, "{m} at {day}");
+        }
+        assert_eq!(days_text(i64::MIN, 0), "-9223372036854775808");
     }
 
     #[test]
     fn set_preds_refuses_loops_and_keeps_the_old_links() {
         let mut p = Project::new("t", Date::from_ymd(2026, 1, 5).unwrap());
-        let a = p.add_task("a", 1).unwrap();
-        let b = p.add_task("b", 1).unwrap();
-        p.set_preds(b, parse_preds("1").unwrap()).unwrap();
-        assert!(matches!(p.set_preds(a, parse_preds("2").unwrap()), Err(ModelError::Cycle(_))));
+        let a = p.add_task("a", D).unwrap();
+        let b = p.add_task("b", D).unwrap();
+        p.set_preds(b, parse_preds("1", D).unwrap()).unwrap();
+        assert!(matches!(p.set_preds(a, parse_preds("2", D).unwrap()), Err(ModelError::Cycle(_))));
         assert!(p.task(a).unwrap().preds.is_empty());
-        assert!(p.set_preds(a, parse_preds("1").unwrap()).is_err());
-        assert!(p.set_preds(a, parse_preds("42").unwrap()).is_err());
+        assert!(p.set_preds(a, parse_preds("1", D).unwrap()).is_err());
+        assert!(p.set_preds(a, parse_preds("42", D).unwrap()).is_err());
     }
 
     #[test]
     fn predecessors_column_uses_row_ids_and_links_keep_unique_ids() {
         let mut p = Project::new("t", Date::from_ymd(2026, 1, 5).unwrap());
-        let a = p.add_task("a", 1).unwrap();
-        let b = p.add_task("b", 1).unwrap();
-        let c = p.add_task("c", 1).unwrap();
+        let a = p.add_task("a", D).unwrap();
+        let b = p.add_task("b", D).unwrap();
+        let c = p.add_task("c", D).unwrap();
         // Rows 1, 2 after a is deleted: b is row 1, c is row 2.
         p.delete_tasks(&[a]).unwrap();
         assert_eq!((p.row_of(b), p.row_of(c), p.row_of(a)), (Some(1), Some(2), None));
         let links = p.parse_preds_rows("1SS+2").unwrap();
-        assert_eq!(links, vec![Link { pred: b, kind: LinkKind::SS, lag: 2 }]);
+        assert_eq!(links, vec![Link { pred: b, kind: LinkKind::SS, lag: 2 * D }]);
         p.set_preds(c, links).unwrap();
         assert_eq!(p.preds_text_rows(&p.task(c).unwrap().preds), "1SS+2");
-        assert_eq!(preds_text(&p.task(c).unwrap().preds), "2SS+2", "stored by Unique ID");
+        assert_eq!(preds_text(&p.task(c).unwrap().preds, D), "2SS+2", "stored by Unique ID");
         // Moving rows renumbers the column; the link still points at b.
         p.tasks.swap(0, 1);
         assert_eq!(p.preds_text_rows(&p.task(c).unwrap().preds), "2SS+2");
         assert_eq!(p.task(c).unwrap().preds[0].pred, b);
         assert!(p.parse_preds_rows("3").is_err());
         assert!(p.parse_preds_rows("0").is_err());
-        assert_eq!(p.preds_text_rows(&[Link { pred: TaskId(99), kind: LinkKind::FF, lag: -1 }]), "?FF-1");
+        assert_eq!(p.preds_text_rows(&[Link { pred: TaskId(99), kind: LinkKind::FF, lag: -D }]), "?FF-1");
         // A deleted Unique ID is never handed out again.
-        assert_eq!(p.add_task("d", 1).unwrap(), TaskId(4));
+        assert_eq!(p.add_task("d", D).unwrap(), TaskId(4));
     }
 
     #[test]
-    fn workdays_between_counts_working_days_and_honours_exceptions() {
+    fn minutes_between_counts_working_time_and_honours_exceptions() {
         let mut c = Calendar::default();
         let d = |s: &str| s.parse::<Date>().unwrap();
-        // Mon 5 .. Sun 18 January 2026: ten working days.
-        assert_eq!(c.workdays_between(d("2026-01-05"), d("2026-01-19")), 10);
-        assert_eq!(c.workdays_between(d("2026-01-10"), d("2026-01-12")), 0);
-        assert_eq!(c.workdays_between(d("2026-01-12"), d("2026-01-05")), 0);
+        // Mon 5 .. Sun 18 January 2026: ten working days of 8 hours.
+        assert_eq!(c.minutes_between(d("2026-01-05"), d("2026-01-19")), 10 * D);
+        assert_eq!(c.minutes_between(d("2026-01-10"), d("2026-01-12")), 0);
+        assert_eq!(c.minutes_between(d("2026-01-12"), d("2026-01-05")), 0);
         c.add_exception(d("2026-01-07"), false).unwrap();
         c.add_exception(d("2026-01-10"), false).unwrap(); // a Saturday: not worked anyway
-        assert_eq!(c.workdays_between(d("2026-01-05"), d("2026-01-19")), 9);
+        assert_eq!(c.minutes_between(d("2026-01-05"), d("2026-01-19")), 9 * D);
         c.add_exception(d("2026-01-17"), true).unwrap(); // an overtime Saturday
         c.add_exception(d("2026-01-14"), true).unwrap(); // a Wednesday: worked anyway
-        assert_eq!(c.workdays_between(d("2026-01-05"), d("2026-01-19")), 10);
-        // Agrees with a day-by-day walk.
+        assert_eq!(c.minutes_between(d("2026-01-05"), d("2026-01-19")), 10 * D);
+        // Working times count: a 4-hour Friday, a Saturday worked 9:00–13:00.
+        c.set_weekday_times(4, vec![parse_working_time("8:00-12:00").unwrap()]).unwrap();
+        c.set_exception(d("2026-01-17"), vec![parse_working_time("9:00-13:00").unwrap()]).unwrap();
+        assert_eq!(c.minutes_between(d("2026-01-05"), d("2026-01-19")), 7 * D + 3 * 240);
+        // Agrees with a day-by-day sum, and the walk's table with both.
         let from = d("2025-12-29");
-        let walk = c.workdays(from, 40).unwrap();
-        for (i, day) in walk.iter().enumerate() {
-            assert_eq!(c.workdays_between(from, *day), i as i64);
+        let table = c.working_days(from, 40 * D, 1_000).unwrap();
+        let mut sum = 0;
+        for k in 0..60 {
+            let day = from.add_days(k).unwrap();
+            assert_eq!(c.minutes_between(from, day), sum, "{day}");
+            if let Some((_, before)) = table.iter().find(|(t, _)| *t == day) {
+                assert_eq!(*before, sum);
+            }
+            assert_eq!(table.iter().any(|(t, _)| *t == day), c.minutes_on(day) > 0 && sum <= 40 * D, "{day}");
+            sum += c.minutes_on(day);
         }
-        assert!(c.workdays_between(d("0001-01-01"), d("9999-12-31")) > 2_000_000);
+        assert_eq!(c.working_days(from, 40 * D, 3), None, "more working days than allowed");
+        assert!(c.minutes_between(d("0001-01-01"), d("9999-12-31")) > 2_000_000 * D / 2);
     }
 
     #[test]
@@ -682,9 +798,9 @@ mod tests {
         // asking for more than there are is None, not a walk to year 9999.
         c.working = [false; 7];
         c.add_exception(d("2026-01-14"), true).unwrap();
-        assert_eq!(c.workdays(d("2026-01-01"), 1), Some(vec![d("2026-01-14")]));
-        assert_eq!(c.workdays(d("2026-01-01"), 2), None);
-        assert_eq!(c.workdays_between(d("2026-01-01"), d("2026-02-01")), 1);
+        assert_eq!(c.working_days(d("2026-01-01"), D - 1, 10), Some(vec![(d("2026-01-14"), 0)]));
+        assert_eq!(c.working_days(d("2026-01-01"), D, 10), None);
+        assert_eq!(c.minutes_between(d("2026-01-01"), d("2026-02-01")), D);
     }
 
     #[test]
@@ -747,9 +863,9 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn parse_preds_never_panics(s in "\\PC{0,40}") {
-            let _ = parse_preds(&s);
+            let _ = parse_preds(&s, D);
             let mut p = Project::new("t", Date::from_ymd(2026, 1, 5).unwrap());
-            p.add_task("a", 1).unwrap();
+            p.add_task("a", D).unwrap();
             if let Ok(links) = p.parse_preds_rows(&s) {
                 let _ = p.preds_text_rows(&links);
             }

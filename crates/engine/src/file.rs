@@ -2,7 +2,8 @@
 //!
 //! The file is the project's fields plus `format_version`, a whole number that goes up only
 //! when old readers can't read new files. A newer version is refused; an older one is migrated
-//! on load ([`migrate`]). M0 files have no `format_version` and count as version 0.
+//! on load ([`migrate`]). M0 files have no `format_version` and count as version 0. Version 2
+//! counts durations and lags in working minutes; version 1 counted whole working days.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -15,7 +16,7 @@ use crate::model::{self, Project};
 use crate::{CmdError, Session};
 
 /// The version this build writes and the newest it reads.
-pub const FORMAT_VERSION: u64 = 1;
+pub const FORMAT_VERSION: u64 = 2;
 /// Largest file read, so a hostile file can't exhaust memory. ponytail: about 1,000 bytes a task at `MAX_TASKS`.
 const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -43,7 +44,7 @@ impl Session {
                 "this file was saved by a newer ProjectCraft (file format {version}; this version reads up to {FORMAT_VERSION}). Update ProjectCraft to open it."
             )));
         }
-        migrate(&mut v, version);
+        migrate(&mut v, version)?;
         let mut p: Project = serde_json::from_value(v).map_err(|e| bad(e.to_string()))?;
         validate(&mut p)?;
         Ok(Session::new(p))
@@ -80,7 +81,7 @@ impl Session {
 ///
 /// A new field with a default (`constraint`, `outline_level`, `resources`) needs no new version: older files
 /// read as the default, and the outline is kept to its rule on load ([`Session::new`]).
-fn migrate(_v: &mut Value, version: u64) {
+fn migrate(v: &mut Value, version: u64) -> Result<(), CmdError> {
     if version == 0 {
         // M0 → 1: same fields; only `format_version` is new.
     }
@@ -88,6 +89,41 @@ fn migrate(_v: &mut Value, version: u64) {
     // the calendar reads both (`model::Calendar`), and writes only `exceptions`.
     // Calendar working times and project `options` arrived the same way: a file without them
     // reads as the default hours and the default options.
+    if version < 2 {
+        days_to_minutes(v)?;
+    }
+    Ok(())
+}
+
+/// Version 1 → 2: durations and lags were whole working days; they become working minutes, at
+/// the file's own hours per day (the default 8 when it has none, or none in range). A day count
+/// past [`model::MAX_DAYS`] is refused, as version 1 refused it. Anything that isn't a whole
+/// number is left for loading to refuse.
+fn days_to_minutes(v: &mut Value) -> Result<(), CmdError> {
+    let day = v
+        .pointer("/options/minutes_per_day")
+        .and_then(Value::as_u64)
+        .and_then(|m| u32::try_from(m).ok())
+        .map_or_else(|| model::Options::default().day(), |m| model::Options { minutes_per_day: m, ..model::Options::default() }.day());
+    let convert = |n: &mut Value, what: &dyn Fn() -> String| -> Result<(), CmdError> {
+        let Some(days) = n.as_i64() else { return Ok(()) };
+        model::check_days(days.saturating_abs()).map_err(|e| CmdError::Io(format!("not a valid ProjectCraft project: {}: {e}", what())))?;
+        *n = Value::from(days * day);
+        Ok(())
+    };
+    let Some(tasks) = v.get_mut("tasks").and_then(Value::as_array_mut) else { return Ok(()) };
+    for t in tasks {
+        let id = t.get("id").map_or_else(String::new, Value::to_string);
+        if let Some(d) = t.get_mut("duration") {
+            convert(d, &|| format!("task {id}"))?;
+        }
+        for l in t.get_mut("preds").and_then(Value::as_array_mut).into_iter().flatten() {
+            if let Some(lag) = l.get_mut("lag") {
+                convert(lag, &|| format!("task {id}: lag"))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Refuses what the editing commands could never have produced; repairs `next_id` so ids are never reused.
@@ -105,14 +141,14 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
         if t.id.0 == 0 || !ids.insert(t.id) {
             return Err(bad(format!("task id {} is zero or used twice", t.id)));
         }
-        model::check_days(t.duration).map_err(|e| bad(format!("task {}: {e}", t.id)))?;
+        model::check_minutes(t.duration).map_err(|e| bad(format!("task {}: {e}", t.id)))?;
     }
     for t in &p.tasks {
         for l in &t.preds {
             if !ids.contains(&l.pred) {
                 return Err(bad(format!("task {} links to missing task {}", t.id, l.pred)));
             }
-            model::check_days(l.lag.saturating_abs()).map_err(|e| bad(format!("task {}: lag {e}", t.id)))?;
+            model::check_minutes(l.lag.saturating_abs()).map_err(|e| bad(format!("task {}: lag {e}", t.id)))?;
         }
     }
     let max = p.tasks.iter().map(|t| t.id.0).max().unwrap_or(0);
@@ -344,6 +380,54 @@ mod tests {
         assert!(s.project.tasks.iter().all(|t| t.constraint == Constraint::Asap));
         assert!(!s.save_json().unwrap().contains("constraint"));
         assert!(s.schedule.is_ok());
+    }
+
+    /// A version-1 file counted whole working days. It opens with the same dates, its durations
+    /// and lags in working minutes at its own hours per day, and saves as version 2 that reads
+    /// back the same.
+    #[test]
+    fn a_version_1_file_migrates_to_minutes_with_the_same_dates() {
+        let v1 = |options: Value| {
+            json!({"name": "Old", "start": "2026-01-05", "format_version": 1, "options": options,
+                "tasks": [{"id": 1, "name": "A", "duration": 3}, {"id": 2, "name": "B", "duration": 2, "preds": [{"pred": 1, "kind": "FS", "lag": 2}]},
+                    {"id": 3, "name": "M", "duration": 0, "preds": [{"pred": 2, "kind": "SS", "lag": -1}]}], "next_id": 4})
+            .to_string()
+        };
+        let d = |s: &str| s.parse::<Date>().unwrap();
+        for (options, day) in [(json!({}), 480), (json!({"minutes_per_day": 450}), 450), (json!({"minutes_per_day": 1440}), 1440)] {
+            let s = Session::load_json(&v1(options.clone())).unwrap();
+            let t = &s.project.tasks;
+            assert_eq!((t[0].duration, t[1].duration, t[2].duration), (3 * day, 2 * day, 0), "{options}");
+            assert_eq!((t[1].preds[0].lag, t[2].preds[0].lag), (2 * day, -day));
+            assert_eq!(s.project.preds_text_rows(&t[1].preds), "1FS+2", "shown as days, as before");
+            let sch = s.schedule.as_ref().unwrap();
+            if day == 480 {
+                // The calendar's 8-hour days: A Mon 5 – Wed 7; B after two days' lag, Mon 12 – Tue
+                // 13; M one day before B starts, Fri 9.
+                let shown = |id: u32| (sch.tasks[&TaskId(id)].start, sch.tasks[&TaskId(id)].finish);
+                assert_eq!(shown(1), (d("2026-01-05"), d("2026-01-07")));
+                assert_eq!(shown(2), (d("2026-01-12"), d("2026-01-13")));
+                assert_eq!(shown(3), (d("2026-01-09"), d("2026-01-09")));
+            }
+            let text = s.save_json().unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["format_version"], json!(2));
+            let again = Session::load_json(&text).unwrap();
+            assert_eq!(again.project, s.project, "version 2 is not migrated again");
+            assert_eq!(again.schedule.as_ref().unwrap(), sch);
+        }
+        // A day count version 1 refused is still refused, not let through as minutes.
+        let mut big = serde_json::from_str::<Value>(&v1(json!({}))).unwrap();
+        big["tasks"][0]["duration"] = json!(model::MAX_DAYS + 1);
+        assert!(Session::load_json(&big.to_string()).err().unwrap().to_string().contains("task 1"));
+        big["tasks"][0]["duration"] = json!(model::MAX_DAYS);
+        assert_eq!(Session::load_json(&big.to_string()).unwrap().project.tasks[0].duration, model::MAX_DAYS * 480);
+        big["tasks"][1]["preds"][0]["lag"] = json!(i64::MIN);
+        assert!(Session::load_json(&big.to_string()).is_err());
+        // A version-2 file's values are minutes already.
+        let v2 = json!({"name": "New", "start": "2026-01-05", "format_version": 2, "tasks": [{"id": 1, "name": "A", "duration": 240}], "next_id": 2});
+        let s = Session::load_json(&v2.to_string()).unwrap();
+        assert_eq!(s.project.tasks[0].duration, 240);
+        assert_eq!(s.schedule.as_ref().unwrap().tasks[&TaskId(1)].finish_at.minute, 12 * 60, "half a day: Monday 8:00–12:00");
     }
 
     #[test]

@@ -23,7 +23,7 @@ fn levels(s: &Session) -> Vec<u32> {
 }
 
 fn preds(s: &Session, id: u32) -> String {
-    preds_text(&s.project.task(TaskId(id)).unwrap().preds)
+    preds_text(&s.project.task(TaskId(id)).unwrap().preds, s.project.minutes_per_day())
 }
 
 fn rows_text(s: &Session, id: u32) -> String {
@@ -53,7 +53,7 @@ fn worked_example_unique_ids_kept_and_links_survive_reorder() {
         v.sort();
         v
     };
-    let links_before: Vec<String> = s.project.tasks.iter().map(|t| preds_text(&t.preds)).collect();
+    let links_before: Vec<String> = s.project.tasks.iter().map(|t| preds_text(&t.preds, 480)).collect();
     let dates_before = s.schedule.as_ref().unwrap().tasks.clone();
     // Network cabling (Unique ID 5, row 5) moves above Survey the new floor (row 2).
     s.run("task.move", &json!({"ids": [5], "to": 2})).unwrap();
@@ -71,7 +71,7 @@ fn worked_example_unique_ids_kept_and_links_survive_reorder() {
     let by_id: Vec<String> = {
         let mut ts = s.project.tasks.clone();
         ts.sort_by_key(|t| t.id);
-        ts.iter().map(|t| preds_text(&t.preds)).collect()
+        ts.iter().map(|t| preds_text(&t.preds, 480)).collect()
     };
     assert_eq!(by_id, links_before);
     assert_eq!(s.schedule.as_ref().unwrap().tasks, dates_before, "same plan, same dates");
@@ -102,7 +102,7 @@ fn insert_goes_above_a_task_at_its_outline_level() {
     assert_eq!(order(&s), [1, 2, 6, 3, 4, 5]);
     assert_eq!(levels(&s), [1, 2, 2, 2, 1, 1], "a subtask, like the row it went above");
     let t = s.project.task(TaskId(6)).unwrap();
-    assert_eq!((t.name.as_str(), t.duration), ("A2", 4));
+    assert_eq!((t.name.as_str(), t.duration), ("A2", 4 * 480));
     // Above a top-level row: top level. At the end: the level of the last row.
     s.run("task.insert", &json!({"before": 4})).unwrap();
     assert_eq!(levels(&s), [1, 2, 2, 2, 1, 1, 1]);
@@ -154,7 +154,7 @@ fn moved_rows_take_the_level_of_the_row_they_go_above() {
     // Phase's last subtask leaves it: it keeps its rolled-up duration (C, 1 day).
     s.run("task.move", &json!({"ids": [4]})).unwrap();
     assert!(!s.project.is_summary(TaskId(1)));
-    assert_eq!(s.project.task(TaskId(1)).unwrap().duration, 1);
+    assert_eq!(s.project.task(TaskId(1)).unwrap().duration, 480);
 }
 
 #[test]
