@@ -65,7 +65,13 @@ impl Session {
     /// either. The previous save is kept as `<path>.bak`.
     pub fn save_to(&self, path: &Path) -> Result<(), CmdError> {
         let text = self.save_json()?;
-        replace_file(path, |f| f.write_all(text.as_bytes())).map_err(|e| CmdError::Io(format!("{}: {e}", path.display())))
+        replace_file(path, true, |f| f.write_all(text.as_bytes())).map_err(|e| CmdError::Io(format!("{}: {e}", path.display())))
+    }
+
+    /// Saves a copy atomically, as [`Session::save_to`] but without a `.bak` (for the recovery copy).
+    pub fn save_copy_to(&self, path: &Path) -> Result<(), CmdError> {
+        let text = self.save_json()?;
+        replace_file(path, false, |f| f.write_all(text.as_bytes())).map_err(|e| CmdError::Io(format!("{}: {e}", path.display())))
     }
 }
 
@@ -106,16 +112,17 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
     Ok(())
 }
 
-/// Writes a temp file beside `path` with `write`, fsyncs it, copies the old file to `.bak`, then
-/// renames the temp file over `path`. On any error `path` is untouched and the temp file removed.
-fn replace_file(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+/// Writes a temp file beside `path` with `write`, fsyncs it, copies the old file to `.bak` (when
+/// `bak`), then renames the temp file over `path`. On any error `path` is untouched and the temp
+/// file removed.
+fn replace_file(path: &Path, bak: bool, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     let tmp = sibling(path, ".tmp");
     let result = (|| {
         let mut f = File::create(&tmp)?;
         write(&mut f)?;
         f.sync_all()?;
         drop(f);
-        if path.exists() {
+        if bak && path.exists() {
             fs::copy(path, sibling(path, ".bak"))?;
         }
         fs::rename(&tmp, path)
@@ -250,6 +257,18 @@ mod tests {
     }
 
     #[test]
+    fn a_copy_is_saved_without_a_bak() {
+        let dir = tmp_dir("copy");
+        let path = dir.join("plan.projectcraft.recovery");
+        let s = Session::new(full());
+        s.save_copy_to(&path).unwrap();
+        s.save_copy_to(&path).unwrap();
+        assert_eq!(Session::open(&path).unwrap().project, full());
+        assert!(!sibling(&path, ".bak").exists() && !sibling(&path, ".tmp").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn an_interrupted_save_leaves_the_previous_file_intact() {
         let dir = tmp_dir("interrupted");
         let path = dir.join("plan.projectcraft");
@@ -257,7 +276,7 @@ mod tests {
         let before = fs::read(&path).unwrap();
 
         // The writer fails halfway through.
-        let failed = replace_file(&path, |f| {
+        let failed = replace_file(&path, true, |f| {
             f.write_all(b"{\"name\": \"half")?;
             Err(io::Error::other("disk full"))
         });

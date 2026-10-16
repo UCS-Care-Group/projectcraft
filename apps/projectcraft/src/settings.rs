@@ -1,4 +1,6 @@
-//! The app's settings folder and the recent-files list kept in it (`recent-files.txt`, one path a line).
+//! The app's settings folder and what's kept in it: the recent-files list (`recent-files.txt`, one
+//! path a line), the autosave switch (`autosave.txt`, `off` when turned off) and an untitled
+//! project's recovery copy (`recovery/`).
 
 use std::path::PathBuf;
 
@@ -45,5 +47,34 @@ pub fn save_recent(list: &[PathBuf]) {
     let result = file.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&file, projectcraft_ui_egui::recent_text(list)));
     if let Err(e) = result {
         eprintln!("couldn't save the recent-files list to {}: {e}", file.display());
+    }
+}
+
+fn autosave_file() -> Option<PathBuf> {
+    settings_dir().map(|d| d.join("autosave.txt"))
+}
+
+/// The folder for an untitled project's recovery copy.
+pub fn recovery_dir() -> Option<PathBuf> {
+    settings_dir().map(|d| d.join("recovery"))
+}
+
+/// Whether autosave is on: on unless `autosave.txt` says `off`.
+pub fn load_autosave() -> bool {
+    let mut bytes = Vec::new();
+    if let Some(Ok(f)) = autosave_file().map(std::fs::File::open) {
+        let _ = std::io::Read::read_to_end(&mut std::io::Read::take(f, 64), &mut bytes);
+    }
+    String::from_utf8_lossy(&bytes).trim() != "off"
+}
+
+/// Writes the autosave switch. A failure only loses the setting, so it's reported and otherwise ignored.
+pub fn save_autosave(on: bool) {
+    let Some(file) = autosave_file() else {
+        return;
+    };
+    let result = file.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&file, if on { "on\n" } else { "off\n" }));
+    if let Err(e) = result {
+        eprintln!("couldn't save the autosave setting to {}: {e}", file.display());
     }
 }
