@@ -16,6 +16,10 @@
 //! back to its predecessors, so their slack goes negative too. Either way the task is flagged
 //! ([`TaskDates::constraint_conflict`]) on every run.
 //!
+//! A milestone is a moment, not a day: at the end of a working day (after a finish-to-start link,
+//! on its predecessor's finish date) or at the start of one (constrained to start on a date, on
+//! that date). See [`moments`].
+//!
 //! A deadline is not a constraint: it never moves a task, but caps its late finish
 //! (LF = min(LF, deadline)), so slack counts from the deadline when that is earlier, and a finish
 //! after it gives negative slack that the late dates carry back to the predecessors, as Microsoft's
@@ -340,6 +344,96 @@ fn forward(p: &Project, tree: &Tree, order: &[usize], dur: &[i64], sdur: &[i64])
     f
 }
 
+/// A moment between two working days: a working-day offset, and whether it is the start of that
+/// day (`true`) or the end of the day before (`false`). Both are the same working time, but the
+/// start of a day is later on the clock, so it wins a tie in `max` and loses one in `min`. A
+/// milestone shows the day its moment falls in.
+type Moment = (i64, bool);
+
+/// The day a moment falls in.
+fn shown(m: Moment) -> i64 {
+    if m.1 { m.0 } else { m.0 - 1 }
+}
+
+/// Each row's start and finish as moments, for the dates a milestone (and a summary over one)
+/// shows; a task with duration starts at the start of a day and finishes at the end of one. A
+/// link from a finish or a finish-type constraint puts a milestone at the end of a day, a link
+/// from a start or a start-type constraint at the start of one, so a milestone after a task shows
+/// the task's finish date and one constrained to start on a date shows that date, as in Microsoft
+/// Project. The offsets are the forward pass's: only the side of the day is worked out here.
+fn moments(p: &Project, tree: &Tree, order: &[usize], es: &[i64], ef: &[i64], d: &impl Fn(usize) -> i64) -> (Vec<Moment>, Vec<Moment>) {
+    let n = p.tasks.len();
+    let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+    let mut start: Vec<Moment> = es.iter().map(|&s| (s, true)).collect();
+    let mut finish: Vec<Moment> = ef.iter().map(|&f| (f, false)).collect();
+    let mut hold: Vec<Moment> = vec![(0, true); n];
+    // A start worked back from a finish is the start of a day for a task with duration.
+    let back = |o: i64, side: bool, dur: i64| (o, side || dur > 0);
+    for &node in order {
+        let (i, is_hold) = node.checked_sub(n).map_or((node, false), |s| (s, true));
+        let Some(t) = p.tasks.get(i) else { continue };
+        let kids = tree.summary(i);
+        if let (Some(k), false) = (kids, is_hold) {
+            // Roll-up: the earliest start and the latest finish of the subtasks.
+            let s = k.iter().filter_map(|&c| start.get(c).copied()).min();
+            let f = k.iter().filter_map(|&c| finish.get(c).copied()).max();
+            if let (Some(s), Some(a)) = (s.filter(|s| Some(&s.0) == es.get(i)), start.get_mut(i)) {
+                *a = s;
+            }
+            if let (Some(f), Some(b)) = (f.filter(|f| Some(&f.0) == ef.get(i)), finish.get_mut(i)) {
+                *b = f;
+            }
+            continue;
+        }
+        if is_hold && kids.is_none() || !is_hold && d(i) > 0 {
+            continue;
+        }
+        let dur = d(i);
+        let mut m: Moment = (0, true);
+        for l in &t.preds {
+            let Some(&j) = index.get(&l.pred) else { continue };
+            let (Some(&ps), Some(&pf)) = (start.get(j), finish.get(j)) else { continue };
+            let lag = l.lag.clamp(-crate::MAX_DAYS, crate::MAX_DAYS);
+            m = m.max(match l.kind {
+                LinkKind::FS => (pf.0 + lag, pf.1),
+                LinkKind::SS => (ps.0 + lag, ps.1),
+                LinkKind::FF => back(pf.0 + lag - dur, pf.1, dur),
+                LinkKind::SF => back(ps.0 + lag - dur, ps.1, dur),
+            });
+        }
+        if let Some(&h) = tree.parent(i).and_then(|up| hold.get(up)) {
+            m = m.max(h);
+        }
+        let on = |cd: Date| (start_offset(p, cd), true);
+        let by = |cd: Date| back(finish_offset(p, cd) - dur, false, dur);
+        m = match t.constraint {
+            Constraint::StartNoEarlierThan(cd) => m.max(on(cd)),
+            Constraint::FinishNoEarlierThan(cd) => m.max(by(cd)),
+            Constraint::StartNoLaterThan(cd) => m.min(on(cd)),
+            Constraint::FinishNoLaterThan(cd) => m.min(by(cd)),
+            Constraint::MustStartOn(cd) => on(cd),
+            Constraint::MustFinishOn(cd) => by(cd),
+            _ => m,
+        };
+        if m.0 < 0 {
+            m = (0, true);
+        }
+        if is_hold {
+            if let Some(h) = hold.get_mut(i) {
+                *h = m;
+            }
+            continue;
+        }
+        // A milestone: where the forward pass put it, on the side of the day worked out here.
+        let at = es.get(i).copied().unwrap_or(0);
+        let m = if m.0 == at { m } else { (at, false) };
+        if let (Some(a), Some(b)) = (start.get_mut(i), finish.get_mut(i)) {
+            (*a, *b) = (m, m);
+        }
+    }
+    (start, finish)
+}
+
 pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     let tree = Tree::of(p);
     let order = order_with(p, &tree)?;
@@ -430,23 +524,34 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     let days = p.calendar.workdays(p.start, len).ok_or_else(bad)?;
     let day = |off: i64| usize::try_from(off.max(0)).ok().and_then(|o| days.get(o).copied()).ok_or_else(bad);
     // A task occupying [s, f) working days ends on day f-1. A milestone at offset s is the end of
-    // day s-1, so it sits on its predecessor's finish date, as in Microsoft Project.
+    // day s-1 (it sits on its predecessor's finish date) or the start of day s (a start-type
+    // constraint's date), as in Microsoft Project: see `moments`.
     let last = |s: i64, f: i64| day(if f > s { f - 1 } else { s - 1 });
+    let (start_m, finish_m) = moments(p, &tree, &order, &es, &ef, &d);
     let mut tasks = HashMap::with_capacity(n);
+    let mut finish_all = last(0, end)?;
     for (i, t) in p.tasks.iter().enumerate() {
         let (s, f, lfi) = (es.get(i).copied().unwrap_or(0), ef.get(i).copied().unwrap_or(0), lf.get(i).copied().unwrap_or(end));
         let ls = ls.get(i).copied().unwrap_or(lfi - d(i));
         // Roll-up: a summary takes the tighter of its start and finish slack.
         let slack = if summary(i).is_some() { (ls - s).min(lfi - f) } else { ls - early.get(i).copied().unwrap_or(s) };
         let first = |o: i64| if d(i) == 0 { day(o - 1) } else { day(o) };
-        let finish = last(s, f)?;
+        let (sm, fm) = (start_m.get(i).copied().unwrap_or((s, d(i) > 0)), finish_m.get(i).copied().unwrap_or((f, false)));
+        let finish = day(shown(fm))?;
+        finish_all = finish_all.max(finish);
+        // A milestone at the start of its day has its late dates there too when they are its
+        // early ones (no slack) or a start-type constraint's date holds them.
+        let late_on_day = d(i) == 0
+            && summary(i).is_none()
+            && ((lfi == s && sm.1) || matches!(t.constraint, Constraint::StartNoLaterThan(cd) if lfi == start_offset(p, cd)));
+        let (late_start, late_finish) = if late_on_day { (day(lfi)?, day(lfi)?) } else { (first(ls)?, last(ls, lfi)?) };
         tasks.insert(
             t.id,
             TaskDates {
-                start: first(s)?,
+                start: day(shown(sm))?,
                 finish,
-                late_start: first(ls)?,
-                late_finish: last(ls, lfi)?,
+                late_start,
+                late_finish,
                 slack,
                 critical: slack <= 0,
                 constraint_conflict: conflict.get(i).copied().unwrap_or(false),
@@ -456,7 +561,7 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
         );
     }
     let rolled_up = (0..n).filter(|&i| summary(i).is_some()).filter_map(|i| p.tasks.get(i).map(|t| (t.id, d(i)))).collect();
-    Ok(Schedule { tasks, finish: last(0, end)?, rolled_up })
+    Ok(Schedule { tasks, finish: finish_all, rolled_up })
 }
 
 /// The late finish each of a task's predecessors may have, given the task's late start and finish.
