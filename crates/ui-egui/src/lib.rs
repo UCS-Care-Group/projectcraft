@@ -31,6 +31,7 @@ pub mod timescale;
 use theme::Tokens;
 mod browser;
 mod files;
+mod options;
 pub use files::{EXTENSION, FileRequest, MAX_RECENT, parse_recent, push_recent, recent_text};
 mod recovery;
 mod resource_sheet;
@@ -176,6 +177,8 @@ pub struct App {
     keeper: Option<recovery::Keeper>,
     /// The Change Working Time dialog, while it is open.
     working_time: Option<WorkingTimeForm>,
+    /// The Project Options dialog, while it is open.
+    options: Option<options::OptionsForm>,
     /// The built-in file browser, while it is open (when the system dialog can't be shown).
     browser: Option<Box<browser::FileBrowser>>,
     /// The folder the built-in browser showed last; it opens there next time.
@@ -220,6 +223,7 @@ impl App {
             title: String::new(),
             keeper: None,
             working_time: None,
+            options: None,
             browser: None,
             browser_dir: None,
             day_w: timescale::Preset::Days.day_w(),
@@ -300,6 +304,9 @@ impl App {
                     if ui.button(tl!("Change Working Time…")).clicked() {
                         self.open_change_working_time();
                     }
+                    if ui.button(tl!("Options…")).clicked() {
+                        self.open_project_options();
+                    }
                 });
                 self.view_menu(ui);
                 ui.separator();
@@ -349,6 +356,7 @@ impl App {
             });
         });
         self.change_working_time(&ctx);
+        self.project_options(&ctx);
         self.unsaved_prompt(&ctx);
         self.recovery_prompt(&ctx);
         self.file_browser(&ctx);
@@ -1009,6 +1017,7 @@ mod tests {
             ("timescale.rs", include_str!("timescale.rs")),
             ("selection.rs", include_str!("selection.rs")),
             ("resource_sheet.rs", include_str!("resource_sheet.rs")),
+            ("options.rs", include_str!("options.rs")),
         ] {
             let code = src.split("#[cfg(test)]").next().unwrap_or(src);
             for needle in ["Color32", "from_rgb", "from_gray", "from_black_alpha", "from_white_alpha"] {
