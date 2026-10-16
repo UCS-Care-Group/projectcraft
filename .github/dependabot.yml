@@ -1,10 +1,23 @@
+# Dependabot keeps the dependencies current. Every third-party `uses:` in .github/workflows is a
+# full commit SHA with its tag as a comment, and Dependabot moves both.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
-    schedule: { interval: weekly }
-    groups: { cargo: { patterns: ["*"] } }
+    schedule:
+      interval: weekly
+    # A new release waits a week before it is proposed, so a compromised one has time to be noticed.
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly }
-    groups: { actions: { patterns: ["*"] } }
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,0 +1,15 @@
+# CodeQL: what code scanning reads. Test-only code is left out: its fixed dates, invented plans and
+# assertion messages are not production and would be flagged as if they were.
+# Rust is analysed with `build-mode: none`, for which `paths-ignore` is honoured.
+#
+# Used by default setup through the `github-codeql-config-file` repository property
+# (the value: this file's path), or by an advanced workflow's `config-file` input.
+name: ProjectCraft CodeQL
+
+paths-ignore:
+  - "**/tests/**"
+  - "**/tests.rs"
+  - "**/*_tests.rs"
+  # Developer tools, never shipped: the headless screenshot runner (`crates/ui-egui/examples`).
+  - "**/examples/**"
+  - "**/benches/**"
