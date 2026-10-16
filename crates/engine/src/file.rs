@@ -86,6 +86,8 @@ fn migrate(_v: &mut Value, version: u64) {
     }
     // Calendar `holidays` (M0 and early version 1) became `exceptions` without a version bump:
     // the calendar reads both (`model::Calendar`), and writes only `exceptions`.
+    // Calendar working times and project `options` arrived the same way: a file without them
+    // reads as the default hours and the default options.
 }
 
 /// Refuses what the editing commands could never have produced; repairs `next_id` so ids are never reused.
@@ -94,6 +96,7 @@ fn validate(p: &mut Project) -> Result<(), CmdError> {
     if p.tasks.len() > model::MAX_TASKS {
         return Err(bad(format!("more than {} tasks", model::MAX_TASKS)));
     }
+    p.options.check().map_err(|e| bad(format!("project options: {e}")))?;
     if p.calendar.exceptions.len() > model::MAX_EXCEPTIONS {
         return Err(bad(format!("more than {} calendar exceptions", model::MAX_EXCEPTIONS)));
     }
@@ -205,6 +208,9 @@ mod tests {
         p.calendar.working = [true, false, true, false, true, true, false];
         p.calendar.exceptions.insert(Date::from_ymd(2026, 4, 3).unwrap(), false);
         p.calendar.exceptions.insert(Date::from_ymd(2026, 4, 4).unwrap(), true);
+        p.calendar.set_weekday_times(4, vec![model::parse_working_time("7:30-15:30").unwrap()]).unwrap();
+        p.calendar.set_exception(Date::from_ymd(2026, 4, 11).unwrap(), vec![model::parse_working_time("9:00-13:00").unwrap()]).unwrap();
+        p.options = model::Options { minutes_per_day: 450, minutes_per_week: 2250, days_per_month: 21 };
         p.tasks = vec![
             Task {
                 id: TaskId(2),
@@ -344,7 +350,10 @@ mod tests {
     fn calendar_exceptions_are_written_as_such_and_old_holidays_load_as_non_working() {
         let text = Session::new(full()).save_json().unwrap();
         let v = serde_json::from_str::<Value>(&text).unwrap();
-        assert_eq!(v["calendar"]["exceptions"], json!([{"date": "2026-04-03", "working": false}, {"date": "2026-04-04", "working": true}]));
+        assert_eq!(
+            v["calendar"]["exceptions"],
+            json!([{"date": "2026-04-03", "working": false}, {"date": "2026-04-04", "working": true}, {"date": "2026-04-11", "working": true, "times": [{"from": 540, "to": 780}]}])
+        );
         assert!(v["calendar"].get("holidays").is_none());
         // M0 and early version 1 files wrote non-working days as `holidays`.
         for version in [json!(null), json!(1)] {
@@ -368,6 +377,49 @@ mod tests {
         assert!(Session::load_json(&big.to_string()).is_err());
         let junk = json!({"name": "x", "start": "2026-01-05", "calendar": {"working": [true, true, true, true, true, true, true], "exceptions": [{"date": "2026-02-30"}]}});
         assert!(Session::load_json(&junk.to_string()).is_err());
+    }
+
+    #[test]
+    fn working_times_and_options_are_additive_and_bad_ones_are_refused() {
+        let v = serde_json::from_str::<Value>(&Session::new(full()).save_json().unwrap()).unwrap();
+        assert_eq!(v["calendar"]["times"][0], json!([{"from": 480, "to": 720}, {"from": 780, "to": 1020}]));
+        assert_eq!(v["calendar"]["times"][1], json!([]));
+        assert_eq!(v["calendar"]["times"][4], json!([{"from": 450, "to": 930}]));
+        assert_eq!(v["options"], json!({"minutes_per_day": 450, "minutes_per_week": 2250, "days_per_month": 21}));
+        // A file from before working times: the default hours on every working weekday, default options.
+        let old = json!({"name": "Old", "start": "2026-01-05", "format_version": 1, "calendar": {"working": [true, true, true, true, true, false, false],
+            "exceptions": [{"date": "2026-01-10", "working": true}]}, "tasks": [{"id": 1, "name": "A", "duration": 3}], "next_id": 2});
+        let s = Session::load_json(&old.to_string()).unwrap();
+        let c = &s.project.calendar;
+        assert_eq!(c.weekday_times(0), &model::DEFAULT_WORKING_TIMES);
+        assert!(c.weekday_times(5).is_empty());
+        assert_eq!(c.times_on(Date::from_ymd(2026, 1, 10).unwrap()), &model::DEFAULT_WORKING_TIMES);
+        assert_eq!(s.project.options, model::Options::default());
+        let partial = json!({"name": "x", "start": "2026-01-05", "options": {"minutes_per_day": 420}});
+        assert_eq!(Session::load_json(&partial.to_string()).unwrap().project.options.minutes_per_week, 2400);
+        // Times win over the flags: a week whose only times are Saturday's works Saturday only.
+        let week = |day: Value| json!({"name": "x", "start": "2026-01-05", "calendar": {"working": [true, true, true, true, true, true, true], "times": [[], [], [], [], [], day, []]}});
+        let sat = Session::load_json(&week(json!([{"from": 540, "to": 780}])).to_string()).unwrap();
+        assert_eq!(sat.project.calendar.working, [false, false, false, false, false, true, false]);
+        // Hostile times and options are refused, never trusted.
+        for bad in [
+            json!([{"from": 720, "to": 480}]),
+            json!([{"from": 0, "to": 1441}]),
+            json!([{"from": 480, "to": 780}, {"from": 720, "to": 900}]),
+            json!([{"from": -1, "to": 5}]),
+            json!([{"from": 70000, "to": 5}]),
+            Value::Array(vec![json!({"from": 0, "to": 1}); 11]),
+        ] {
+            assert!(Session::load_json(&week(bad.clone()).to_string()).is_err(), "{bad}");
+        }
+        let off_with_times = json!({"name": "x", "start": "2026-01-05", "calendar": {"working": [true, true, true, true, true, true, true],
+            "exceptions": [{"date": "2026-01-12", "working": false, "times": [{"from": 540, "to": 780}]}]}});
+        assert!(Session::load_json(&off_with_times.to_string()).is_err());
+        for bad in [json!({"minutes_per_day": 0}), json!({"minutes_per_week": 999_999}), json!({"days_per_month": 32}), json!({"days_per_month": -1})]
+        {
+            let p = json!({"name": "x", "start": "2026-01-05", "options": bad});
+            assert!(Session::load_json(&p.to_string()).is_err(), "{p}");
+        }
     }
 
     #[test]
