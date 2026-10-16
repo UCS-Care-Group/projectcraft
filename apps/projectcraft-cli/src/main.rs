@@ -64,7 +64,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
             let s = open(args.get(1))?;
             let sched = s.schedule.as_ref().map_err(|e| format!("can't schedule: {e}"))?;
             println!("{}  (start {}, finish {})", s.project.name, s.project.start, sched.finish);
-            println!("{:>4}  {:<28} {:>5}  {:<10}  {:<10}  {:>5}  preds", "ID", "Task Name", "Dur", "Start", "Finish", "Slack");
+            println!("{:>4}  {:<28} {:>5}  {:<10}  {:<10}  {:>5}  preds", "UID", "Task Name", "Dur", "Start", "Finish", "Slack");
             for t in &s.project.tasks {
                 let Some(d) = sched.tasks.get(&t.id) else { continue };
                 let crit = if d.critical { "*" } else { " " };

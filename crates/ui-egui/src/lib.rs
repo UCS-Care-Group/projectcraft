@@ -109,10 +109,12 @@ impl App {
                 ui.label(RichText::new(h).strong());
             }
             ui.end_row();
-            let rows: Vec<_> = self.session.project.tasks.iter().map(|t| (t.id, t.name.clone(), t.duration, preds_text(&t.preds))).collect();
-            for (id, name, duration, preds) in rows {
+            let p = &self.session.project;
+            let rows: Vec<_> = p.tasks.iter().map(|t| (t.id, t.name.clone(), t.duration, p.preds_text_rows(&t.preds))).collect();
+            // The ID column is the row number; commands get Unique IDs.
+            for (row, (id, name, duration, preds)) in (1..).zip(rows) {
                 let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
-                ui.label(id.to_string());
+                ui.label(row.to_string());
                 if let Some(c) = self.cell(ui, id, Field::Name, &name, 220.0) {
                     commands.push(("task.rename", json!({"id": id.0, "name": c})));
                 }
@@ -125,7 +127,10 @@ impl App {
                 ui.label(dates.map_or_else(String::new, |d| d.start.to_string()));
                 ui.label(dates.map_or_else(String::new, |d| d.finish.to_string()));
                 if let Some(c) = self.cell(ui, id, Field::Preds, &preds, 100.0) {
-                    commands.push(("task.setPredecessors", json!({"id": id.0, "text": c})));
+                    match self.session.project.parse_preds_rows(&c) {
+                        Ok(links) => commands.push(("task.setPredecessors", json!({"id": id.0, "text": preds_text(&links)}))),
+                        Err(e) => self.status = e.to_string(),
+                    }
                 }
                 gantt_bar(ui, start, dates, duration == 0);
                 ui.end_row();

@@ -148,7 +148,7 @@ fn no_params() -> Value {
 }
 
 fn task_id() -> Value {
-    json!({"type": "integer", "minimum": 1, "maximum": u32::MAX, "description": "task"})
+    json!({"type": "integer", "minimum": 1, "maximum": u32::MAX, "description": "the task's Unique ID (not its row ID)"})
 }
 
 fn days() -> Value {
@@ -290,7 +290,9 @@ const COMMANDS: &[CommandSpec] = &[
         id: "task.setPredecessors",
         label: "Predecessors",
         effect: Effect::Edit,
-        schema: || object(json!({"id": task_id(), "text": {"type": "string", "description": "predecessors, e.g. 3, 5SS+2"}}), &["id", "text"]),
+        schema: || {
+            object(json!({"id": task_id(), "text": {"type": "string", "description": "predecessors by Unique ID, e.g. 3, 5SS+2"}}), &["id", "text"])
+        },
         run: |p, v| {
             let links = model::parse_preds(str_param(v, "text")?)?;
             p.set_preds(id_param(v)?, links)?;
@@ -381,6 +383,29 @@ mod tests {
         assert_eq!(s.project, before);
         s.run("task.add", &json!(null)).unwrap();
         s.run("task.add", &json!({"name": "Snag list", "duration": 3})).unwrap();
+    }
+
+    #[test]
+    fn commands_take_unique_ids_that_survive_deletes_and_save() {
+        for c in commands() {
+            for (k, p) in (c.schema)()["properties"].as_object().unwrap() {
+                if k == "id" || k == "text" {
+                    assert!(p["description"].as_str().unwrap().contains("Unique ID"), "{}.{k}", c.id);
+                }
+            }
+        }
+        let mut s = sample();
+        s.run("task.delete", &json!({"id": 1})).unwrap();
+        // Task 3 is now on row 2; commands still name it 3, and links name Unique IDs.
+        assert_eq!(s.project.row_of(TaskId(3)), Some(2));
+        s.run("task.setPredecessors", &json!({"id": 4, "text": "3SS+1"})).unwrap();
+        assert_eq!(s.project.preds_text_rows(&s.project.task(TaskId(4)).unwrap().preds), "2SS+1");
+        s.run("task.add", &json!({})).unwrap();
+        assert_eq!(s.project.tasks.last().unwrap().id, TaskId(9), "a deleted Unique ID is never reused");
+        let mut round = Session::load_json(&s.save_json().unwrap()).unwrap();
+        assert_eq!(round.project, s.project);
+        round.run("task.add", &json!({})).unwrap();
+        assert_eq!(round.project.tasks.last().unwrap().id, TaskId(10));
     }
 
     /// Valid params from a schema, then junk built from it: each property wrong-typed, out of

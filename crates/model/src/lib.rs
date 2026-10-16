@@ -31,7 +31,8 @@ pub enum ModelError {
     Invalid(String),
 }
 
-/// A task's identity: stable for the life of the project, shown in the ID column, never reused.
+/// A task's Unique ID: permanent for the life of the project, never reused. Links and commands use
+/// it; the ID column shows the row number instead ([`Project::row_of`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TaskId(pub u32);
 
@@ -156,6 +157,38 @@ impl Project {
         Ok(())
     }
 
+    /// The 1-based row a task is on: its ID, which renumbers as rows are inserted, moved or deleted.
+    pub fn row_of(&self, id: TaskId) -> Option<usize> {
+        self.tasks.iter().position(|t| t.id == id).map(|i| i.saturating_add(1))
+    }
+
+    /// The task on a 1-based row.
+    pub fn task_at_row(&self, row: u32) -> Option<TaskId> {
+        let i = usize::try_from(row).ok()?.checked_sub(1)?;
+        self.tasks.get(i).map(|t| t.id)
+    }
+
+    /// Predecessors as the Predecessors column shows them: by row ID. A link to a missing task
+    /// (only a damaged file could hold one) shows as `?`.
+    pub fn preds_text_rows(&self, preds: &[Link]) -> String {
+        let one = |l: &Link| match self.row_of(l.pred) {
+            Some(row) => link_text(row, l),
+            None => link_text('?', l),
+        };
+        preds.iter().map(one).collect::<Vec<_>>().join(", ")
+    }
+
+    /// Reads the Predecessors column: row IDs, returned as links by Unique ID.
+    pub fn parse_preds_rows(&self, text: &str) -> Result<Vec<Link>, ModelError> {
+        parse_preds(text)?
+            .into_iter()
+            .map(|l| {
+                let pred = self.task_at_row(l.pred.0).ok_or_else(|| ModelError::Invalid(format!("no task with ID {}", l.pred)))?;
+                Ok(Link { pred, ..l })
+            })
+            .collect()
+    }
+
     /// Replaces a task's predecessors, refusing links to missing tasks, to itself, or that close a loop.
     pub fn set_preds(&mut self, id: TaskId, preds: Vec<Link>) -> Result<(), ModelError> {
         for l in &preds {
@@ -178,17 +211,19 @@ pub fn check_days(n: i64) -> Result<i64, ModelError> {
     if (0..=MAX_DAYS).contains(&n) { Ok(n) } else { Err(ModelError::Invalid(format!("{n} is not between 0 and {MAX_DAYS} days"))) }
 }
 
-/// Predecessors as the Predecessors column writes them: `3, 5SS+2, 7FF-1`.
+/// Predecessors by Unique ID, as commands take them: `3, 5SS+2, 7FF-1`.
 pub fn preds_text(preds: &[Link]) -> String {
-    let one = |l: &Link| {
-        let kind = match l.kind {
-            LinkKind::FS if l.lag == 0 => String::new(),
-            k => format!("{k:?}"),
-        };
-        let lag = if l.lag == 0 { String::new() } else { format!("{:+}", l.lag) };
-        format!("{}{kind}{lag}", l.pred)
+    preds.iter().map(|l| link_text(l.pred, l)).collect::<Vec<_>>().join(", ")
+}
+
+/// One link, its predecessor written as `pred`.
+fn link_text(pred: impl fmt::Display, l: &Link) -> String {
+    let kind = match l.kind {
+        LinkKind::FS if l.lag == 0 => String::new(),
+        k => format!("{k:?}"),
     };
-    preds.iter().map(one).collect::<Vec<_>>().join(", ")
+    let lag = if l.lag == 0 { String::new() } else { format!("{:+}", l.lag) };
+    format!("{pred}{kind}{lag}")
 }
 
 /// Reads what [`preds_text`] writes (an optional trailing `d` on a lag is accepted).
@@ -240,10 +275,40 @@ mod tests {
         assert!(p.set_preds(a, parse_preds("42").unwrap()).is_err());
     }
 
+    #[test]
+    fn predecessors_column_uses_row_ids_and_links_keep_unique_ids() {
+        let mut p = Project::new("t", Date::from_ymd(2026, 1, 5).unwrap());
+        let a = p.add_task("a", 1).unwrap();
+        let b = p.add_task("b", 1).unwrap();
+        let c = p.add_task("c", 1).unwrap();
+        // Rows 1, 2 after a is deleted: b is row 1, c is row 2.
+        p.delete_task(a).unwrap();
+        assert_eq!((p.row_of(b), p.row_of(c), p.row_of(a)), (Some(1), Some(2), None));
+        let links = p.parse_preds_rows("1SS+2").unwrap();
+        assert_eq!(links, vec![Link { pred: b, kind: LinkKind::SS, lag: 2 }]);
+        p.set_preds(c, links).unwrap();
+        assert_eq!(p.preds_text_rows(&p.task(c).unwrap().preds), "1SS+2");
+        assert_eq!(preds_text(&p.task(c).unwrap().preds), "2SS+2", "stored by Unique ID");
+        // Moving rows renumbers the column; the link still points at b.
+        p.tasks.swap(0, 1);
+        assert_eq!(p.preds_text_rows(&p.task(c).unwrap().preds), "2SS+2");
+        assert_eq!(p.task(c).unwrap().preds[0].pred, b);
+        assert!(p.parse_preds_rows("3").is_err());
+        assert!(p.parse_preds_rows("0").is_err());
+        assert_eq!(p.preds_text_rows(&[Link { pred: TaskId(99), kind: LinkKind::FF, lag: -1 }]), "?FF-1");
+        // A deleted Unique ID is never handed out again.
+        assert_eq!(p.add_task("d", 1).unwrap(), TaskId(4));
+    }
+
     proptest::proptest! {
         #[test]
         fn parse_preds_never_panics(s in "\\PC{0,40}") {
             let _ = parse_preds(&s);
+            let mut p = Project::new("t", Date::from_ymd(2026, 1, 5).unwrap());
+            p.add_task("a", 1).unwrap();
+            if let Ok(links) = p.parse_preds_rows(&s) {
+                let _ = p.preds_text_rows(&links);
+            }
         }
     }
 }
