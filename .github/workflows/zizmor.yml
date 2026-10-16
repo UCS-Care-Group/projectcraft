@@ -3,12 +3,11 @@
 # https://docs.zizmor.sh/
 name: zizmor
 
+# Runs on every pull request (no path filter) because it is a required check.
 on:
   pull_request:
-    paths: ['.github/**']
   push:
     branches: [main]
-    paths: ['.github/**']
   workflow_dispatch:
 
 permissions:
