@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (links to private planning docs removed)
+> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (links to private planning docs removed; link to the threat model)
 
 ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCS-Care-Group/mailcraft/blob/main/docs/architecture.md).
 
@@ -25,8 +25,12 @@ ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://g
 ## Scheduling
 Times are offsets in working days from the project start. The forward pass gives early start/finish per link kind (FS, SS, FF, SF, with lag); the backward pass from the latest early finish gives late dates; total slack is late start minus early start; slack ≤ 0 is critical. Offsets become dates through one walk of the calendar.
 
+## Security
+What the program protects, from whom, and which code does it: [threat-model.md](threat-model.md).
+
 ## Revision history
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-15 | major | First version |
 | 2026-10-16 | minor | Command schemas and effects; links to private planning docs removed |
+| 2026-10-16 | minor | Link to the threat model |

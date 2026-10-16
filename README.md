@@ -31,7 +31,7 @@ projectcraft-cli run --sample --cmd 'task.add={"name":"Snag list","duration":3}'
 projectcraft-cli commands
 ```
 
-**Everything CI runs:** `cargo xtask ci` (formatting, clippy with warnings as errors, the tests, asset attribution, crate layering, the wasm build).
+**Everything CI runs:** `cargo xtask ci` (formatting, clippy with warnings as errors, the tests, asset attribution, crate layering, the wasm build, and `cargo deny` for advisories, licences and sources once `cargo install cargo-deny --locked` has run).
 
 ## How it is put together
 | Layer | Crates | Job |
@@ -49,6 +49,9 @@ A crate may only depend on lower layers, and nothing below L6 knows about the UI
 - **The schedule is computed, never typed.** Same plan, same dates, on every machine.
 - **Clean room.** Built from public documentation of how project scheduling works and from watching how planners behave, never from anyone's code or assets.
 - **Everything is a command.** One registry behind the interface, the CLI and (soon) agents.
+
+## Security
+Report a vulnerability privately: see [SECURITY.md](SECURITY.md). What ProjectCraft protects and how is in [docs/threat-model.md](docs/threat-model.md).
 
 ## Contributing
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) first.
