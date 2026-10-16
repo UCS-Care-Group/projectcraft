@@ -27,7 +27,7 @@ pub(crate) fn work_text(minutes: i64, project: &Project) -> String {
 pub(crate) fn assignment_work_text(project: &Project, a: &Assignment) -> String {
     let duration = project.task(a.task).map_or(0, |t| t.duration);
     let label = project.resource(a.resource).map(|r| r.material_label.clone()).unwrap_or_default();
-    match assignment_work(a.units, duration, &project.options) {
+    match assignment_work(a, duration, &project.options) {
         AssignmentWork::Minutes(m) => work_text(m, project),
         AssignmentWork::Quantity(q) if label.is_empty() => quantity_text(q),
         AssignmentWork::Quantity(q) => format!("{} {label}", quantity_text(q)),
@@ -109,7 +109,7 @@ impl AssignForm {
 /// A resource's default units, as the empty units field's hint: `100%`, `1 boxes`, `£0.00`.
 fn default_hint(project: &Project, id: ResourceId) -> String {
     let Ok(r) = project.resource(id) else { return String::new() };
-    let a = Assignment { task: TaskId(0), resource: id, units: default_units(r.kind, r.max_units) };
+    let a = Assignment { task: TaskId(0), resource: id, units: default_units(r.kind, r.max_units), work: 0, duration: 0 };
     project.units_text_full(&a)
 }
 

@@ -8,7 +8,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ModelError;
+use crate::{ModelError, TaskType};
 
 /// Minutes in a day: a working time ends at most here (24:00).
 pub const MINUTES_IN_DAY: u16 = 1440;
@@ -110,7 +110,8 @@ pub fn minutes_of(times: &[WorkingTime]) -> u32 {
 }
 
 /// Project options that convert hours to days, weeks and months for entry and display, as
-/// Microsoft Project's Calendar options. They never change the calendar.
+/// Microsoft Project's Calendar options (they never change the calendar), and what new tasks
+/// start as, as its Schedule options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Options {
@@ -120,6 +121,18 @@ pub struct Options {
     pub minutes_per_week: u32,
     /// Working days in a month (`mo`).
     pub days_per_month: u32,
+    /// The type new tasks get, as Project's "Default task type" schedule option: Fixed Units
+    /// unless changed.
+    #[serde(skip_serializing_if = "TaskType::is_fixed_units")]
+    pub task_type: TaskType,
+    /// Whether new tasks are effort-driven, as Project's "New tasks are effort driven": off
+    /// unless changed.
+    #[serde(skip_serializing_if = "is_false")]
+    pub effort_driven: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Bounds on the options: a day of 1 to 24 hours, a week of 1 to 168, a month of 1 to 31 days.
@@ -129,7 +142,7 @@ pub const MAX_DAYS_PER_MONTH: u32 = 31;
 
 impl Default for Options {
     fn default() -> Self {
-        Options { minutes_per_day: 8 * 60, minutes_per_week: 40 * 60, days_per_month: 20 }
+        Options { minutes_per_day: 8 * 60, minutes_per_week: 40 * 60, days_per_month: 20, task_type: TaskType::FixedUnits, effort_driven: false }
     }
 }
 

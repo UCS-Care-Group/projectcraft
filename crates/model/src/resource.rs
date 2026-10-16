@@ -12,7 +12,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ModelError, Project};
+use crate::{ModelError, Project, TaskId};
 
 /// Most resources in one project. ponytail: a cap, not a measured limit.
 pub const MAX_RESOURCES: usize = 100_000;
@@ -113,7 +113,7 @@ impl AccrueAt {
 }
 
 /// The one choice whose name starts with `text` (any case); refused when none or several do.
-fn pick<T: Copy>(text: &str, all: &[T], name: fn(T) -> &'static str, what: &str) -> Result<T, ModelError> {
+pub(crate) fn pick<T: Copy>(text: &str, all: &[T], name: fn(T) -> &'static str, what: &str) -> Result<T, ModelError> {
     let typed = text.trim().to_lowercase();
     let names = || all.iter().map(|t| name(*t)).collect::<Vec<_>>().join(", ");
     let hits: Vec<T> = all.iter().copied().filter(|t| !typed.is_empty() && name(*t).to_lowercase().starts_with(&typed)).collect();
@@ -474,7 +474,9 @@ impl Project {
         let retyped = self.resource(id)?.kind != r.kind;
         *self.resource_mut(id)? = r;
         if retyped {
+            let tasks: BTreeSet<TaskId> = self.assignments.iter().filter(|a| a.resource == id).map(|a| a.task).collect();
             self.assignments.retain(|a| a.resource != id);
+            self.settle_all(&tasks);
         }
         Ok(())
     }
@@ -487,7 +489,10 @@ impl Project {
         }
         let gone: BTreeSet<ResourceId> = ids.iter().copied().collect();
         self.resources.retain(|r| !gone.contains(&r.id));
+        // Each task's duration is then its longest work assignment left.
+        let tasks: BTreeSet<TaskId> = self.assignments.iter().filter(|a| gone.contains(&a.resource)).map(|a| a.task).collect();
         self.assignments.retain(|a| !gone.contains(&a.resource));
+        self.settle_all(&tasks);
         Ok(())
     }
 

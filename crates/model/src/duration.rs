@@ -138,6 +138,17 @@ pub fn parse_duration(text: &str, options: &Options) -> Result<(i64, DurationUni
     })
 }
 
+/// Reads work as the Work column takes it, into working minutes: hours when no unit is given
+/// (`20`, `7.5`), otherwise as a duration (`30m`, `2d`, `1w`). Clamped as a duration is.
+pub fn parse_work(text: &str, options: &Options) -> Result<i64, ModelError> {
+    let t = text.trim();
+    let bare = !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || c == '.');
+    let read = if bare { parse_amount(&format!("{t}h"), options, false) } else { parse_amount(t, options, false) };
+    read.map(|(m, _)| m).map_err(|_| {
+        ModelError::Invalid(format!("not an amount of work: {:?} (use hours, such as 20 or 7.5, or a unit: 30m, 4h, 2d, 1w)", short(text)))
+    })
+}
+
 /// Parses a lag such as `+2`, `-1d`, `+4h`, `+1.5d` or `+30m` (a bare number is days; the sign is
 /// optional), into signed working minutes and the unit typed. Elapsed and percent lags are refused.
 pub fn parse_lag(text: &str, options: &Options) -> Result<(i64, DurationUnit), ModelError> {
@@ -178,7 +189,8 @@ mod tests {
     use super::*;
     use crate::MAX_DAYS;
 
-    const O: Options = Options { minutes_per_day: 480, minutes_per_week: 2400, days_per_month: 20 };
+    const O: Options =
+        Options { minutes_per_day: 480, minutes_per_week: 2400, days_per_month: 20, task_type: crate::TaskType::FixedUnits, effort_driven: false };
     use DurationUnit::*;
 
     #[test]
@@ -208,7 +220,7 @@ mod tests {
 
     #[test]
     fn days_weeks_and_months_follow_the_project_options() {
-        let o = Options { minutes_per_day: 450, minutes_per_week: 37 * 60 + 30, days_per_month: 21 };
+        let o = Options { minutes_per_day: 450, minutes_per_week: 37 * 60 + 30, days_per_month: 21, ..O };
         assert_eq!(parse_duration("1d", &o), Ok((450, Days)));
         assert_eq!(parse_duration("1w", &o), Ok((2250, Weeks)));
         assert_eq!(parse_duration("1mo", &o), Ok((21 * 450, Months)));
@@ -278,7 +290,7 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn parsing_never_panics(s in "\\PC{0,40}", day in 0u32..2000, week in 0u32..20000, month in 0u32..40) {
-            let o = Options { minutes_per_day: day, minutes_per_week: week, days_per_month: month };
+            let o = Options { minutes_per_day: day, minutes_per_week: week, days_per_month: month, ..O };
             if let Ok((m, u)) = parse_duration(&s, &o) {
                 proptest::prop_assert!((0..=MAX_MINUTES).contains(&m));
                 let _ = duration_text(m, u, &o);

@@ -13,7 +13,8 @@
 //! and reads them as Project writes them: `Ann[50%], Bob, Concrete[2 tons/d]`. A name that isn't
 //! a resource yet makes a new work resource, in the same edit.
 //!
-//! Assignments never move dates here: the duration stays as entered.
+//! A work assignment keeps its own work and duration; how they change as units, duration and
+//! work are edited, and as resources come and go, is the task type's ([`crate::TaskType`]).
 //!
 //! Each edit is all or nothing: a refused one leaves the project exactly as it was.
 
@@ -23,8 +24,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::resource::{check_money, fixed_text, parse_fixed};
 use crate::{
-    Currency, DurationUnit, FULL_TIME, MAX_UNITS, ModelError, Options, Outline, Project, ResourceId, ResourceType, TaskId, check_name, parse_units,
-    units_text,
+    Currency, DurationUnit, FULL_TIME, MAX_MINUTES, MAX_UNITS, MAX_WORK, ModelError, Options, Outline, Project, ResourceId, ResourceType, TaskId,
+    check_name, parse_units, units_text,
 };
 
 /// Most assignments in one project. ponytail: a cap, not a measured limit.
@@ -81,6 +82,22 @@ pub struct Assignment {
     pub task: TaskId,
     pub resource: ResourceId,
     pub units: Units,
+    /// A work resource's work in working minutes: duration × units when it is assigned, then as
+    /// the task type says ([`crate::TaskType`]). 0 for a material or cost. A file from before
+    /// task types has none: it is worked out on load ([`Project::fill_assignment_work`]).
+    #[serde(default = "unset")]
+    pub work: i64,
+    /// How long a work resource works on the task, in working minutes from its start (work ÷
+    /// units); the task's duration is the longest. 0 for a material or cost.
+    #[serde(default = "unset")]
+    pub duration: i64,
+}
+
+/// Work or duration not in the file: filled on load.
+const UNSET: i64 = -1;
+
+fn unset() -> i64 {
+    UNSET
 }
 
 /// How much an assignment uses: working minutes of a work resource, hundredths of a material's
@@ -116,10 +133,11 @@ fn scale(minutes: i64, rate: i64, per: i64) -> i64 {
 }
 
 /// What an assignment uses over a task of `duration` working minutes, at the project's `options`
-/// (which say how long a day of a `2 tons/d` rate is). Work = duration × units.
-pub fn assignment_work(units: Units, duration: i64, options: &Options) -> AssignmentWork {
-    match units {
-        Units::Work(u) => AssignmentWork::Minutes(scale(duration, i64::from(u), i64::from(FULL_TIME))),
+/// (which say how long a day of a `2 tons/d` rate is): a work resource's own work, a material's
+/// quantity (a rate scales with the duration).
+pub fn assignment_work(a: &Assignment, duration: i64, options: &Options) -> AssignmentWork {
+    match a.units {
+        Units::Work(_) => AssignmentWork::Minutes(a.work.max(0)),
         Units::Fixed(q) => AssignmentWork::Quantity(q),
         Units::Rate { quantity, per } => AssignmentWork::Quantity(scale(duration, quantity, options.minutes_in(per))),
         Units::Cost(_) => AssignmentWork::None,
@@ -282,6 +300,12 @@ impl Project {
     /// Assigns a resource to a task with `units`, or the default ([`default_units`]). Refused when
     /// it is already assigned there.
     pub fn assign(&mut self, task: TaskId, resource: ResourceId, units: Option<Units>) -> Result<(), ModelError> {
+        self.assign_with(task, resource, units, true)
+    }
+
+    /// [`Project::assign`]; `share` false keeps an effort-driven task's work from being shared
+    /// again (the resource is one of the first, assigned with others).
+    fn assign_with(&mut self, task: TaskId, resource: ResourceId, units: Option<Units>, share: bool) -> Result<(), ModelError> {
         self.task(task)?;
         let r = self.resource(resource)?;
         let units = self.units_for(resource, units.unwrap_or_else(|| default_units(r.kind, r.max_units)))?;
@@ -289,26 +313,49 @@ impl Project {
             return Err(ModelError::Invalid(format!("{} is already assigned to this task", r.name)));
         }
         self.check_room(task, 1)?;
-        self.assignments.push(Assignment { task, resource, units });
+        let before = self.task_work(task);
+        let mut p = self.clone();
+        p.assignments.push(Assignment { task, resource, units, work: 0, duration: 0 });
+        p.fill_new_work(p.assignments.len().saturating_sub(1), if share { before } else { 0 })?;
+        *self = p;
         Ok(())
     }
 
+    /// Changes an assignment's units. A work resource's work or duration follows as the task
+    /// type says ([`crate::TaskType`]).
     pub fn set_assignment_units(&mut self, task: TaskId, resource: ResourceId, units: Units) -> Result<(), ModelError> {
         let units = self.units_for(resource, units)?;
-        self.assignment_mut(task, resource)?.units = units;
+        self.assignment_mut(task, resource)?;
+        let i = self.assignments.iter().position(|a| a.task == task && a.resource == resource).unwrap_or(usize::MAX);
+        match units {
+            Units::Work(u) => {
+                let mut p = self.clone();
+                p.set_work_units(i, u)?;
+                *self = p;
+            }
+            _ => self.assignment_mut(task, resource)?.units = units,
+        }
         Ok(())
     }
 
+    /// Takes a resource off a task. An effort-driven task keeps its work, shared among the work
+    /// resources left ([`crate::TaskType`]).
     pub fn unassign(&mut self, task: TaskId, resource: ResourceId) -> Result<(), ModelError> {
         self.assignment_mut(task, resource)?;
-        self.assignments.retain(|a| !(a.task == task && a.resource == resource));
+        let before = self.task_work(task);
+        let mut p = self.clone();
+        p.assignments.retain(|a| !(a.task == task && a.resource == resource));
+        p.after_work_removed(task, before)?;
+        *self = p;
         Ok(())
     }
 
     /// Replaces a task's assignments with the Resource Names text, as Project reads the column:
     /// `Ann[50%], Bob, Concrete[2 tons/d]`. A name (any case) that isn't a resource becomes a new
-    /// work resource with 100% Max Units, in the same edit. All or nothing. Returns the
-    /// resources it made.
+    /// work resource with 100% Max Units, in the same edit. Resources no longer named come off
+    /// first, then changed units change, then new ones are assigned, each as its own command
+    /// would ([`crate::TaskType`]); the assignments end in the order typed. All or nothing.
+    /// Returns the resources it made.
     pub fn set_resource_names(&mut self, task: TaskId, text: &str) -> Result<Vec<ResourceId>, ModelError> {
         self.task(task)?;
         let parts = split_names(text)?;
@@ -339,22 +386,44 @@ impl Project {
                     .find(|a| a.resource == id && p.units_text(a).is_empty())
                     .map_or_else(|| default_units(r.kind, r.max_units), |a| a.units),
             };
-            wanted.push(Assignment { task, resource: id, units: units.check()? });
+            wanted.push((id, units.check()?));
         }
-        p.assignments.retain(|a| a.task != task);
-        p.check_room(task, wanted.len())?;
-        p.assignments.extend(wanted);
+        let gone: Vec<ResourceId> = p.assignments_of(task).map(|a| a.resource).filter(|r| !seen.contains(r)).collect();
+        for r in gone {
+            p.unassign(task, r)?;
+        }
+        // Resources assigned together to a task with no work are its first: none shares another's.
+        let first = p.task_work(task) == 0;
+        for &(id, units) in &wanted {
+            if p.assignments_of(task).any(|a| a.resource == id && a.units != units) {
+                p.set_assignment_units(task, id, units)?;
+            }
+        }
+        for &(id, units) in &wanted {
+            if !p.assignments_of(task).any(|a| a.resource == id) {
+                p.assign_with(task, id, Some(units), !first)?;
+            }
+        }
+        // The order typed: this task's assignments sorted into their own places in the list.
+        let slots: Vec<usize> = p.assignments.iter().enumerate().filter(|(_, a)| a.task == task).map(|(i, _)| i).collect();
+        let mut mine: Vec<Assignment> = slots.iter().filter_map(|&i| p.assignments.get(i).copied()).collect();
+        mine.sort_by_key(|a| wanted.iter().position(|(id, _)| *id == a.resource));
+        for (&i, a) in slots.iter().zip(mine) {
+            if let Some(x) = p.assignments.get_mut(i) {
+                *x = a;
+            }
+        }
         *self = p;
         Ok(made)
     }
 
-    /// Each task's work in working minutes: its work resources' duration × units, and for a
-    /// summary its own assignments' and all its subtasks'. Tasks with none are left out.
+    /// Each task's work in working minutes: its work resources' work, and for a summary its own
+    /// assignments' and all its subtasks'. Tasks with none are left out.
     pub fn work_by_task(&self) -> BTreeMap<TaskId, i64> {
         let mut own: BTreeMap<TaskId, i64> = BTreeMap::new();
         for a in &self.assignments {
             let Ok(t) = self.task(a.task) else { continue };
-            if let AssignmentWork::Minutes(m) = assignment_work(a.units, t.duration, &self.options) {
+            if let AssignmentWork::Minutes(m) = assignment_work(a, t.duration, &self.options) {
                 let w = own.entry(a.task).or_insert(0);
                 *w = w.saturating_add(m);
             }
@@ -402,6 +471,16 @@ impl Project {
                 return Err(ModelError::Invalid(format!("resource {}'s assignment has units of another resource type", a.resource)));
             }
             a.units.check()?;
+            let (work, duration) = match a.units {
+                Units::Work(_) => ((0..=MAX_WORK).contains(&a.work), (0..=MAX_MINUTES).contains(&a.duration)),
+                _ => (a.work == 0, a.duration == 0),
+            };
+            if !(work && duration) {
+                return Err(ModelError::Invalid(format!(
+                    "resource {}'s assignment to task {} has its work or duration out of range",
+                    a.resource, a.task
+                )));
+            }
             if !pairs.insert((a.task, a.resource)) {
                 return Err(ModelError::Invalid(format!("resource {} is assigned to task {} twice", a.resource, a.task)));
             }
@@ -411,7 +490,38 @@ impl Project {
                 return Err(ModelError::Invalid(format!("task {} has more than {MAX_TASK_ASSIGNMENTS} resources", a.task)));
             }
         }
+        // A task's duration is its longest work assignment's: summaries aside, whose is rolled up.
+        let mut longest: BTreeMap<TaskId, i64> = BTreeMap::new();
+        for a in self.assignments.iter().filter(|a| matches!(a.units, Units::Work(_))) {
+            let d = longest.entry(a.task).or_insert(0);
+            *d = (*d).max(a.duration);
+        }
+        for (id, d) in longest {
+            if !self.is_summary(id) && self.task(id)?.duration != d {
+                return Err(ModelError::Invalid(format!("task {id}'s duration is not its longest assignment's")));
+            }
+        }
         Ok(())
+    }
+
+    /// Works out each assignment's work and duration where a file has none (from before task
+    /// types): a work resource works the task's duration at its units; a material or cost has
+    /// none. Run on load, before [`Project::check_assignments`].
+    pub fn fill_assignment_work(&mut self) {
+        let durations: BTreeMap<TaskId, i64> = self.tasks.iter().map(|t| (t.id, t.duration.clamp(0, MAX_MINUTES))).collect();
+        for a in &mut self.assignments {
+            let d = durations.get(&a.task).copied().unwrap_or(0);
+            let (work, duration) = match a.units {
+                Units::Work(u) => (crate::task_type::work_of(d, u), d),
+                _ => (0, 0),
+            };
+            if a.work == UNSET {
+                a.work = work;
+            }
+            if a.duration == UNSET {
+                a.duration = duration;
+            }
+        }
     }
 }
 
@@ -422,6 +532,11 @@ mod tests {
 
     /// A day of duration at the default 8 hours.
     const D: i64 = 480;
+
+    /// An assignment of these units, for [`assignment_work`].
+    fn of(units: Units) -> Assignment {
+        Assignment { task: TaskId(1), resource: ResourceId(1), units, work: 0, duration: 0 }
+    }
 
     fn project() -> (Project, TaskId) {
         let mut p = Project::new("t", Date::from_ymd(2026, 1, 5).unwrap());
@@ -533,14 +648,14 @@ mod tests {
         let o = p.options;
         let fixed = parse_assignment_units(ResourceType::Material, "80 tons", &Currency::default()).unwrap();
         let variable = parse_assignment_units(ResourceType::Material, "80 tons/day", &Currency::default()).unwrap();
-        assert_eq!(assignment_work(fixed, 2 * D, &o), AssignmentWork::Quantity(8_000));
-        assert_eq!(assignment_work(variable, 2 * D, &o), AssignmentWork::Quantity(16_000));
-        assert_eq!(assignment_work(fixed, 4 * D, &o), AssignmentWork::Quantity(8_000), "fixed: the same whatever the duration");
-        assert_eq!(assignment_work(variable, 4 * D, &o), AssignmentWork::Quantity(32_000), "variable: in proportion");
+        assert_eq!(assignment_work(&of(fixed), 2 * D, &o), AssignmentWork::Quantity(8_000));
+        assert_eq!(assignment_work(&of(variable), 2 * D, &o), AssignmentWork::Quantity(16_000));
+        assert_eq!(assignment_work(&of(fixed), 4 * D, &o), AssignmentWork::Quantity(8_000), "fixed: the same whatever the duration");
+        assert_eq!(assignment_work(&of(variable), 4 * D, &o), AssignmentWork::Quantity(32_000), "variable: in proportion");
         // A rate per hour over half a day: 4 hours × 2.5 = 10.
         let hourly = parse_assignment_units(ResourceType::Material, "2.5/h", &Currency::default()).unwrap();
-        assert_eq!(assignment_work(hourly, 240, &o), AssignmentWork::Quantity(1_000));
-        assert_eq!(assignment_work(Units::Cost(500), 2 * D, &o), AssignmentWork::None);
+        assert_eq!(assignment_work(&of(hourly), 240, &o), AssignmentWork::Quantity(1_000));
+        assert_eq!(assignment_work(&of(Units::Cost(500)), 2 * D, &o), AssignmentWork::None);
     }
 
     /// Work = Duration × Units, from Microsoft's "Assignment Units fields": a 5-day task at 50% is
@@ -553,7 +668,7 @@ mod tests {
         p.indent(&[sub]).unwrap();
         p.set_resource_names(t, "Ann, Concrete[2 tons/d]").unwrap();
         p.set_resource_names(sub, "Ann[50%], Bob[25%]").unwrap();
-        assert_eq!(assignment_work(Units::Work(5_000), 5 * D, &p.options), AssignmentWork::Minutes(20 * 60));
+        assert_eq!(crate::task_type::work_of(5 * D, 5_000), 20 * 60);
         let work = p.work_by_task();
         // The subtask: 2 days × 75% = 12 hours. The summary: 5 days of its own (the duration it
         // stores) at 100% plus its subtask's; the material adds no hours.
@@ -586,7 +701,8 @@ mod tests {
         let (mut p, t) = project();
         p.set_resource_names(t, "Ann, Concrete[5]").unwrap();
         p.check_assignments().unwrap();
-        let a = |task: u32, resource: u32, units: Units| Assignment { task: TaskId(task), resource: ResourceId(resource), units };
+        let a =
+            |task: u32, resource: u32, units: Units| Assignment { task: TaskId(task), resource: ResourceId(resource), units, work: 0, duration: 0 };
         for broken in [
             a(9, 1, Units::Work(1)),
             a(1, 9, Units::Work(1)),

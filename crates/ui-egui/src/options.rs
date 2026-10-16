@@ -1,10 +1,11 @@
-//! The Project Options dialog (Project › Options…): the project's options as a list of rows, each
-//! typed as text. Apply checks every row, then sends the changed ones as one `project.setOptions`
-//! command, so it is one undo step; a value that doesn't parse or is out of range says why and
-//! changes nothing. A new option is a new row in [`ROWS`].
+//! The Project Options dialog (Project › Options…): the calendar options as a list of rows, each
+//! typed as text, and the schedule options new tasks start with (the default task type, and
+//! whether new tasks are effort-driven). Apply checks every row, then sends the changed options as
+//! one `project.setOptions` command, so it is one undo step; a value that doesn't parse or is out
+//! of range says why and changes nothing. A new typed option is a new row in [`ROWS`].
 
 use egui::RichText;
-use projectcraft_engine::model::Project;
+use projectcraft_engine::model::{Project, TaskType};
 use serde_json::{Map, Value, json};
 
 use crate::App;
@@ -91,14 +92,21 @@ fn hours(s: &str, max: u32) -> Option<Value> {
     (whole && (60.0..=f64::from(max) * 60.0).contains(&m)).then(|| json!(h))
 }
 
-/// The dialog's own state: each row's text as typed, read from the project when it opens.
+/// The dialog's own state: each row's text as typed, and the schedule options as picked, read
+/// from the project when it opens.
 pub(crate) struct OptionsForm {
     texts: Vec<String>,
+    task_type: TaskType,
+    effort_driven: bool,
 }
 
 impl OptionsForm {
     fn read(project: &Project) -> Self {
-        OptionsForm { texts: ROWS.iter().map(|r| (r.read)(project)).collect() }
+        OptionsForm {
+            texts: ROWS.iter().map(|r| (r.read)(project)).collect(),
+            task_type: project.options.task_type,
+            effort_driven: project.options.effort_driven,
+        }
     }
 
     /// The changed rows as `project.setOptions` parameters; empty when nothing changed. Every row
@@ -110,6 +118,12 @@ impl OptionsForm {
                 continue;
             }
             params.insert(row.param.to_owned(), (row.parse)(text)?);
+        }
+        if self.task_type != project.options.task_type {
+            params.insert("defaultTaskType".to_owned(), json!(self.task_type.name()));
+        }
+        if self.effort_driven != project.options.effort_driven {
+            params.insert("newTasksEffortDriven".to_owned(), json!(self.effort_driven));
         }
         Ok(params)
     }
@@ -144,6 +158,30 @@ impl App {
                     ui.end_row();
                 }
             });
+            ui.add_space(10.0);
+            ui.label(RichText::new(tl!("New tasks")).strong());
+            ui.add_space(4.0);
+            egui::Grid::new("project_options_schedule").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                let label = ui.label(tl!("Default task type"));
+                egui::ComboBox::from_id_salt("default_task_type")
+                    .selected_text(tl!(form.task_type.name()))
+                    .show_ui(ui, |ui| {
+                        for ty in TaskType::ALL {
+                            ui.selectable_value(&mut form.task_type, ty, tl!(ty.name()));
+                        }
+                    })
+                    .response
+                    .labelled_by(label.id);
+                ui.end_row();
+            });
+            // A Fixed Work task is always effort-driven.
+            let fixed_work = form.task_type == TaskType::FixedWork;
+            let mut on = form.effort_driven || fixed_work;
+            ui.add_enabled(!fixed_work, egui::Checkbox::new(&mut on, tl!("New tasks are effort driven")))
+                .on_disabled_hover_text(tl!("Fixed Work tasks are always effort driven"));
+            if !fixed_work {
+                form.effort_driven = on;
+            }
             if !error.is_empty() {
                 ui.add_space(6.0);
                 ui.label(RichText::new(error.as_str()).color(t.warning));
@@ -229,6 +267,7 @@ mod tests {
         h.run_steps(3);
         let o = h.state().session.project.options;
         assert_eq!((o.minutes_per_day, o.minutes_per_week, o.days_per_month), (450, 2400, 21));
+        assert_eq!((o.task_type, o.effort_driven), (TaskType::FixedUnits, false), "untouched");
         assert!(h.state().options.is_none());
         h.state_mut().session.run("edit.undo", &json!({})).unwrap();
         assert_eq!(h.state().session.project.options, projectcraft_engine::model::Options::default());
@@ -263,6 +302,31 @@ mod tests {
         h.run_steps(3);
         assert!(h.state().status.contains("currency symbol"), "{}", h.state().status);
         assert!(!h.state().session.can_undo());
+    }
+
+    /// The schedule options: the default task type picked from its list and the effort-driven
+    /// box, sent with the typed ones in one command.
+    #[test]
+    fn the_default_task_type_and_effort_driven_box_are_options() {
+        let mut h = opened();
+        h.get_by_label("New tasks are effort driven").click();
+        h.run_steps(2);
+        h.get_by_label("Default task type").click();
+        h.run_steps(3);
+        h.get_by_label("Fixed Duration").click();
+        h.run_steps(3);
+        retype(&mut h, "Days per month", "21");
+        h.get_by_label("Apply").click();
+        h.run_steps(3);
+        let o = h.state().session.project.options;
+        assert_eq!((o.task_type, o.effort_driven, o.days_per_month), (TaskType::FixedDuration, true, 21));
+        h.state_mut().session.run("edit.undo", &json!({})).unwrap();
+        assert_eq!(h.state().session.project.options, projectcraft_engine::model::Options::default(), "one undo step");
+        // A new task takes them.
+        h.state_mut().session.run("project.setOptions", &json!({"defaultTaskType": "Fixed Duration", "newTasksEffortDriven": true})).unwrap();
+        h.state_mut().session.run("task.add", &json!({})).unwrap();
+        let t = h.state().session.project.tasks.last().unwrap().clone();
+        assert_eq!((t.task_type, t.effort_driven), (TaskType::FixedDuration, true));
     }
 
     /// A value that isn't a number, or is out of range, says why, changes nothing (not even a

@@ -177,11 +177,12 @@ fn roll_up(project: &Project, own: &BTreeMap<TaskId, i64>) -> BTreeMap<TaskId, i
 }
 
 impl Project {
-    /// What one assignment costs ([`assignment_cost`]), its work read for its task's duration; 0
-    /// when its task or resource is missing (only a damaged file could hold that).
+    /// What one assignment costs ([`assignment_cost`]): a work resource's work as the assignment
+    /// keeps it (the task type decides how it changes), a material's quantity for its task's
+    /// duration; 0 when its task or resource is missing (only a damaged file could hold that).
     pub fn assignment_cost(&self, a: &Assignment) -> i64 {
         let (Ok(t), Ok(r)) = (self.task(a.task), self.resource(a.resource)) else { return 0 };
-        assignment_cost(a.units, assignment_work(a.units, t.duration, &self.options), r)
+        assignment_cost(a.units, assignment_work(a, t.duration, &self.options), r)
     }
 
     /// Each task's own cost: its assignments' plus its fixed cost, not its subtasks'.
@@ -308,8 +309,9 @@ mod tests {
         p.set_fixed_cost(pour, 25_000).unwrap();
         assert_eq!(p.cost_by_task().get(&pour), Some(&380_000));
         assert_eq!(p.currency.format(p.total_cost()), "$3,800.00");
-        // Twice the duration: twice the work and its cost; the cement, travel and fee stay.
-        p.task_mut(pour).unwrap().duration = 10 * D;
+        // Twice the duration (Fixed Units: the work follows): twice the work and its cost; the
+        // cement, travel and fee stay.
+        p.set_duration(pour, 10 * D, DurationUnit::Days).unwrap();
         assert_eq!(p.total_cost(), 200_000 + 335_000 + 30_000 + 50_000 + 25_000);
         // Overtime rates and Accrue At change nothing until work is tracked.
         let before = p.total_cost();
@@ -340,7 +342,7 @@ mod tests {
         let boxes = p.add_resource(Some("Boxes"), ResourceType::Material, None).unwrap();
         p.set_resource(boxes, &[ResourceField::StandardRate(33)]).unwrap();
         let units = Units::Rate { quantity: 250, per: DurationUnit::Hours };
-        let used = assignment_work(units, 180, &p.options);
+        let used = assignment_work(&Assignment { task: TaskId(0), resource: boxes, units, work: 0, duration: 0 }, 180, &p.options);
         assert_eq!(assignment_cost(units, used, &res(&p, boxes)), 248);
     }
 

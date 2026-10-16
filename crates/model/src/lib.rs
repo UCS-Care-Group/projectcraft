@@ -11,6 +11,7 @@ mod outline;
 mod resource;
 mod rows;
 mod schedule;
+mod task_type;
 mod working_time;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,7 +24,7 @@ pub use assignment::{
     parse_assignment_units, quantity_text,
 };
 pub use cost::{Currency, DEFAULT_CURRENCY_CODE, KNOWN_CURRENCIES, MAX_CURRENCY_DIGITS, MAX_CURRENCY_SYMBOL, assignment_cost, div_half_even};
-pub use duration::{DurationUnit, duration_text, lag_text, parse_duration, parse_lag};
+pub use duration::{DurationUnit, duration_text, lag_text, parse_duration, parse_lag, parse_work};
 pub use outline::{CIRCULAR_OUTLINE, MAX_OUTLINE_LEVEL, Outline};
 pub use projectcraft_time::Date;
 pub use resource::{
@@ -31,6 +32,7 @@ pub use resource::{
     ResourceField, ResourceId, ResourceType, UNITS_PER_PERCENT, check_money, check_name, format_money, parse_money, parse_units, units_text,
 };
 pub use schedule::{Driver, Moment, Schedule, TaskDates, schedule};
+pub use task_type::{MAX_WORK, TaskType};
 pub use working_time::{
     DEFAULT_WORKING_TIMES, MAX_WORKING_TIMES, MINUTES_IN_DAY, Options, WorkingTime, check_working_times, clock, minutes_of, parse_clock,
     parse_working_time,
@@ -206,10 +208,22 @@ pub struct Task {
     /// Microsoft Project's Fixed Cost field. A file without one has none.
     #[serde(default, skip_serializing_if = "is_no_cost")]
     pub fixed_cost: i64,
+    /// Which of duration, units and work stays when another changes ([`TaskType`]). A file
+    /// without one has Fixed Units.
+    #[serde(default, skip_serializing_if = "TaskType::is_fixed_units")]
+    pub task_type: TaskType,
+    /// Keeps the task's work as resources are added or removed ([`Project::is_effort_driven`]).
+    /// Always on for Fixed Work. A file without it has it off.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub effort_driven: bool,
 }
 
 fn is_no_cost(n: &i64) -> bool {
     *n == 0
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn top_level() -> u32 {
@@ -708,7 +722,8 @@ mod tests {
     const D: i64 = 480;
 
     /// The default options: 8 hours a day, 40 a week, 20 days a month.
-    const O: Options = Options { minutes_per_day: 480, minutes_per_week: 2400, days_per_month: 20 };
+    const O: Options =
+        Options { minutes_per_day: 480, minutes_per_week: 2400, days_per_month: 20, task_type: crate::TaskType::FixedUnits, effort_driven: false };
 
     fn link(pred: u32, kind: LinkKind, lag: i64, lag_unit: DurationUnit) -> Link {
         Link { pred: TaskId(pred), kind, lag, lag_unit }

@@ -7,7 +7,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    CIRCULAR_OUTLINE, Constraint, DurationUnit, MAX_OUTLINE_LEVEL, MAX_TASKS, ModelError, Outline, Project, Task, TaskId, check_minutes, schedule,
+    CIRCULAR_OUTLINE, Constraint, DurationUnit, MAX_OUTLINE_LEVEL, MAX_TASKS, ModelError, Outline, Project, Task, TaskId, TaskType, check_minutes,
+    schedule,
 };
 
 impl Project {
@@ -117,6 +118,8 @@ impl Project {
             outline_level,
             deadline: None,
             fixed_cost: 0,
+            task_type: self.options.task_type,
+            effort_driven: self.options.effort_driven || self.options.task_type == TaskType::FixedWork,
         })
     }
 
