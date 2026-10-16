@@ -25,7 +25,7 @@ fn main() -> ExitCode {
 fn open(source: Option<&String>) -> Result<Session, String> {
     match source.map(String::as_str) {
         Some("--sample") => Ok(projectcraft_engine::sample()),
-        Some(f) => Session::load_json(&std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?).map_err(|e| e.to_string()),
+        Some(f) => Session::open(std::path::Path::new(f)).map_err(|e| e.to_string()),
         None => Err(USAGE.into()),
     }
 }
@@ -54,7 +54,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
                         let params = serde_json::from_str(params).map_err(|e| format!("{id}: params aren't JSON: {e}"))?;
                         s.run(id, &params).map_err(|e| format!("{id}: {e}"))?;
                     }
-                    "--save" => std::fs::write(v, s.save_json().map_err(|e| e.to_string())?).map_err(|e| format!("{v}: {e}"))?,
+                    "--save" => s.save_to(std::path::Path::new(v)).map_err(|e| e.to_string())?,
                     _ => return Err(format!("unknown option {a}\n\n{USAGE}")),
                 }
             }

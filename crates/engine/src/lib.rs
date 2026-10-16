@@ -6,12 +6,16 @@
 //! server) all call [`Session::run`], which checks params against the schema first (ADR 0004).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod file;
+
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use serde_json::{Value, json};
 
 pub use projectcraft_model as model;
 pub use projectcraft_time as time;
+
+pub use file::FORMAT_VERSION;
 
 use model::{Date, ModelError, Project, Schedule, TaskId};
 
@@ -123,18 +127,6 @@ impl Session {
             self.schedule = model::schedule(&self.project);
         }
         Ok(())
-    }
-
-    pub fn save_json(&self) -> Result<String, CmdError> {
-        serde_json::to_string_pretty(&self.project).map_err(|e| CmdError::Io(e.to_string()))
-    }
-
-    pub fn load_json(text: &str) -> Result<Session, CmdError> {
-        let p: Project = serde_json::from_str(text).map_err(|e| CmdError::Io(format!("not a ProjectCraft project: {e}")))?;
-        if p.tasks.len() > model::MAX_TASKS {
-            return Err(CmdError::Io(format!("more than {} tasks", model::MAX_TASKS)));
-        }
-        Ok(Session::new(p))
     }
 }
 

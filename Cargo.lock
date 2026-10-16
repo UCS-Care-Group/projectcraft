@@ -2388,6 +2388,7 @@ version = "0.0.1"
 dependencies = [
  "projectcraft-model",
  "projectcraft-time",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
