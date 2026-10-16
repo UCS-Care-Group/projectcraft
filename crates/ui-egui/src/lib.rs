@@ -1,13 +1,26 @@
 //! ProjectCraft front end: the Gantt Chart view, a task sheet with its bars on the right.
 //!
 //! The UI is thin: it reads [`Session`] and changes it only through [`Session::run`].
-//! ponytail: one view, no ribbon, theme tokens or translation yet (see ROADMAP.md, M1).
+//! Colours come from [`theme::Tokens`] and text goes through [`tl!`] ([`i18n`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use egui::{Color32, Key, RichText, Sense, Stroke, Vec2};
+use egui::{Key, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{TaskId, parse_duration, preds_text};
 use projectcraft_engine::{Session, time::Date};
 use serde_json::{Value, json};
+
+/// An English UI string in the current interface language ([`i18n::t`]).
+#[macro_export]
+macro_rules! tl {
+    ($s:expr) => {
+        $crate::i18n::t($s)
+    };
+}
+
+pub mod i18n;
+pub mod theme;
+
+use theme::Tokens;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
@@ -36,6 +49,9 @@ pub struct App {
     /// The cell being typed in and its text; committed as one command when focus leaves it.
     editing: Option<(TaskId, Field, String)>,
     status: String,
+    /// Light, dark or the system's; put into egui on the next frame.
+    pub appearance: egui::ThemePreference,
+    themed: Option<egui::ThemePreference>,
 }
 
 const ROW_H: f32 = 22.0;
@@ -43,7 +59,7 @@ const DAY_W: f32 = 18.0;
 
 impl App {
     pub fn new(session: Session, path: Option<std::path::PathBuf>) -> Self {
-        App { session, path, editing: None, status: String::new() }
+        App { session, path, editing: None, status: String::new(), appearance: egui::ThemePreference::System, themed: None }
     }
 
     fn run(&mut self, id: &str, params: Value) {
@@ -55,17 +71,21 @@ impl App {
 
     fn save(&mut self) {
         let Some(path) = self.path.clone() else {
-            self.status = "Start ProjectCraft with a file name to save (projectcraft plan.projectcraft)".into();
+            self.status = tl!("Start ProjectCraft with a file name to save (projectcraft plan.projectcraft)").to_owned();
             return;
         };
         self.status = match self.session.save_to(&path) {
-            Ok(()) => format!("Saved {}", path.display()),
-            Err(e) => format!("Couldn't save: {e}"),
+            Ok(()) => i18n::fmt(tl!("Saved {path}"), &[("path", &path.display().to_string())]),
+            Err(e) => i18n::fmt(tl!("Couldn't save: {error}"), &[("error", &e.to_string())]),
         };
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        if self.themed != Some(self.appearance) {
+            theme::apply(&ctx, self.appearance);
+            self.themed = Some(self.appearance);
+        }
         let (undo, redo, save) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::COMMAND, Key::Z),
@@ -87,24 +107,27 @@ impl App {
             ui.horizontal(|ui| {
                 ui.heading(&self.session.project.name);
                 ui.separator();
-                if ui.button("New Task").clicked() {
+                if ui.button(tl!("New Task")).clicked() {
                     self.run("task.add", json!({}));
                 }
-                if ui.add_enabled(self.session.can_undo(), egui::Button::new("Undo")).clicked() {
+                if ui.add_enabled(self.session.can_undo(), egui::Button::new(tl!("Undo"))).clicked() {
                     self.run("edit.undo", json!({}));
                 }
-                if ui.add_enabled(self.session.can_redo(), egui::Button::new("Redo")).clicked() {
+                if ui.add_enabled(self.session.can_redo(), egui::Button::new(tl!("Redo"))).clicked() {
                     self.run("edit.redo", json!({}));
                 }
-                if ui.button("Save").clicked() {
+                if ui.button(tl!("Save")).clicked() {
                     self.save();
                 }
             });
         });
         egui::Panel::bottom("status").show(ui, |ui| {
             let text = match &self.session.schedule {
-                Err(e) => format!("Can't schedule: {e}"),
-                Ok(s) if self.status.is_empty() => format!("Start {} · Finish {}", self.session.project.start, s.finish),
+                Err(e) => i18n::fmt(tl!("Can't schedule: {error}"), &[("error", &e.to_string())]),
+                Ok(s) if self.status.is_empty() => i18n::fmt(
+                    tl!("Start {start} · Finish {finish}"),
+                    &[("start", &self.session.project.start.to_string()), ("finish", &s.finish.to_string())],
+                ),
                 Ok(_) => self.status.clone(),
             };
             ui.label(text);
@@ -119,7 +142,7 @@ impl App {
         let mut commands: Vec<(&'static str, Value)> = Vec::new();
         egui::Grid::new("sheet").striped(true).min_row_height(ROW_H).show(ui, |ui| {
             for h in ["ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", ""] {
-                ui.label(RichText::new(h).strong());
+                ui.label(RichText::new(tl!(h)).strong());
             }
             ui.end_row();
             let p = &self.session.project;
@@ -164,7 +187,8 @@ impl App {
             Some((_, _, t)) if mine => t.clone(),
             _ => value.to_owned(),
         };
-        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(width));
+        // `min_size`: a grid cell offers only last frame's column width, which `desired_width` would shrink to.
+        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(width).min_size(Vec2::new(width, 0.0)));
         if r.has_focus() {
             self.editing = Some((id, field, text.clone()));
         }
@@ -185,7 +209,8 @@ fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::
     let x0 = d.start.days_since(start) as f32 * DAY_W;
     let x1 = (d.finish.days_since(start) + 1) as f32 * DAY_W;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(x1.max(x0 + DAY_W) + DAY_W, ROW_H), Sense::hover());
-    let colour = if d.critical { Color32::from_rgb(0xc8, 0x3c, 0x3c) } else { Color32::from_rgb(0x3c, 0x78, 0xc8) };
+    let t = Tokens::get(ui.ctx());
+    let colour = if d.critical { t.bar_critical } else { t.bar };
     let p = ui.painter();
     if milestone {
         let c = egui::pos2(rect.left() + x1, rect.center().y); // the end of its day
@@ -204,6 +229,17 @@ fn gantt_bar(ui: &mut egui::Ui, start: Date, dates: Option<projectcraft_engine::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Colours live in `theme.rs` only: every other source file takes them from `Tokens`.
+    #[test]
+    fn no_colours_outside_the_token_set() {
+        for (file, src) in [("lib.rs", include_str!("lib.rs")), ("i18n.rs", include_str!("i18n.rs"))] {
+            let code = src.split("#[cfg(test)]").next().unwrap_or(src);
+            for needle in ["Color32", "from_rgb", "from_gray", "from_black_alpha", "from_white_alpha"] {
+                assert!(!code.contains(needle), "{file} names a colour ({needle}); add a token in theme.rs");
+            }
+        }
+    }
 
     /// Worked example 15 (sheet side): a typed Start sets SNET, a typed Finish FNET. The
     /// scheduling side is `crates/engine/tests/constraints.rs`.

@@ -12,3 +12,7 @@ workspace = true
 projectcraft-engine = { workspace = true }
 egui = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# The `ui_shot` example renders the window offscreen (wgpu) to PNG, as MailCraft and WordCraft.
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }

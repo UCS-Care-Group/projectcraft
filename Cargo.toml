@@ -25,6 +25,8 @@ proptest = "1"
 # ui
 egui = "0.36"
 eframe = { version = "0.36", default-features = false }
+# Headless screenshots (ui-egui's `ui_shot` example), as MailCraft and WordCraft. Dev-only.
+egui_kittest = "0.36"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
