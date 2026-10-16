@@ -16,8 +16,11 @@ use serde_json::json;
 const GATE: Duration = Duration::from_millis(10);
 /// Timed runs per plan; the median is reported.
 const RUNS: usize = 31;
-/// The most a hostile plan's finish-type hold search may cost a reschedule, in release.
-const HOSTILE_GATE: Duration = Duration::from_millis(250);
+/// The most a hostile plan's finish-type hold search may cost a reschedule, in release. The search
+/// is bounded by its step budget, not by this ceiling: about 190 ms on a developer machine and
+/// 310 ms on a shared Windows CI runner. The ceiling still catches a budget raised far enough to
+/// make every edit of a hostile file take seconds.
+const HOSTILE_GATE: Duration = Duration::from_secs(1);
 
 /// A small linear congruential generator (Knuth's MMIX constants): the same seed, the same plan.
 struct Lcg(u64);
@@ -230,7 +233,7 @@ fn hostile(n: usize, depth: u32) -> Project {
 }
 
 /// The worst case the finish-type hold search allows: a full-size hostile plan (`MAX_TASKS`
-/// tasks) schedules in under 250 ms in release (median of 3), the same dates every time.
+/// tasks) schedules within [`HOSTILE_GATE`] in release (median of 3), the same dates every time.
 #[test]
 #[ignore = "timing; run in release by `cargo xtask perf`"]
 fn hostile_finish_holds_stay_bounded() {
