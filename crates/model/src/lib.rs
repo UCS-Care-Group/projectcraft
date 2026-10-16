@@ -4,6 +4,7 @@
 //! Everything here is plain data with edit primitives; undo and commands live in the engine.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod duration;
 mod schedule;
 
 use std::collections::BTreeSet;
@@ -11,6 +12,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub use duration::{DAYS_PER_MONTH, DAYS_PER_WEEK, parse_duration};
 pub use projectcraft_time::Date;
 pub use schedule::{Schedule, TaskDates, schedule};
 

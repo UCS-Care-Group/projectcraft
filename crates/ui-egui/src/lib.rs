@@ -5,7 +5,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use egui::{Color32, Key, RichText, Sense, Stroke, Vec2};
-use projectcraft_engine::model::{TaskId, preds_text};
+use projectcraft_engine::model::{TaskId, parse_duration, preds_text};
 use projectcraft_engine::{Session, time::Date};
 use serde_json::{Value, json};
 
@@ -117,9 +117,9 @@ impl App {
                     commands.push(("task.rename", json!({"id": id.0, "name": c})));
                 }
                 if let Some(c) = self.cell(ui, id, Field::Duration, &format!("{duration}d"), 60.0) {
-                    match c.trim().trim_end_matches(['d', 'D']).trim().parse::<i64>() {
+                    match parse_duration(&c) {
                         Ok(d) => commands.push(("task.setDuration", json!({"id": id.0, "duration": d}))),
-                        Err(_) => self.status = format!("Not a duration: {c}"),
+                        Err(e) => self.status = e.to_string(),
                     }
                 }
                 ui.label(dates.map_or_else(String::new, |d| d.start.to_string()));
