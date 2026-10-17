@@ -540,11 +540,11 @@ fn assignment_schema(what: &str, more: Value, required: &[&str]) -> Value {
 /// The `units` param read for the resource's type; `None` when absent.
 fn units_param(p: &Project, resource: ResourceId, v: &Value) -> Result<Option<model::Units>, CmdError> {
     let Some(text) = v.get("units").and_then(Value::as_str) else { return Ok(None) };
-    Ok(Some(model::parse_assignment_units(p.resource(resource)?.kind, text, &p.currency)?))
+    Ok(Some(model::parse_assignment_units(p.resource(resource)?.kind, text, &p.currency, p.options.units_format)?))
 }
 
 fn units(what: &str) -> Value {
-    json!({"type": "string", "description": format!("{what}; as the Resource Names column writes them: a work resource's percent of its working time (50%), a material's quantity, fixed (5 tons) or per time (2 tons/d, with m, h, d, w or mo), or a cost resource's amount in the project currency (£200)")})
+    json!({"type": "string", "description": format!("{what}; as the Resource Names column writes them: a work resource's share of its working time (50%; a bare number is a percent, or a decimal such as 0.5 when the project shows assignment units as decimals), a material's quantity, fixed (5 tons) or per time (2 tons/d, with m, h, d, w or mo), or a cost resource's amount in the project currency (£200)")})
 }
 
 /// Most headings `view.setColumns` reads: every column and Task Name and ID, with room for repeats.
@@ -586,6 +586,7 @@ const COMMANDS: &[CommandSpec] = &[
                     "currencyDigits": {"type": "integer", "minimum": 0, "maximum": model::MAX_CURRENCY_DIGITS, "description": "decimal places of the currency's minor unit (2 for pence, 0 for yen, 3 for fils). Absent: the currency's own"},
                     "defaultTaskType": {"type": "string", "enum": model::TaskType::NAMES, "description": "the type new tasks get; default Fixed Units"},
                     "newTasksEffortDriven": {"type": "boolean", "description": "whether new tasks are effort-driven; default false (new Fixed Work tasks always are)"},
+                    "assignmentUnitsAs": {"type": "string", "enum": model::UnitsFormat::NAMES, "description": "how work assignment units and Max Units show: Percentage (50%, the default) or Decimal (0.5); a bare number typed for units reads the same way, a number with % is always a percentage"},
                 }),
                 &[],
             )
@@ -606,6 +607,9 @@ const COMMANDS: &[CommandSpec] = &[
             }
             if let Some(e) = v.get("newTasksEffortDriven").and_then(Value::as_bool) {
                 o.effort_driven = e;
+            }
+            if let Some(f) = v.get("assignmentUnitsAs").and_then(Value::as_str) {
+                o.units_format = model::UnitsFormat::from_name(f)?;
             }
             o.check()?;
             p.options = o;
@@ -1436,6 +1440,28 @@ mod tests {
             s.run("edit.undo", &json!({})).unwrap();
         }
         assert_eq!(s.project, before, "each command is one undo step");
+    }
+
+    /// Project's "Show assignment units as a" option (<https://support.microsoft.com/en-us/office/change-the-default-unit-format-for-assignments-d1490024-3ce2-4552-8327-6c1cb6e7ca07>):
+    /// Percentage by default, Decimal on request; a bare number reads as the option says, `%`
+    /// always as a percentage. A file without it loads as Percentage and saves without it.
+    #[test]
+    fn assignment_units_show_as_decimals_on_request() {
+        let mut s = sample();
+        let plain = s.save_json().unwrap();
+        assert!(!plain.contains("units_format"), "older files are unchanged");
+        s.run("project.setOptions", &json!({"assignmentUnitsAs": "Decimal"})).unwrap();
+        assert_eq!(s.project.options.units_format, model::UnitsFormat::Decimal);
+        assert_eq!(s.project.resource_names(TaskId(7)), "Removals crew[3], Priya Shah, Travel[£150.00]");
+        s.run("assignment.setUnits", &json!({"task": 7, "resource": 3, "units": "2.5"})).unwrap();
+        s.run("assignment.setUnits", &json!({"task": 5, "resource": 2, "units": "25%"})).unwrap();
+        assert_eq!(s.project.resource_names(TaskId(7)), "Removals crew[2.5], Priya Shah, Travel[£150.00]");
+        assert_eq!(s.project.resource_names(TaskId(5)), "Tom Okafor[0.25]");
+        assert!(s.run("project.setOptions", &json!({"assignmentUnitsAs": "fraction"})).is_err());
+        let round = Session::load_json(&s.save_json().unwrap()).unwrap();
+        assert_eq!(round.project, s.project);
+        s.run("project.setOptions", &json!({"assignmentUnitsAs": "Percentage"})).unwrap();
+        assert_eq!(s.project.resource_names(TaskId(7)), "Removals crew[250%], Priya Shah, Travel[£150.00]");
     }
 
     /// The sample's costs to the penny, worked by hand: Priya £45.00/hr, Tom £52.50/hr, the

@@ -12,7 +12,8 @@ use std::collections::BTreeMap;
 
 use egui::{Key, RichText};
 use projectcraft_engine::model::{
-    Assignment, AssignmentWork, DurationUnit, Project, ResourceId, ResourceType, TaskId, assignment_work, default_units, duration_text, quantity_text,
+    Assignment, AssignmentWork, DurationUnit, Project, Resource, ResourceId, ResourceType, TaskId, UnitsFormat, assignment_work, default_units,
+    duration_text, material_rate_text, quantity_text,
 };
 use serde_json::{Value, json};
 
@@ -91,6 +92,16 @@ pub(crate) fn created_message(before: &Project, after: &Project) -> Option<Strin
         many => {
             Some(crate::i18n::fmt(tl!("Added {names} to the Resource Sheet as work resources (100% Max Units)."), &[("names", &many.join(", "))]))
         }
+    }
+}
+
+/// A resource's standard rate as its name's tooltip shows it: per hour of work (`£45.00/hr`), per
+/// one of a material's label (`£2.50/ton`); none for a cost resource.
+pub(crate) fn rate_text(project: &Project, r: &Resource) -> Option<String> {
+    match r.kind {
+        ResourceType::Work => Some(format!("{}{}", project.currency.format(r.standard_rate), tl!("/hr"))),
+        ResourceType::Material => Some(material_rate_text(r.standard_rate, &r.material_label, &project.currency)),
+        ResourceType::Cost => None,
     }
 }
 
@@ -216,7 +227,10 @@ impl App {
                                 &[("count", &n), ("total", &total)],
                             ));
                         }
-                        ui.label(&r.name);
+                        let name = ui.label(&r.name);
+                        if let Some(rate) = rate_text(&p, r) {
+                            name.on_hover_text(crate::i18n::fmt(tl!("Standard rate: {rate}"), &[("rate", &rate)]));
+                        }
                         ui.label(RichText::new(tl!(r.kind.name())).color(t.text_dim));
                         let text = form.units.entry(*id).or_default();
                         let hint = default_hint(&p, *id);
@@ -256,9 +270,14 @@ impl App {
                 });
             });
             ui.add_space(6.0);
-            let hint = match p.resources.iter().any(|r| r.kind == ResourceType::Material) {
-                true => tl!("Units: a percentage for people and equipment (50%); for materials a quantity (5 tons) or a rate (2 tons/d)."),
-                false => tl!("Units: the share of each resource's working time (50% is half its day)."),
+            let decimal = p.options.units_format == UnitsFormat::Decimal;
+            let hint = match (p.resources.iter().any(|r| r.kind == ResourceType::Material), decimal) {
+                (true, false) => tl!("Units: a percentage for people and equipment (50%); for materials a quantity (5 tons) or a rate (2 tons/d)."),
+                (true, true) => {
+                    tl!("Units: a decimal for people and equipment (0.5, or 50%); for materials a quantity (5 tons) or a rate (2 tons/d).")
+                }
+                (false, false) => tl!("Units: the share of each resource's working time (50% is half its day)."),
+                (false, true) => tl!("Units: the share of each resource's working time (0.5 is half its day; 50% works too)."),
             };
             ui.label(RichText::new(hint).color(t.text_dim));
             if !error.is_empty() {
@@ -292,6 +311,7 @@ mod tests {
     use projectcraft_engine::model::{ResourceId, TaskId};
     use serde_json::json;
 
+    use super::rate_text;
     use crate::App;
 
     /// With several tasks selected, a summary among them, Assign, new units and Remove each act on
@@ -344,5 +364,15 @@ mod tests {
             h.run_steps(2);
         }
         assert_eq!(h.state().session.project, before, "three commands, three undo steps");
+    }
+
+    /// Assign Resources shows each resource's rate on its name: a material's per its label.
+    #[test]
+    fn rates_show_per_hour_or_per_material_label() {
+        let p = projectcraft_engine::sample().project;
+        let rate = |id| rate_text(&p, p.resource(ResourceId(id)).unwrap());
+        assert_eq!(rate(1).as_deref(), Some("£45.00/hr"));
+        assert_eq!(rate(4).as_deref(), Some("£2.50/boxes"));
+        assert_eq!(rate(5), None, "a cost resource has no rate");
     }
 }

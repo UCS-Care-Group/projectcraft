@@ -1,11 +1,12 @@
 //! The Project Options dialog (Project › Options…): the calendar options as a list of rows, each
-//! typed as text, and the schedule options new tasks start with (the default task type, and
-//! whether new tasks are effort-driven). Apply checks every row, then sends the changed options as
+//! typed as text, the schedule options new tasks start with (the default task type, and whether
+//! new tasks are effort-driven), and whether assignment units show as a percentage or a decimal.
+//! Apply checks every row, then sends the changed options as
 //! one `project.setOptions` command, so it is one undo step; a value that doesn't parse or is out
 //! of range says why and changes nothing. A new typed option is a new row in [`ROWS`].
 
 use egui::RichText;
-use projectcraft_engine::model::{Project, TaskType};
+use projectcraft_engine::model::{Project, TaskType, UnitsFormat};
 use serde_json::{Map, Value, json};
 
 use crate::App;
@@ -98,6 +99,7 @@ pub(crate) struct OptionsForm {
     texts: Vec<String>,
     task_type: TaskType,
     effort_driven: bool,
+    units_format: UnitsFormat,
 }
 
 impl OptionsForm {
@@ -106,6 +108,7 @@ impl OptionsForm {
             texts: ROWS.iter().map(|r| (r.read)(project)).collect(),
             task_type: project.options.task_type,
             effort_driven: project.options.effort_driven,
+            units_format: project.options.units_format,
         }
     }
 
@@ -124,6 +127,9 @@ impl OptionsForm {
         }
         if self.effort_driven != project.options.effort_driven {
             params.insert("newTasksEffortDriven".to_owned(), json!(self.effort_driven));
+        }
+        if self.units_format != project.options.units_format {
+            params.insert("assignmentUnitsAs".to_owned(), json!(self.units_format.name()));
         }
         Ok(params)
     }
@@ -147,7 +153,8 @@ impl App {
             ui.set_width(400.0);
             ui.heading(tl!("Project Options"));
             ui.label(
-                RichText::new(tl!("Converting durations between hours, days, weeks and months; the currency of every amount")).color(t.text_dim),
+                RichText::new(tl!("Converting durations between hours, days, weeks and months; the currency of every amount; how units show"))
+                    .color(t.text_dim),
             );
             ui.add_space(10.0);
             egui::Grid::new("project_options_rows").num_columns(3).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -182,6 +189,27 @@ impl App {
             if !fixed_work {
                 form.effort_driven = on;
             }
+            ui.add_space(10.0);
+            ui.label(RichText::new(tl!("Assignment units")).strong());
+            ui.add_space(4.0);
+            egui::Grid::new("project_options_units").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                let label = ui.label(tl!("Show assignment units as a"));
+                egui::ComboBox::from_id_salt("units_format")
+                    .selected_text(tl!(form.units_format.name()))
+                    .show_ui(ui, |ui| {
+                        for f in UnitsFormat::ALL {
+                            ui.selectable_value(&mut form.units_format, f, tl!(f.name()));
+                        }
+                    })
+                    .response
+                    .labelled_by(label.id);
+                ui.end_row();
+            });
+            let example = match form.units_format {
+                UnitsFormat::Percentage => tl!("Half time shows as 50%, full time as 100%."),
+                UnitsFormat::Decimal => tl!("Half time shows as 0.5, full time as 1. Typing 50% still works."),
+            };
+            ui.label(RichText::new(example).color(t.text_dim));
             if !error.is_empty() {
                 ui.add_space(6.0);
                 ui.label(RichText::new(error.as_str()).color(t.warning));
@@ -327,6 +355,23 @@ mod tests {
         h.state_mut().session.run("task.add", &json!({})).unwrap();
         let t = h.state().session.project.tasks.last().unwrap().clone();
         assert_eq!((t.task_type, t.effort_driven), (TaskType::FixedDuration, true));
+    }
+
+    /// Show assignment units as a Decimal: one undo step, and the Resource Names column follows.
+    #[test]
+    fn assignment_units_can_show_as_decimals() {
+        let mut h = opened();
+        h.get_by_label("Show assignment units as a").click();
+        h.run_steps(3);
+        h.get_by_label("Decimal").click();
+        h.run_steps(3);
+        h.get_by_label("Apply").click();
+        h.run_steps(3);
+        let p = &h.state().session.project;
+        assert_eq!(p.options.units_format, UnitsFormat::Decimal);
+        assert_eq!(p.resource_names(projectcraft_engine::model::TaskId(2)), "Priya Shah[0.5], Tom Okafor[0.5]");
+        h.state_mut().session.run("edit.undo", &json!({})).unwrap();
+        assert_eq!(h.state().session.project.options, projectcraft_engine::model::Options::default(), "one undo step");
     }
 
     /// A value that isn't a number, or is out of range, says why, changes nothing (not even a

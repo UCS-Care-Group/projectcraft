@@ -388,6 +388,7 @@ mod tests {
             days_per_month: 21,
             task_type: model::TaskType::FixedDuration,
             effort_driven: true,
+            units_format: model::UnitsFormat::Decimal,
         };
         p.tasks = vec![
             Task {
@@ -627,7 +628,7 @@ mod tests {
         assert_eq!(v["calendar"]["times"][4], json!([{"from": 450, "to": 930}]));
         assert_eq!(
             v["options"],
-            json!({"minutes_per_day": 450, "minutes_per_week": 2250, "days_per_month": 21, "task_type": "FixedDuration", "effort_driven": true})
+            json!({"minutes_per_day": 450, "minutes_per_week": 2250, "days_per_month": 21, "task_type": "FixedDuration", "effort_driven": true, "units_format": "Decimal"})
         );
         // The task-type options are written only when they differ from Project's defaults.
         let plain = serde_json::from_str::<Value>(&Session::new(Project::new("x", Date::EPOCH)).save_json().unwrap()).unwrap();

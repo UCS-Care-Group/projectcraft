@@ -189,8 +189,14 @@ mod tests {
     use super::*;
     use crate::MAX_DAYS;
 
-    const O: Options =
-        Options { minutes_per_day: 480, minutes_per_week: 2400, days_per_month: 20, task_type: crate::TaskType::FixedUnits, effort_driven: false };
+    const O: Options = Options {
+        minutes_per_day: 480,
+        minutes_per_week: 2400,
+        days_per_month: 20,
+        task_type: crate::TaskType::FixedUnits,
+        effort_driven: false,
+        units_format: crate::UnitsFormat::Percentage,
+    };
     use DurationUnit::*;
 
     #[test]
