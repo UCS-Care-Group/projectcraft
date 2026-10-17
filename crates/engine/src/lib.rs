@@ -1620,9 +1620,8 @@ mod tests {
         assert!(Session::load_json(&v.to_string()).unwrap().project.assignments.is_empty());
     }
 
-    /// Valid params from a schema, then junk built from it: each property wrong-typed, out of
-    /// range or huge, each required one missing, an unknown one added, and non-object params.
-    fn junk_from(schema: &Value) -> Vec<Value> {
+    /// Valid params from a schema: each property a value of its type.
+    fn valid_from(schema: &Value) -> serde_json::Map<String, Value> {
         let props = schema["properties"].as_object().cloned().unwrap_or_default();
         let good = |p: &Value| match p["type"].as_str() {
             _ if p["enum"].is_array() => p["enum"][1].clone(),
@@ -1633,7 +1632,71 @@ mod tests {
             Some("boolean") => json!(true),
             _ => json!("1"),
         };
-        let valid: serde_json::Map<String, Value> = props.iter().map(|(k, p)| (k.clone(), good(p))).collect();
+        props.iter().map(|(k, p)| (k.clone(), good(p))).collect()
+    }
+
+    /// Params that succeed on [`hostile_base`] for each command: those built from its schema,
+    /// or, where those are refused (a currency code, params that exclude each other, a change
+    /// the plan can't take), ones chosen by hand, one for each way the command is used. Every
+    /// command's junk is built from these, so it reaches past the first check.
+    fn baselines(c: &CommandSpec) -> Vec<Value> {
+        let picked = match c.id {
+            "project.setOptions" => vec![
+                json!({"hoursPerDay": 7.5, "hoursPerWeek": 37.5, "daysPerMonth": 20, "currency": "USD", "currencySymbol": "US$", "currencyDigits": 2,
+                "defaultTaskType": "Fixed Work", "newTasksEffortDriven": true, "assignmentUnitsAs": "Decimal"}),
+            ],
+            "project.setStart" => vec![json!({"date": "2026-11-09"})],
+            "task.setPredecessors" => vec![json!({"id": 5, "text": "1FS+2d, 2SS-4h"})],
+            "task.indent" => vec![json!({"ids": [5]})],
+            "task.outdent" => vec![json!({"ids": [3]})],
+            "task.setFixedCost" => vec![json!({"id": 1, "amount": 2500})],
+            "calendar.setWorkingTimes" => vec![
+                json!({"weekday": "Tue", "times": ["9:00-12:00", "13:00-16:00"]}),
+                json!({"weekday": "Fri", "times": [], "resource": 2}),
+                json!({"weekday": "Mon", "fromProject": true, "resource": 1}),
+            ],
+            "calendar.addException" => vec![
+                json!({"date": "2026-11-07", "working": true, "times": ["9:00-13:00"]}),
+                json!({"date": "2026-11-10", "resource": 2}),
+                json!({"date": "2026-11-14", "working": true, "times": ["9:00-13:00"], "resource": 1}),
+            ],
+            "calendar.removeException" => vec![json!({"date": "2026-11-05"}), json!({"date": "2026-11-04", "resource": 1})],
+            "resource.set" => vec![
+                json!({"id": 1, "type": "Work", "initials": "PS", "group": "Ops", "maxUnits": 50, "standardRate": 5000, "overtimeRate": 7000, "costPerUse": 100, "accrueAt": "Start"}),
+                json!({"id": 4, "type": "Material", "materialLabel": "crates", "standardRate": 300, "costPerUse": 0, "accrueAt": "End"}),
+                json!({"id": 1, "type": "Cost"}),
+            ],
+            "assignment.add" => vec![json!({"task": 4, "resource": 4, "units": "5 boxes"}), json!({"tasks": [4, 5], "resource": 1, "units": "50%"})],
+            "assignment.setUnits" => vec![json!({"task": 1, "resource": 1, "units": "50%"}), json!({"tasks": [2, 5], "resource": 2, "units": "25%"})],
+            "assignment.remove" => vec![json!({"task": 1, "resource": 1}), json!({"tasks": [1, 2, 3], "resource": 1})],
+            "task.setResourceNames" => vec![json!({"id": 4, "text": "Priya Shah[50%], Packing boxes[2 boxes/d], Travel[£20], New person"})],
+            _ => vec![],
+        };
+        if picked.is_empty() { vec![Value::Object(valid_from(&(c.schema)()))] } else { picked }
+    }
+
+    /// The sample with what some commands need to succeed: task 3 indented under task 2 (to
+    /// outdent), a project holiday on Thursday 5 November and a day's leave for Priya Shah on
+    /// Wednesday 4 November (to remove), and Priya working Monday mornings only (to follow the
+    /// project calendar again).
+    fn hostile_base() -> Session {
+        let mut s = sample();
+        for (id, params) in [
+            ("task.indent", json!({"ids": [3]})),
+            ("calendar.addException", json!({"date": "2026-11-05"})),
+            ("calendar.addException", json!({"date": "2026-11-04", "resource": 1})),
+            ("calendar.setWorkingTimes", json!({"weekday": "Mon", "times": ["8:00-12:00"], "resource": 1})),
+        ] {
+            assert!(s.run(id, &params).is_ok(), "{id} {params}");
+        }
+        s
+    }
+
+    /// Junk built from valid params and the schema: each property wrong-typed, out of range or
+    /// huge, each one given missing, an unknown one added, and non-object params.
+    fn junk_from(schema: &Value, valid: &Value) -> Vec<Value> {
+        let props = schema["properties"].as_object().cloned().unwrap_or_default();
+        let valid = valid.as_object().cloned().unwrap_or_default();
         let mut out = vec![json!(null), json!([]), json!("x"), json!(7), Value::Object(valid.clone())];
         let wrong = [
             json!(null),
@@ -1669,9 +1732,11 @@ mod tests {
                 m.insert(k.clone(), w);
                 out.push(Value::Object(m));
             }
-            let mut m = valid.clone();
-            m.remove(k);
-            out.push(Value::Object(m));
+            if valid.contains_key(k) {
+                let mut m = valid.clone();
+                m.remove(k);
+                out.push(Value::Object(m));
+            }
         }
         let mut m = valid;
         m.insert("durration".into(), json!(3));
@@ -1682,8 +1747,8 @@ mod tests {
     #[test]
     fn hostile_params_never_panic() {
         for c in commands() {
-            for j in junk_from(&(c.schema)()) {
-                let mut s = sample();
+            for j in baselines(c).iter().flat_map(|valid| junk_from(&(c.schema)(), valid)) {
+                let mut s = hostile_base();
                 let before = s.project.clone();
                 if s.run(c.id, &j).is_err() {
                     assert_eq!(s.project, before, "{} changed the project on error with {j}", c.id);
@@ -1693,5 +1758,32 @@ mod tests {
             }
         }
         assert!(Session::load_json("{").is_err());
+    }
+
+    /// The audit behind `hostile_params_never_panic`: every command in the registry, a new one
+    /// included, has params that succeed (and change the project, or for undo and redo, run),
+    /// so the junk built from them reaches past the first check. A new command whose
+    /// schema-built params are refused needs its own in `baselines`.
+    #[test]
+    fn every_command_has_params_that_succeed_for_the_hostile_test() {
+        let mut ids: Vec<&str> = Vec::new();
+        let mut shallow = Vec::new();
+        for c in commands() {
+            for valid in baselines(c) {
+                let mut s = hostile_base();
+                let before = s.project.clone();
+                match s.run(c.id, &valid) {
+                    Err(e) => shallow.push(format!("{} {valid}: {e}", c.id)),
+                    Ok(()) if s.project == before && !c.id.starts_with("edit.") => shallow.push(format!("{} {valid} changed nothing", c.id)),
+                    Ok(()) => {}
+                }
+            }
+            ids.push(c.id);
+        }
+        assert!(shallow.is_empty(), "{}", shallow.join("\n"));
+        let mut unique = ids.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len(), "a command id is registered twice");
     }
 }

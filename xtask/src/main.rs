@@ -16,7 +16,7 @@ commands:
   layers   enforce the crate dependency layering (docs/architecture.md)
   wasm     cargo check --target wasm32-unknown-unknown for the wasm-safe crates
   deny     cargo deny check (advisories, licences, bans, sources; see deny.toml)
-  perf     the rescheduling speed gate, in release (200 tasks under 10 ms; 2,000 reported)
+  perf     the rescheduling speed gates, in release (200 tasks under 10 ms, bare and with 30 resources and 300 assignments; 2,000 reported)
   ci       fmt --check, clippy -D warnings, test, perf, assets, layers, wasm, deny (stops at first failure)
 ";
 

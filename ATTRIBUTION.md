@@ -8,3 +8,4 @@ Generated-in-code art is original and has no file to list: the Gantt bars and mi
 
 | Asset | Author | Source | Licence | Notes |
 |---|---|---|---|---|
+| `crates/engine/tests/fixtures/m1/` | ProjectCraft contributors | saved by ProjectCraft at its last M1 commit from invented plans (test fixtures) | MIT OR Apache-2.0 | invented tasks; no real organisation's plan |

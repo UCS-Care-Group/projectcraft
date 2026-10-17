@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (M2.4 resources work outside the project calendar) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (M2 acceptance: speed with resources, M1 files, hostile params) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -9,11 +9,11 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | Number | Value | Kind |
 |---|---|---|
 | M1 tickets done | **16 / 16**, plus follow-ups #26, #28, #37, #39 | measured (GitHub issues) |
-| M2 tickets done | **9 / 11** (#51–#59), plus #65 Project Options | measured (GitHub issues) |
-| Commands / crates | 32 commands · 4 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
-| Tests | 286 `#[test]`s; property tests in 11 modules: the file reader, the duration, predecessor and Resource Names parsers, outline changes, working times, resources, task types, costs and the scheduler | measured (source) |
+| M2 tickets done | **10 / 11** (#51–#60; left: #61 levelling, a stretch), plus #65 Project Options | measured (GitHub issues) |
+| Commands / crates | 33 commands · 4 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
+| Tests | 347 `#[test]`s; property tests in 13 modules: the file reader, the duration, predecessor and Resource Names parsers, outline changes, working times, resources, task types, costs, resource calendars, resource usage and the scheduler; files saved by M1 checked against the dates M1 gave them | measured (source) |
 | Builds verified | Windows, macOS and Linux (CI on each), the browser build (wasm) | measured |
-| Reschedule time | 200 tasks: ~0.1–0.3 ms (gate 10 ms); 2,000 tasks: ~2–5 ms; working time counted in minutes since M2 | measured (`cargo xtask perf`, release, CI runners) |
+| Reschedule time | 200 tasks: ~0.1–0.3 ms (gate 10 ms); 200 tasks with 30 resources on their own calendars and 300 assignments: ~1.3 ms on a developer machine (gate 10 ms); 2,000 tasks: ~2–5 ms; working time counted in minutes since M2 | measured (`cargo xtask perf`, release, CI runners) |
 | Resource Names edit | 1,000 names on 5,000 tasks and 20,000 assignments: ~40–60 ms (gate 100 ms) | measured (`cargo xtask perf`, release, CI runners) |
 | Releases | none yet | measured |
 
@@ -43,7 +43,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] Costs: rates, cost per use, fixed costs, cost resources, rolled up to the penny
 - [x] Overallocation shown in red; Resource Usage view
 - [ ] Stretch: manual resource levelling (delays only)
-- [ ] 200 tasks with 30 resources reschedule under 10 ms
+- [x] 200 tasks with 30 resources and 300 assignments reschedule under 10 ms
 
 ## Later
 - M3 — Baselines, % complete, actuals, tracking Gantt
@@ -107,6 +107,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-17 | M2.4: resource calendars: each work resource has its own calendar based on the project calendar, keeping only what differs (weekdays with their own working times, exceptions of its own such as leave or a short day); on a day its own exception comes first, then the project's, then its own weekday; a resource works only within the project calendar's working time (Microsoft Project also lets one work when the project doesn't: not yet); each work assignment is scheduled on its resource's calendar from the task's start and the task spans its earliest assignment's start to its latest's finish (Project's default, Ignore Resource Calendar No); a task without resources stays on the project calendar; late dates and slack are worked back on the same calendars; `calendar.setWorking`, `calendar.setWorkingTimes` (with `fromProject` to follow the project again), `calendar.addException` and `calendar.removeException` take a `resource`, refusing materials, costs and a week with no working day, and a project-calendar edit that would leave a resource no working weekday is refused, naming it (a file already so opens with that resource on the project calendar, and the status line names it); a resource made a material or cost loses its calendar; Change Working Time has a For calendar picker (the project calendar and each work resource), Use Project Times, and says which of a resource's own times aren't worked; calendars are counted from an index built once per schedule, never copied per resource, so the project calendar's exceptions cost a binary search (constrained tasks on main too); each task's assignments are walked from a known count a day at a time; `cargo xtask perf` gates under 1 s a hostile plan staffed on resource calendars (100,000 tasks, 181,800 assignments, 2,000 exceptions: about 0.09 s) and a plan at the assignment cap (1,000,000 assignments: about 0.23 s), and reports 200 tasks with 30 resources on their own calendars (under 1 ms); additive `calendar` field on resources, validated on load; worked examples (#57) |
 | 2026-10-17 | M2.6: overallocation and Resource Usage: a work resource is overallocated on a working day when its work that day is more than Max Units × that day's working time on its calendar (counted day by day; flat contours, each assignment's work spread over the working minutes it spans and adding up exactly); materials and cost resources are never overallocated; an overallocated resource's row is red in the Resource Sheet, and a task with an assignment working on one of its overallocated days shows a red person (drawn in code) in the indicators column, which now holds two indicators side by side; View › Resource Usage lists each resource with its assignments, their total work and their work on a timescale of its own (days, weeks or months, zoomed apart from the Gantt Chart's), red on a red ground where a resource's work is over Max Units; worked out from the schedule once per change, bounded (5,000,000 assignment-days) so a hostile file is refused rather than walked; colours from two new theme tokens; worked examples with a part-time calendar, Max Units 50% and leave (#59) |
 | 2026-10-17 | M2.4: resources work outside the project calendar's working time, as Microsoft Project schedules an assignment on its resource's calendar: a Saturday the project doesn't work, a working day of their own on a project holiday, hours before or after the project's day; the task spans them; when a resource on a task works outside the project's time, the scheduler counts offsets on the plan's working time (the project calendar with that time added), walks tasks without resources on the project calendar, counts lags on the project calendar, and gives slack and summary durations in project-calendar working time; other plans schedule as before; a resource's calendar needs a working weekday of its own or the project's; Change Working Time's "not worked" notes are gone; `cargo xtask perf` also gates the hostile staffed plan and the 1,000,000-assignment plan with one person working Saturdays outside the project's time under 1 s; worked examples (#95) |
+| 2026-10-17 | M2: acceptance: `cargo xtask perf` gates the 200-task plan staffed with 30 resources on their own calendars and 300 assignments under 10 ms (about 1.3 ms); five files saved by M1 (the sample, the 200-task generated plan, summary links with a conflict and negative slack, a four-day week, and every link type with lead and lag from tasks and milestones) open with the dates M1 gave them, recorded by M1 itself beside each, the one deliberate change being #74's finish at a milestone's moment; a task finish-to-finish or start-to-finish with a lag or lead after a milestone at the start of a day now finishes at the end of working time, as in M1 (a one-day task no longer shows over two days); `hostile_params_never_panic` builds its junk from params that succeed for every command (task and tasks, times and fromProject, resource calendars, each resource type), and a test fails when a command has none (#60) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -139,3 +140,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-17 | minor | M2.4 resource calendars |
 | 2026-10-17 | minor | M2.6 overallocation and Resource Usage |
 | 2026-10-17 | minor | M2.4 resources work outside the project calendar (#95) |
+| 2026-10-17 | minor | M2 acceptance (#60): staffed speed gate, M1 files, hostile params |

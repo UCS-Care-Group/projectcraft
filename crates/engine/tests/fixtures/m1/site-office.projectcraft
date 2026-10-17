@@ -1,0 +1,179 @@
+{
+  "calendar": {
+    "exceptions": [
+      {
+        "date": "2026-03-14",
+        "working": true
+      },
+      {
+        "date": "2026-04-03",
+        "working": false
+      },
+      {
+        "date": "2026-04-06",
+        "working": false
+      }
+    ],
+    "working": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "format_version": 1,
+  "name": "Site office",
+  "next_id": 13,
+  "start": "2026-03-02",
+  "tasks": [
+    {
+      "duration": 7,
+      "id": 1,
+      "name": "Design",
+      "preds": []
+    },
+    {
+      "duration": 3,
+      "id": 2,
+      "name": "Survey",
+      "outline_level": 2,
+      "preds": []
+    },
+    {
+      "constraint": {
+        "MSO": "2026-03-04"
+      },
+      "duration": 5,
+      "id": 3,
+      "name": "Drawings",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "deadline": "2026-03-20",
+      "duration": 0,
+      "id": 4,
+      "name": "Sign-off",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 13,
+      "id": 5,
+      "name": "Build",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "SNET": "2026-03-25"
+      },
+      "duration": 4,
+      "id": 6,
+      "name": "Groundworks",
+      "outline_level": 2,
+      "preds": []
+    },
+    {
+      "duration": 6,
+      "id": 7,
+      "name": "Frame",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 2,
+          "pred": 6
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 8,
+      "name": "Roof",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 7
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNLT": "2026-04-17"
+      },
+      "duration": 5,
+      "id": 9,
+      "name": "Fit out",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 8
+        }
+      ]
+    },
+    {
+      "deadline": "2026-04-20",
+      "duration": 0,
+      "id": 10,
+      "name": "Handover",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 5
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "SNET": "2026-04-08"
+      },
+      "duration": 0,
+      "id": 11,
+      "name": "Inspection",
+      "preds": []
+    },
+    {
+      "duration": 2,
+      "id": 12,
+      "name": "Snag list",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 11
+        },
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 10
+        }
+      ]
+    }
+  ]
+}
