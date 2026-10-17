@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (M4.2 Microsoft Project XML resources, assignments and costs) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (M2.7 resource levelling) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -9,12 +9,13 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | Number | Value | Kind |
 |---|---|---|
 | M1 tickets done | **16 / 16**, plus follow-ups #26, #28, #37, #39 | measured (GitHub issues) |
-| M2 tickets done | **10 / 11** (#51–#60; left: #61 levelling, a stretch), plus #65 Project Options | measured (GitHub issues) |
-| Commands / crates | 34 commands · 5 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
-| Tests | 479 `#[test]`s; property tests in 18 modules: the file reader, the MSPDI reader, its calendars, task fields and resources and costs, the CSV reader, the duration, predecessor and Resource Names parsers, outline changes, working times, resources, task types, costs, resource calendars, resource usage and the scheduler; files saved by M1 checked against the dates M1 gave them | measured (source) |
+| M2 tickets done | **11 / 11** (#51–#61, levelling #61 included), plus #65 Project Options | measured (GitHub issues) |
+| Commands / crates | 38 commands · 5 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
+| Tests | 496 `#[test]`s; property tests in 19 modules: the file reader, the MSPDI reader, its calendars, task fields and resources and costs, the CSV reader, the duration, predecessor and Resource Names parsers, outline changes, working times, resources, task types, costs, resource calendars, resource usage, levelling and the scheduler; files saved by M1 checked against the dates M1 gave them | measured (source) |
 | Builds verified | Windows, macOS and Linux (CI on each), the browser build (wasm) | measured |
 | Reschedule time | 200 tasks: ~0.1–0.3 ms (gate 10 ms); 200 tasks with 30 resources on their own calendars and 300 assignments: ~1.3 ms on a developer machine (gate 10 ms); 2,000 tasks: ~2–5 ms; working time counted in minutes since M2 | measured (`cargo xtask perf`, release, CI runners) |
 | Resource Names edit | 1,000 names on 5,000 tasks and 20,000 assignments: ~40–60 ms (gate 100 ms) | measured (`cargo xtask perf`, release, CI runners) |
+| Level All | 200 tasks, 30 resources, 300 assignments: ~0.5–0.9 s on a loaded developer machine (gate 2 s); 5,000 tasks with 20,000 assignments ~0.1–0.3 s; 1,000,000 assignments stop at their round cap in ~5–10 s (gate 20 s) | measured (`cargo xtask perf`, release) |
 | Releases | none yet | measured |
 
 ## M0 — Foundations ✅ (2026-10-15)
@@ -42,7 +43,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] Resource calendars (leave and part-time working)
 - [x] Costs: rates, cost per use, fixed costs, cost resources, rolled up to the penny
 - [x] Overallocation shown in red; Resource Usage view
-- [ ] Stretch: manual resource levelling (delays only)
+- [x] Stretch: manual resource levelling (delays only)
 - [x] 200 tasks with 30 resources and 300 assignments reschedule under 10 ms
 
 ## Later
@@ -121,6 +122,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-17 | Fix: a zero-length summary task (over milestones) that starts at the start of a day with no slack has its late dates on that day, not the day before; found by the resource-calendar property test; regression test |
 | 2026-10-17 | M4.1: Microsoft Project XML links, lags and date comparison: each `PredecessorLink` (`PredecessorUID`, `Type` 0 FF, 1 FS, 2 SF, 3 SS, `LinkLag` in tenths of a minute, `LagFormat`) becomes a link by the file's Unique IDs (kept even when the tasks are renumbered), its lag clamped to `MAX_MINUTES` in the format's unit; an elapsed lag (`em`, `eh`, `ed`, `ew`, `emo`) becomes the same number of working units and a percent lag (`%`, `e%`, read as tenths of a percent) that share of the predecessor's duration, one Converted line per lag; elapsed durations are converted the same way (replacing the tracer's read-as-working-minutes); a missing or unknown type is finish-to-start (unknown: a line), an unreadable or too long lag a line; links to tasks not in the file, cross-project links, self links, repeats, summary-to-own-subtask links and links closing a loop are dropped, a line each kind (the loop, self, repeat and summary checks now shared with CSV import); links capped at 1,000,000 a file; after import the project is scheduled and each task whose Start or Finish date differs from the file's is a new "Dates differ" report line (task, file dates, ours), at most 1,000 then one line for the rest; worked examples per link type and lag form imported and scheduled (#98) |
 | 2026-10-17 | M4.2: Microsoft Project XML resources, assignments and costs: each `Resource` (`Type` 0 material, 1 work, 2 cost or `IsCostResource`) comes in with its name (made unique, `[ ] ,` swapped for `( ) ;`), initials, group, material label, `MaxUnits` (`1` is 100%), `StandardRate` and `OvertimeRate` (per hour for work, per unit of the label for a material, as Microsoft's Project Server reference has the same fields; `StandardRateFormat` is only how they are shown), `CostPerUse`, `AccrueAt`, and its own calendar: the resource calendar's weekdays (and those of another base calendar it is based on, reported) and its exceptions worked out to their days, kept as what differs from the project calendar; each `Assignment` with its `Units` (a share of full time, a material's quantity) and `Work` (`xs:duration`), a cost resource's `Cost`; a task's duration is then its longest assignment's (work ÷ units on the resource's calendar), a line when that differs from the file's; each task's `FixedCost`; the project's `CurrencyCode`, `CurrencySymbol` and `CurrencyDigits`; every amount read exactly as a decimal into the currency's minor units, rounded half to even when finer (a line); rate tables B–E with any amount and table A rates over time are a Dropped line per table, contours other than flat become flat with a line per contour, assignments on another rate table are costed at table A, and availability over time, overtime work, delays, progress and timephased data on assignments are Dropped lines; hostile files: resources capped at 100,000 and assignments at 1,000 a task and 1,000,000 a file (the rest dropped with a line), Max Units, rates, costs, units and work clamped to the model's limits, unknown type and Accrue At codes, unusable currency codes and symbols, and assignments to missing tasks or resources or repeated are lines, resource calendars' exception days and recurrence steps share one budget; the resource, calendar, assignment and currency "not yet imported" lines are gone; worked examples with work, material and cost resources costed to the penny and scheduled on a part-time calendar with leave, in pounds, yen and dinars; property tests on damaged files and arbitrary numbers (#101) |
+| 2026-10-17 | M2.7: resource levelling: Resource ▸ Level All (`project.level`) clears levelling values, then delays tasks until no work resource is overallocated, looking day by day, in the Standard order (tasks it can't move, then predecessors, slack, start, priority, constraints, row); never splits a task, and never moves a summary, a milestone, a Must Start/Finish On task or one of priority 1000; a delay is the task's Leveling Delay, which the scheduler adds after its links and constraint (driver `LevelingDelay`); Resource ▸ Clear Leveling (`project.clearLeveling`); each one undo step; the status bar (and the CLI) says how many tasks it delayed and which resources are still overallocated; Priority (0–1000, default 500, `task.setPriority`) and Leveling Delay (`task.setLevelingDelay`) task fields, additive in the file and validated on load, as optional task sheet columns; bounded (a round cap scaled to the plan's size, delays that don't move a task taken back, a delay that would drag the other tasks along refused), the same result every run; worked examples from Microsoft's "Level resource assignments"; property tests; Level All on the staffed plan gated (#61) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -161,3 +163,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-17 | minor | Fix: a zero-length summary's late dates |
 | 2026-10-17 | minor | M4.1 Microsoft Project XML links, lags and date comparison (#98) |
 | 2026-10-17 | minor | M4.2 Microsoft Project XML resources, assignments and costs (#101) |
+| 2026-10-17 | minor | M2.7 resource levelling (#61); M2 tickets all done |

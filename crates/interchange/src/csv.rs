@@ -573,6 +573,8 @@ fn tasks(rows: &[Row], p: &Project) -> (Vec<Task>, Vec<u32>) {
             fixed_cost: 0,
             task_type: options.task_type,
             effort_driven: options.effort_driven || options.task_type == model::TaskType::FixedWork,
+            priority: model::DEFAULT_PRIORITY,
+            leveling_delay: 0,
         });
         notes.push(n);
     }
