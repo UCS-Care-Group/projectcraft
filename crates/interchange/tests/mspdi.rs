@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use projectcraft_interchange::model::{Date, DurationUnit, MAX_MINUTES, MAX_TASKS, WorkingTime};
+use projectcraft_interchange::model::{Constraint, Date, DurationUnit, MAX_MINUTES, MAX_TASKS, WorkingTime};
 use projectcraft_interchange::{Format, ImportError, Outcome, ReportLine, detect, import};
 
 const GARDEN: &str = include_str!("fixtures/garden-studio.xml");
@@ -53,7 +53,13 @@ fn a_hand_written_file_imports_names_outline_levels_and_durations() {
     );
     assert_eq!(p.next_id, 11, "Unique IDs are kept, and new tasks follow them");
     assert_eq!(i.report.tasks, 8);
-    assert!(p.tasks.iter().all(|t| t.preds.is_empty() && t.constraint.is_asap() && t.deadline.is_none()));
+    assert!(p.tasks.iter().all(|t| t.preds.is_empty()));
+    let held: Vec<(u32, Constraint, Option<Date>)> =
+        p.tasks.iter().filter(|t| !t.constraint.is_asap() || t.deadline.is_some()).map(|t| (t.id.0, t.constraint, t.deadline)).collect();
+    assert_eq!(
+        held,
+        [(3, Constraint::StartNoEarlierThan(Date::from_ymd(2026, 3, 4).unwrap()), None), (5, Constraint::Asap, Date::from_ymd(2026, 3, 20))]
+    );
 }
 
 #[test]
@@ -76,8 +82,6 @@ fn everything_else_is_a_report_line() {
         ("Project summary task", Outcome::Dropped, "UID 0"),
         ("Blank rows", Outcome::Dropped, "1 row"),
         ("Links (predecessors)", Outcome::NotYetImported, "ID 3 Pour the base, ID 4 Base cured"),
-        ("Constraint", Outcome::NotYetImported, "ID 3 Pour the base"),
-        ("Deadline", Outcome::NotYetImported, "ID 4 Base cured"),
         ("Priority", Outcome::Dropped, "ID 3 Pour the base"),
         ("Notes", Outcome::Dropped, "ID 6 Frame and roof"),
         ("Estimated duration (?)", Outcome::Dropped, "ID 6 Frame and roof"),
