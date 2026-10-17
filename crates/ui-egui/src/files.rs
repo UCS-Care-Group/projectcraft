@@ -1,6 +1,6 @@
 //! Open, Save, Save As, the recent-files list and the unsaved-changes prompt. Open also imports
-//! Microsoft Project XML (`.xml`) as a new, untitled project, then shows the import report; Save
-//! never writes the `.xml`, it asks for a `.projectcraft` name.
+//! Microsoft Project XML (`.xml`) and CSV (`.csv`) as a new, untitled project, then shows the
+//! import report; Save never writes the imported file, it asks for a `.projectcraft` name.
 //!
 //! The UI never shows a native dialog itself: it asks for one with a [`FileRequest`] that the
 //! desktop shell takes ([`App::take_file_request`]), shows with `rfd`, and answers through
@@ -18,12 +18,12 @@ use crate::{App, Selection, i18n};
 pub const MAX_RECENT: usize = 10;
 /// The extension of a ProjectCraft project.
 pub const EXTENSION: &str = "projectcraft";
-/// The extension of Microsoft Project XML, which Open imports.
-pub const IMPORT_EXTENSION: &str = "xml";
+/// The extensions of Microsoft Project XML and CSV, which Open imports.
+pub const IMPORT_EXTENSIONS: &[&str] = &["xml", "csv"];
 
-/// Whether Open imports `path` (Microsoft Project XML) rather than opening it as a project.
+/// Whether Open imports `path` (Microsoft Project XML or CSV) rather than opening it as a project.
 pub fn is_import(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(IMPORT_EXTENSION))
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| IMPORT_EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
 /// A native dialog the UI wants shown.
@@ -103,10 +103,10 @@ impl App {
         match (request, path) {
             (FileRequest::Open, Some(p)) => self.open_path(&p),
             (FileRequest::SaveAs, Some(p)) if is_import(&p) => {
-                // Never write a project over (or as) Microsoft Project XML.
+                // Never write a project over (or as) Microsoft Project XML or CSV.
                 self.after_save = None;
                 self.status = i18n::fmt(
-                    tl!("Couldn't save: {path} is a Microsoft Project XML name; ProjectCraft saves .projectcraft files"),
+                    tl!("Couldn't save: {path} is a Microsoft Project XML or CSV name; ProjectCraft saves .projectcraft files"),
                     &[("path", &p.display().to_string())],
                 );
             }
@@ -124,7 +124,7 @@ impl App {
     }
 
     /// Opens `path` in place of the current project, or imports it when it is Microsoft Project
-    /// XML ([`App::import_path`]). A file that can't be read, or that a newer ProjectCraft wrote,
+    /// XML or CSV ([`App::import_path`]). A file that can't be read, or that a newer ProjectCraft wrote,
     /// leaves the current project as it was and says why.
     pub fn open_path(&mut self, path: &Path) {
         if is_import(path) {
@@ -162,7 +162,7 @@ impl App {
         }
     }
 
-    /// Imports `path` (Microsoft Project XML) as a new, untitled project in place of the current
+    /// Imports `path` (Microsoft Project XML or CSV) as a new, untitled project in place of the current
     /// one, scheduled by ProjectCraft, and shows the import report. The file itself is never
     /// written: Save asks for a `.projectcraft` name. One that can't be imported leaves the current
     /// project as it was and says why.

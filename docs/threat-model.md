@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (Microsoft Project XML import) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (CSV import) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -46,7 +46,7 @@ may be malformed, enormous, or crafted to make the scheduler loop or overflow.
 
 ### Imported files
 
-Microsoft Project XML (MSPDI) now; CSV and Primavera XER later. Each is read by a parser of its
+Microsoft Project XML (MSPDI) and CSV now; Primavera XER later. Each is read by a parser of its
 own in `crates/interchange` under the rules above: everything in the file is hostile, sizes and
 counts are capped, and every parser has property tests that feed it arbitrary input. An import
 becomes a project through the same validation as a `.projectcraft` file (`Session::import`,
@@ -59,10 +59,19 @@ have produced.
   fetched); any entity other than XML's five and character references is refused; nesting is
   capped at 64, so a depth bomb is refused at the cap. The file's tasks are capped at
   `MAX_TASKS`, durations clamped to `MAX_MINUTES`, outline levels kept to the outline rule.
+- **CSV** (`crates/interchange/src/csv.rs`, a reader of its own, no new dependency): a file over
+  100 MB is refused, and so is one that isn't UTF-8 (a BOM is allowed); records are read one at a
+  time, so a file of blank lines or separators holds no more than one row; columns are capped at
+  1,000 (the rest counted and reported); tasks at `MAX_TASKS`. Cells go through the editing
+  commands' own parsers (duration, predecessors, Resource Names) with their clamps; a cell that
+  can't be read is a report line, never a failure. Links that would close a loop are dropped with
+  a strongly-connected-parts pass and a bounded search, so a loop of any size can't stall the
+  import or reach the scheduler.
 - **An import never touches the open project:** it makes a new, untitled one, and Save never
-  writes over the imported file (it asks for a `.projectcraft` name, and refuses an `.xml` one).
+  writes over the imported file (it asks for a `.projectcraft` name, and refuses an `.xml` or `.csv` one).
 - Tests: billion laughs and depth bombs refused fast, arbitrary bytes and damaged files never
-  panic (`crates/interchange/tests/mspdi.rs`), and `file.import` is in `hostile_params_never_panic`.
+  panic (`crates/interchange/tests/mspdi.rs`, `crates/interchange/tests/csv.rs`), and `file.import` is in
+  `hostile_params_never_panic`.
 
 ### Hostile command parameters
 
@@ -173,3 +182,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 | 2026-10-16 | minor | Saves, `.bak`, recovery copy and settings written through craft-atomic; craft-libs allowed as a pinned git source (#67) |
 | 2026-10-16 | minor | Assignments validated on load: counts capped, tasks and resources must exist, units in range (#55) |
 | 2026-10-17 | minor | Microsoft Project XML import: DTDs and entities refused, 100 MB and depth 64 caps, imports validated as project files, never written back (#97) |
+| 2026-10-17 | minor | CSV import: own RFC 4180 reader, records streamed, 1,000-column cap, loops of links dropped in bounded time (#103) |

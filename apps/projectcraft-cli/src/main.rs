@@ -14,8 +14,9 @@ usage:
   projectcraft-cli run SOURCE [--cmd ID[=JSON]]... [--save OUT]
   projectcraft-cli schedule SOURCE                           print the task sheet with its dates
 
-SOURCE is --sample, a .projectcraft FILE, or --import FILE: Microsoft Project XML, imported as a
-new project (its import report goes to stderr; --save writes a .projectcraft, never the import).
+SOURCE is --sample, a .projectcraft FILE, or --import FILE: Microsoft Project XML or a .csv
+(Task Name column required), imported as a new project (its import report goes to stderr; --save
+writes a .projectcraft, never the import).
 ";
 
 fn main() -> ExitCode {
@@ -90,9 +91,9 @@ fn run(args: Vec<String>) -> Result<(), String> {
                     }
                     "--save" => {
                         let path = std::path::Path::new(v);
-                        // A project is never written over (or as) Microsoft Project XML.
-                        if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("xml")) {
-                            return Err(format!("--save {v}: ProjectCraft saves .projectcraft files, not Microsoft Project XML"));
+                        // A project is never written over (or as) Microsoft Project XML or CSV.
+                        if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("xml") || e.eq_ignore_ascii_case("csv")) {
+                            return Err(format!("--save {v}: ProjectCraft saves .projectcraft files, not Microsoft Project XML or CSV"));
                         }
                         s.save_to(path).map_err(|e| e.to_string())?;
                         sweep(path);

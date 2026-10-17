@@ -13,3 +13,5 @@
 *.ico binary
 *.icns binary
 *.ttf binary
+# Test fixtures whose exact bytes (BOM, CRLF) are what the test checks.
+crates/interchange/tests/fixtures/*.csv binary

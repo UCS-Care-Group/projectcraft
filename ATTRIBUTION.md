@@ -10,3 +10,4 @@ Generated-in-code art is original and has no file to list: the Gantt bars and mi
 |---|---|---|---|---|
 | `crates/engine/tests/fixtures/m1/` | ProjectCraft contributors | saved by ProjectCraft at its last M1 commit from invented plans (test fixtures) | MIT OR Apache-2.0 | invented tasks; no real organisation's plan |
 | `crates/interchange/tests/fixtures/garden-studio.xml` | ProjectCraft contributors | Hand-written for the tests from Microsoft's published MSPDI schema documentation (learn.microsoft.com/office-project/xml-data-interchange); no Microsoft file used | MIT OR Apache-2.0 | Invented plan: tasks, people and dates are made up |
+| `crates/interchange/tests/fixtures/kitchen-refit.csv` | ProjectCraft contributors | Hand-written for the tests (UTF-8 with a BOM, semicolons, CRLF) | MIT OR Apache-2.0 | Invented plan: tasks, people and dates are made up |

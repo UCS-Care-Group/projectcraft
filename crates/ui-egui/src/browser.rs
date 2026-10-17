@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use egui::{Align2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 
-use crate::files::{EXTENSION, FileRequest, IMPORT_EXTENSION};
+use crate::files::{EXTENSION, FileRequest};
 use crate::theme::Tokens;
 use crate::{App, i18n};
 
@@ -45,7 +45,7 @@ fn has_extension(path: &Path, extensions: &[&str]) -> bool {
 /// The files a request lists: projects, and for Open also the files ProjectCraft imports.
 pub(crate) fn listed_extensions(request: FileRequest) -> &'static [&'static str] {
     match request {
-        FileRequest::Open => &[EXTENSION, IMPORT_EXTENSION],
+        FileRequest::Open => &[EXTENSION, "xml", "csv"],
         FileRequest::SaveAs => &[EXTENSION],
     }
 }
@@ -373,7 +373,9 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
         }
     });
     let kinds = match b.request {
-        FileRequest::Open => tl!("ProjectCraft projects (*.projectcraft) and Microsoft Project XML (*.xml), imported as a new project"),
+        FileRequest::Open => {
+            tl!("ProjectCraft projects (*.projectcraft), and Microsoft Project XML (*.xml) and CSV (*.csv), imported as a new project")
+        }
         FileRequest::SaveAs => tl!("ProjectCraft projects (*.projectcraft)"),
     };
     ui.label(RichText::new(kinds).color(t.text_dim));

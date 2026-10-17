@@ -2,7 +2,9 @@
 //! out. Pure functions of bytes; no files, no clock, no UI.
 //!
 //! Microsoft Project XML (MSPDI, Project's "Save as XML") is read from Microsoft's published
-//! schema documentation (<https://learn.microsoft.com/office-project/xml-data-interchange/>).
+//! schema documentation (<https://learn.microsoft.com/office-project/xml-data-interchange/>). A CSV
+//! (comma- or semicolon-separated values, UTF-8) is read as a heading row matched to the task
+//! sheet's column names, then a task a row.
 //! An import always makes a new project; its dates are always worked out by ProjectCraft's
 //! scheduler, never taken from the file. Everything in the file that the project can't hold yet is
 //! listed in the report as converted, dropped or not yet imported; nothing is kept hidden.
@@ -12,6 +14,8 @@
 //! (durations) apply.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod csv;
+mod links;
 mod mspdi;
 mod xml;
 
@@ -29,15 +33,18 @@ pub const MAX_DEPTH: usize = 64;
 pub enum Format {
     /// Microsoft Project XML (MSPDI).
     Mspdi,
+    /// Comma- or semicolon-separated values with a `Task Name` column.
+    Csv,
 }
 
 impl Format {
-    pub const ALL: [Format; 1] = [Format::Mspdi];
+    pub const ALL: [Format; 2] = [Format::Mspdi, Format::Csv];
 
     /// Its short name, as the `file.import` command's `format` param takes it.
     pub fn code(self) -> &'static str {
         match self {
             Format::Mspdi => "mspdi",
+            Format::Csv => "csv",
         }
     }
 
@@ -45,6 +52,7 @@ impl Format {
     pub fn name(self) -> &'static str {
         match self {
             Format::Mspdi => "Microsoft Project XML",
+            Format::Csv => "CSV",
         }
     }
 
@@ -72,6 +80,10 @@ pub enum ImportError {
     TooManyTasks,
     #[error("the file isn't well-formed XML: {0}")]
     Xml(String),
+    #[error("the file isn't UTF-8 text; save it as CSV UTF-8")]
+    CsvNotUtf8,
+    #[error("the file has no `Task Name` column; its first row must name the columns, one of them Task Name")]
+    NoTaskName,
 }
 
 /// What happened to one thing in the file that ProjectCraft couldn't take over as it was.
@@ -142,10 +154,12 @@ pub struct Import {
 pub fn import(format: Format, bytes: &[u8]) -> Result<Import, ImportError> {
     match format {
         Format::Mspdi => mspdi::import(bytes),
+        Format::Csv => csv::import(bytes),
     }
 }
 
-/// The format `bytes` are in, judged by their content, if one ProjectCraft imports.
+/// The format `bytes` are in, judged by their content, if one ProjectCraft imports. A CSV has
+/// nothing to tell it by: it is known by its name (`.csv`).
 pub fn detect(bytes: &[u8]) -> Option<Format> {
     mspdi::detect(bytes).then_some(Format::Mspdi)
 }
