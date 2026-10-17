@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use egui::{Align2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 
+use projectcraft_engine::interchange::Format;
+
 use crate::files::{EXTENSION, FileRequest};
 use crate::theme::Tokens;
 use crate::{App, i18n};
@@ -47,6 +49,10 @@ pub(crate) fn listed_extensions(request: FileRequest) -> &'static [&'static str]
     match request {
         FileRequest::Open => &[EXTENSION, "xml", "csv"],
         FileRequest::SaveAs => &[EXTENSION],
+        FileRequest::Export(f) => match f {
+            Format::Mspdi => &["xml"],
+            Format::Csv => &["csv"],
+        },
     }
 }
 
@@ -204,6 +210,16 @@ impl FileBrowser {
                 }
                 Step::Pick(path)
             }
+            FileRequest::Export(f) => {
+                if path.extension().is_none() {
+                    path.set_extension(f.extension());
+                }
+                if path.exists() && self.note != Note::Replace(path.clone()) {
+                    self.note = Note::Replace(path);
+                    return Step::Stay;
+                }
+                Step::Pick(path)
+            }
         }
     }
 
@@ -237,6 +253,7 @@ impl App {
         let name = match request {
             FileRequest::Open => String::new(),
             FileRequest::SaveAs => self.save_as_name(),
+            FileRequest::Export(f) => self.export_name(f),
         };
         self.browser = Some(Box::new(FileBrowser::new(request, start, name, unavailable)));
     }
@@ -267,8 +284,9 @@ impl App {
 /// The browser's contents; `Some` once it closes (`Some(None)`: cancelled).
 fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>> {
     ui.heading(match b.request {
-        FileRequest::Open => tl!("Open"),
-        FileRequest::SaveAs => tl!("Save As"),
+        FileRequest::Open => tl!("Open").to_owned(),
+        FileRequest::SaveAs => tl!("Save As").to_owned(),
+        FileRequest::Export(f) => i18n::fmt(tl!("Export as {format}"), &[("format", f.name())]),
     });
     if b.unavailable {
         ui.label(
@@ -377,6 +395,8 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
             tl!("ProjectCraft projects (*.projectcraft), and Microsoft Project XML (*.xml) and CSV (*.csv), imported as a new project")
         }
         FileRequest::SaveAs => tl!("ProjectCraft projects (*.projectcraft)"),
+        FileRequest::Export(Format::Mspdi) => tl!("Microsoft Project XML (*.xml): a copy; the project stays as it is"),
+        FileRequest::Export(Format::Csv) => tl!("CSV (*.csv): a copy; the project stays as it is"),
     };
     ui.label(RichText::new(kinds).color(t.text_dim));
     ui.add_space(8.0);
@@ -387,6 +407,7 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
         let ok = match b.request {
             FileRequest::Open => tl!("Open"),
             FileRequest::SaveAs => tl!("Save"),
+            FileRequest::Export(_) => tl!("Export"),
         };
         pick |= ui.add(egui::Button::new(RichText::new(ok).color(t.surface)).fill(t.accent)).clicked() || enter;
     });

@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use projectcraft_engine::Session;
+use projectcraft_engine::interchange::Format;
 
 use crate::{App, Selection, i18n};
 
@@ -31,6 +32,8 @@ pub fn is_import(path: &Path) -> bool {
 pub enum FileRequest {
     Open,
     SaveAs,
+    /// File › Export: a copy in another program's format, never the project's own file.
+    Export(Format),
 }
 
 /// What to do once unsaved changes are saved or dropped.
@@ -119,7 +122,33 @@ impl App {
                     }
                 }
             }
+            (FileRequest::Export(format), Some(p)) => self.export_to(format, p),
             (_, None) => self.after_save = None,
+        }
+    }
+
+    /// The name File › Export suggests: the project's file name (or name) with the format's
+    /// extension.
+    pub fn export_name(&self, format: Format) -> String {
+        let name = self.save_as_name();
+        let stem = Path::new(&name).file_stem().map_or_else(|| safe_name(&self.session.project.name), |s| s.to_string_lossy().into_owned());
+        format!("{stem}.{}", format.extension())
+    }
+
+    /// Writes a copy of the project to `path` in `format` through `file.export`: a name without
+    /// an extension gets the format's. The project, its file and its undo history are unchanged;
+    /// the project's own file is never written.
+    fn export_to(&mut self, format: Format, path: PathBuf) {
+        let path = if path.extension().is_some() { path } else { path.with_extension(format.extension()) };
+        if self.path.as_deref() == Some(path.as_path()) {
+            self.status = i18n::fmt(tl!("Couldn't export: {path} is the project's own file"), &[("path", &path.display().to_string())]);
+            return;
+        }
+        let shown = path.display().to_string();
+        if self.run("file.export", serde_json::json!({"format": format.code(), "path": shown})) {
+            self.status = i18n::fmt(tl!("Exported a copy as {format}: {path}"), &[("format", format.name()), ("path", &shown)]);
+        } else {
+            self.status = i18n::fmt(tl!("Couldn't export: {error}"), &[("error", &self.status)]);
         }
     }
 
@@ -362,6 +391,14 @@ impl App {
             if ui.add(egui::Button::new(tl!("Save As…")).shortcut_text(ui.ctx().format_shortcut(&SAVE_AS))).clicked() {
                 self.file_request = Some(FileRequest::SaveAs);
             }
+            ui.menu_button(tl!("Export"), |ui| {
+                for format in Format::EXPORTS {
+                    let label = i18n::fmt(tl!("{format}…"), &[("format", format.name())]);
+                    if ui.button(label).on_hover_text(tl!("Write a copy for another program; the project stays as it is")).clicked() {
+                        self.file_request = Some(FileRequest::Export(format));
+                    }
+                }
+            });
             self.autosave_toggle(ui);
         });
     }
@@ -421,6 +458,51 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("projectcraft-ui-files-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// File › Export › Microsoft Project XML… asks for a name, then writes a copy: the project,
+    /// its file and its undo history stay as they are, and the project's own file is never
+    /// written.
+    #[test]
+    fn file_export_writes_a_copy_and_never_the_project() {
+        use egui_kittest::kittest::Queryable;
+        let d = tmp("export");
+        let mut a = App::new(projectcraft_engine::sample(), None);
+        let own = d.join("Office move.projectcraft");
+        a.file_picked(FileRequest::SaveAs, Some(own.clone()));
+        a.run("task.add", json!({"name": "Mine"}));
+        let saved = std::fs::read(&own).unwrap();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(|ui, app: &mut App| app.ui(ui), a);
+        h.run_steps(2);
+        h.get_by_label("File").click();
+        h.run_steps(3);
+        assert!(h.query_by_label_contains("Save As").is_some(), "the File menu is open");
+        h.get_by_label_contains("Export").click();
+        h.run_steps(2);
+        h.get_by_label("Microsoft Project XML…").click();
+        h.run_steps(2);
+        assert_eq!(h.state_mut().take_file_request(), Some(FileRequest::Export(Format::Mspdi)));
+        assert_eq!(h.state().export_name(Format::Mspdi), "Office move.xml");
+        let before = h.state().session.project.clone();
+        let dirty = h.state().is_dirty();
+        // A name without an extension gets .xml.
+        h.state_mut().file_picked(FileRequest::Export(Format::Mspdi), Some(d.join("Office move")));
+        let xml = d.join("Office move.xml");
+        assert_eq!(std::fs::read_to_string(&xml).unwrap(), h.state().session.export(Format::Mspdi).unwrap());
+        assert!(h.state().status().starts_with("Exported a copy as Microsoft Project XML"), "{}", h.state().status());
+        assert_eq!(h.state().session.project, before);
+        assert_eq!(h.state().path.as_deref(), Some(own.as_path()), "the project keeps its own file");
+        assert_eq!(h.state().is_dirty(), dirty, "an export doesn't save the project");
+        // The project's own file is refused, and so is any .projectcraft.
+        for bad in [own.clone(), d.join("Other.projectcraft")] {
+            h.state_mut().file_picked(FileRequest::Export(Format::Mspdi), Some(bad.clone()));
+            assert!(h.state().status().starts_with("Couldn't export"), "{}", h.state().status());
+        }
+        assert_eq!(std::fs::read(&own).unwrap(), saved);
+        assert!(!d.join("Other.projectcraft").exists());
+        // Undo still undoes the task added before the export.
+        h.state_mut().run("edit.undo", json!({}));
+        assert!(!h.state().session.project.tasks.iter().any(|t| t.name == "Mine"));
     }
 
     #[test]

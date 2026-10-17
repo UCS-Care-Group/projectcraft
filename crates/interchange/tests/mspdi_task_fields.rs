@@ -336,10 +336,29 @@ fn custom_fields_are_dropped_reported() {
 }
 
 #[test]
-fn priority_is_dropped_reported() {
-    dropped("<Priority>800</Priority>", "Priority");
-    // 500, Project's default, is no priority at all.
-    assert!(others(&mspdi(&plan(&[(1, "Fit the gate", 16, "<Priority>500</Priority>")]))).is_empty());
+fn priority_and_leveling_delay_are_imported() {
+    // Priority 0 to 1,000; LevelingDelay in tenths of a minute (9,600 is two 8-hour days).
+    let i = mspdi(&plan(&[
+        (1, "Lay the patio", 16, "<Priority>800</Priority><LevelingDelay>9600</LevelingDelay><LevelingDelayFormat>7</LevelingDelayFormat>"),
+        (2, "Fit the gate", 16, "<Priority>500</Priority><LevelingDelay>0</LevelingDelay>"),
+    ]));
+    assert!(others(&i).is_empty(), "{:#?}", others(&i));
+    let got: Vec<(u32, i64)> = i.project.tasks.iter().map(|t| (t.priority, t.leveling_delay)).collect();
+    assert_eq!(got, [(800, 960), (500, 0)]);
+    // Out of range or unreadable: brought within it, a line each.
+    let i = mspdi(&plan(&[
+        (1, "Lay the patio", 16, "<Priority>1200</Priority><LevelingDelay>-50</LevelingDelay>"),
+        (2, "Fit the gate", 16, "<Priority>high</Priority><LevelingDelay>9600</LevelingDelay><LevelingDelayFormat>8</LevelingDelayFormat>"),
+        (3, "Paint the shed", 16, "<LevelingDelay>500</LevelingDelay><LevelingDelayFormat>19</LevelingDelayFormat>"),
+    ]));
+    let got: Vec<(u32, i64)> = i.project.tasks.iter().map(|t| (t.priority, t.leveling_delay)).collect();
+    // 2 elapsed days (9,600 tenths is 16 hours of calendar time, 2/3 of an elapsed day) read as
+    // the same number of working days: 320 working minutes.
+    assert_eq!(got, [(1000, 0), (500, 320), (500, 0)]);
+    let p = find(&i, "Priority");
+    assert_eq!((p.outcome, p.place.as_str()), (Outcome::Converted, "ID 1 Lay the patio, ID 2 Fit the gate"));
+    let l = find(&i, "Leveling delay");
+    assert_eq!((l.outcome, l.place.as_str()), (Outcome::Converted, "ID 1 Lay the patio, ID 2 Fit the gate, ID 3 Paint the shed"));
 }
 
 #[test]

@@ -1,0 +1,12 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d1913ac9cdadd03acf896b4a7e66501e3c463e76127c984c65b6ad72e2d6f3b6 # shrinks to seed = 9653999539
+cc 9d18d54939e978df68a6c23150e81832a6f0ba84bdc67adda4822725b8015786 # shrinks to seed = 7888820323750709
+cc 11315c81c8798e78938b1925e6f602de8b85becc42ccea613de0d83430cd162c # shrinks to seed = 5239053456218871172
+cc fd6d8d1c118386bfa23906ca26d497387ad86ded65184f616d18b8b51e81be1f # shrinks to seed = 12171069806144644276
+cc 1f63a1d9335a886ec4b97da45ad744884b03fc16dc887a03382611b240543846 # shrinks to seed = 2118350416455198788
+cc aca8c9e74fbecaf09f15810a66915d214d502016bb06b59185b0299dbb67b30b # shrinks to seed = 16235999543351105870

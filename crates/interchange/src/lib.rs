@@ -10,6 +10,9 @@
 //! listed in the report as converted, dropped or not yet imported; nothing is kept hidden. The
 //! file's own Start and Finish dates are only compared: each task whose dates differ is a line.
 //!
+//! Export writes the open project as Microsoft Project XML ([`export`]): everything it holds, with
+//! ProjectCraft's computed dates, so an exported file imports as the same project.
+//!
 //! Every file is hostile: DTDs and entities are refused, the file is capped at
 //! [`MAX_IMPORT_BYTES`] and its nesting at [`MAX_DEPTH`], and the model's caps (tasks, resources,
 //! assignments) and clamps (durations, lags, units, work, money) apply.
@@ -18,12 +21,13 @@
 mod csv;
 mod links;
 mod mspdi;
+mod mspdi_export;
 mod mspdi_links;
 mod xml;
 
 pub use projectcraft_model as model;
 
-use model::Project;
+use model::{Project, Schedule};
 
 /// Largest file imported: 100 MB.
 pub const MAX_IMPORT_BYTES: usize = 100 * 1024 * 1024;
@@ -60,6 +64,39 @@ impl Format {
 
     pub fn from_code(code: &str) -> Option<Format> {
         Format::ALL.into_iter().find(|f| f.code().eq_ignore_ascii_case(code.trim()))
+    }
+
+    /// The formats ProjectCraft exports to so far.
+    pub const EXPORTS: [Format; 1] = [Format::Mspdi];
+
+    /// Whether the project can be exported in this format yet.
+    pub fn exports(self) -> bool {
+        Format::EXPORTS.contains(&self)
+    }
+
+    /// The extension of a file in this format, without the dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Format::Mspdi => "xml",
+            Format::Csv => "csv",
+        }
+    }
+}
+
+/// Why a project couldn't be exported.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExportError {
+    #[error("ProjectCraft doesn't export {} yet", .0.name())]
+    NotYet(Format),
+}
+
+/// The project as a file in `format`, with `schedule`'s computed dates (Start, Finish, slack)
+/// where there is one. Deterministic: the same project and schedule give the same bytes, with
+/// nothing taken from the clock.
+pub fn export(format: Format, project: &Project, schedule: Option<&Schedule>) -> Result<String, ExportError> {
+    match format {
+        Format::Mspdi => Ok(mspdi_export::export(project, schedule)),
+        Format::Csv => Err(ExportError::NotYet(Format::Csv)),
     }
 }
 

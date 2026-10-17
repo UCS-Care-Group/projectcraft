@@ -15,6 +15,8 @@ use serde_json::Value;
 use crate::model::{self, Project};
 use crate::{CmdError, Session};
 
+/// The extension of a ProjectCraft project file.
+pub(crate) const EXTENSION: &str = "projectcraft";
 /// The version this build writes and the newest it reads.
 pub const FORMAT_VERSION: u64 = 2;
 /// Largest file read, so a hostile file can't exhaust memory. ponytail: about 1,000 bytes a task at `MAX_TASKS`.
@@ -167,13 +169,13 @@ pub(crate) fn validate(p: &mut Project) -> Result<(), CmdError> {
 /// is flushed and renamed over `path`. When `bak`, the previous file is copied to `<path>.bak`
 /// once the new content is written, before it replaces the old. On any error `path` is untouched.
 #[cfg(not(target_arch = "wasm32"))]
-fn replace_file(path: &Path, bak: bool, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+pub(crate) fn replace_file(path: &Path, bak: bool, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     replace_file_with(&craft_atomic::RealFs, craft_atomic::RenameRetry::platform(), path, bak, write)
 }
 
 /// The web build has no file system to save to.
 #[cfg(target_arch = "wasm32")]
-fn replace_file(_: &Path, _: bool, _: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+pub(crate) fn replace_file(_: &Path, _: bool, _: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     Err(no_files())
 }
 

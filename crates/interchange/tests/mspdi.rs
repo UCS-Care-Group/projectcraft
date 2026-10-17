@@ -83,7 +83,6 @@ fn everything_else_is_a_report_line() {
     let expect = [
         ("Project summary task", Outcome::Dropped, "UID 0"),
         ("Blank rows", Outcome::Dropped, "1 row"),
-        ("Priority", Outcome::Dropped, "ID 3 Pour the base"),
         ("Notes", Outcome::Dropped, "ID 6 Frame and roof"),
         ("Estimated duration (?)", Outcome::Dropped, "ID 6 Frame and roof"),
         ("Progress (actuals, % complete)", Outcome::Dropped, "ID 7 Fit windows"),

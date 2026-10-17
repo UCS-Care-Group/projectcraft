@@ -7,7 +7,7 @@
 //! `WorkingTimes`) and its exceptions (each `Exception`, recurring ones worked out to their days,
 //! with its own working times; or, in older files, `DayType` 0 weekdays), and each task's name,
 //! outline level and duration (in the unit its `DurationFormat` gives), constraint, deadline, task
-//! type, effort-driven setting and fixed cost ([`fields`]); the currency (`CurrencyCode`,
+//! type, effort-driven setting and fixed cost ([`fields`]), priority and leveling delay; the currency (`CurrencyCode`,
 //! `CurrencySymbol`, `CurrencyDigits`); and the resources, their calendars, the assignments and
 //! their costs ([`resources`]). Other base calendars and task calendars are dropped, a report
 //! line each. The project summary task (UID 0) is skipped:
@@ -146,8 +146,12 @@ impl Note {
             Note::Hyperlink => (Dropped, "Hyperlink", "ProjectCraft doesn't hold hyperlinks yet"),
             Note::CustomFields => (Dropped, "Custom fields", "ProjectCraft doesn't hold custom fields yet"),
             Note::OutlineCodes => (Dropped, "Outline codes", "ProjectCraft doesn't hold custom outline codes yet"),
-            Note::Priority => (Dropped, "Priority", "ProjectCraft doesn't level resources yet, so priority has no use"),
-            Note::LevelingDelay => (Dropped, "Leveling delay", "ProjectCraft doesn't level resources yet"),
+            Note::Priority => (Converted, "Priority", "unreadable or outside 0 to 1,000; brought within it (500 if unreadable)"),
+            Note::LevelingDelay => (
+                Converted,
+                "Leveling delay",
+                "elapsed, a percentage, negative, unreadable or longer than ProjectCraft holds; read as working time within 0 to 100,000 days (an elapsed span as the same number of working units, a percentage or an unreadable one as none)",
+            ),
             Note::Timephased => (Dropped, "Timephased data", "ProjectCraft works out each day's work itself"),
             Note::Subproject => (Dropped, "Inserted project", "inserted projects are imported as ordinary tasks"),
         }
@@ -172,6 +176,11 @@ struct FileTask {
     fields: fields::TaskFields,
     /// Its links and the file's dates for it.
     row: FileRow,
+    /// `Priority`, 0 to 1,000, as the file writes it.
+    priority: Option<String>,
+    /// `LevelingDelay`, in tenths of a minute, and `LevelingDelayFormat`, the unit it shows in.
+    leveling_delay: Option<String>,
+    leveling_delay_format: Option<i64>,
 }
 
 impl FileTask {
@@ -599,8 +608,18 @@ impl FileProject {
             "ActualCost" | "ActualOvertimeCost" => nonzero(text).then_some(Note::Progress),
             "Notes" => text_field(text).map(|_| Note::Notes),
             "Hyperlink" | "HyperlinkAddress" | "HyperlinkSubAddress" => text_field(text).map(|_| Note::Hyperlink),
-            "Priority" => int(text).is_some_and(|p| p != 500).then_some(Note::Priority),
-            "LevelingDelay" => nonzero(text).then_some(Note::LevelingDelay),
+            "Priority" => {
+                t.priority = text_field(text).map(|p| p.chars().take(64).collect());
+                None
+            }
+            "LevelingDelay" => {
+                t.leveling_delay = text_field(text).map(|d| d.chars().take(64).collect());
+                None
+            }
+            "LevelingDelayFormat" => {
+                t.leveling_delay_format = int(text);
+                None
+            }
             _ => {
                 t.fields.read(name, text);
                 None
@@ -1126,6 +1145,24 @@ fn tasks(file: Vec<FileTask>, options: &Options, start: Date, digits: u32) -> Re
             priority: model::DEFAULT_PRIORITY,
             leveling_delay: 0,
         };
+        if let Some(text) = t.priority.as_deref() {
+            match int(text).map(|p| p.clamp(0, i64::from(model::MAX_PRIORITY))) {
+                Some(p) => {
+                    task.priority = u32::try_from(p).unwrap_or(model::DEFAULT_PRIORITY);
+                    if int(text) != Some(p) {
+                        t.note(Note::Priority);
+                    }
+                }
+                None => t.note(Note::Priority),
+            }
+        }
+        if let Some(text) = t.leveling_delay.as_deref() {
+            let (delay, exact) = leveling_delay(text, t.leveling_delay_format, options);
+            task.leveling_delay = delay;
+            if !exact {
+                t.note(Note::LevelingDelay);
+            }
+        }
         field_notes.push(fields::apply(&t.fields, &mut task, start, digits));
         out.push(task);
         notes.push(t.notes);
@@ -1136,6 +1173,25 @@ fn tasks(file: Vec<FileTask>, options: &Options, start: Date, digits: u32) -> Re
     lines.extend(task_lines(&out, &notes));
     lines.extend(fields::lines(&out, &field_notes));
     Ok((out, lines, on, rows))
+}
+
+/// A task's `LevelingDelay`, in tenths of a minute as MSPDI's other spans are (`LinkLag`,
+/// `TotalSlack`), shown in its `LevelingDelayFormat`: working minutes, and whether it was read
+/// as it is. An elapsed delay is the same number of working units, as an elapsed lag is; a
+/// percentage, or an unreadable one, is none; all within 0 to [`MAX_MINUTES`].
+fn leveling_delay(text: &str, format: Option<i64>, options: &Options) -> (i64, bool) {
+    let Some(tenths) = int(text).or_else(|| text.trim().parse::<f64>().ok().filter(|f| f.is_finite()).map(|f| f.round() as i64)) else {
+        return (0, false);
+    };
+    let minutes = tenths.saturating_add(if tenths < 0 { -5 } else { 5 }) / 10;
+    let base = format.map(|f| if (35..=52).contains(&f) { f - 32 } else { f });
+    if matches!(base, Some(19 | 20)) {
+        return (0, tenths == 0);
+    }
+    let (unit, elapsed, _) = unit_of(base);
+    let working = if elapsed { mspdi_links::elapsed_to_working(minutes, unit, options) } else { minutes };
+    let kept = working.clamp(0, MAX_MINUTES);
+    (kept, kept == working && (!elapsed || minutes == 0))
 }
 
 /// Rows whose level breaks the outline rule are moved up to fit, each with a report line.
