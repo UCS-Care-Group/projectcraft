@@ -88,10 +88,6 @@ fn everything_else_is_a_report_line() {
         ("Estimated duration (?)", Outcome::Dropped, "ID 6 Frame and roof"),
         ("Progress (actuals, % complete)", Outcome::Dropped, "ID 7 Fit windows"),
         ("Base calendar", Outcome::Dropped, "Night shift (UID 2)"),
-        ("Resource calendars", Outcome::NotYetImported, "1 calendar"),
-        ("Resources", Outcome::NotYetImported, "1 resource"),
-        ("Assignments", Outcome::NotYetImported, "1 assignment"),
-        ("Currency", Outcome::NotYetImported, "EUR"),
         ("Start and finish", Outcome::DatesDiffer, "ID 1 Groundworks"),
     ];
     for (feature, outcome, place) in expect {
@@ -100,7 +96,8 @@ fn everything_else_is_a_report_line() {
         assert!(!line.why.is_empty());
     }
     assert_eq!(l.len(), expect.len(), "{l:#?}");
-    // Converted first, then dropped, then not yet imported, then dates that differ.
+    // Converted first, then dropped, then not yet imported, then dates that differ. The
+    // resource, her calendar, her assignment and the euro come in without a line.
     assert!(l.windows(2).all(|w| w[0].outcome <= w[1].outcome));
     let text = r.text();
     assert!(text.starts_with("Imported 8 tasks from Microsoft Project XML."), "{text}");
