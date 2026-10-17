@@ -323,6 +323,25 @@ fn a_task_s_duration_follows_its_assignments_with_a_line() {
     let i = mspdi(&plan("", &[(1, "Dig", 8)], &resource(1, "Ann", ""), &assignment(1, 1, "<Units>0.5</Units>")));
     assert_eq!((i.project.assignments[0].work, i.project.tasks[0].duration), (4 * 60, 8 * 60));
     assert!(lines(&i, "Duration from assignments").is_empty());
+    // Work rounded to the minute keeps the task's duration: 53 minutes at 50% is 27 minutes'
+    // work, which at 50% alone would be 54 minutes.
+    let file = plan("", &[(1, "Dig", 8)], &resource(1, "Ann", ""), &assignment(1, 1, "<Units>0.5</Units><Work>PT0H27M0S</Work>"))
+        .replace("<Duration>PT8H0M0S</Duration>", "<Duration>PT0H53M0S</Duration>");
+    let i = mspdi(&file);
+    assert_eq!((i.project.assignments[0].work, i.project.assignments[0].duration, i.project.tasks[0].duration), (27, 53, 53));
+    assert!(lines(&i, "Duration from assignments").is_empty());
+}
+
+#[test]
+fn initials_are_the_file_s_even_when_empty() {
+    let i = mspdi(&plan(
+        "",
+        &[],
+        &(resource(1, "Ann", "<Initials></Initials>") + &resource(2, "Bob", "") + &resource(3, "Cy", "<Initials>CZ</Initials>")),
+        "",
+    ));
+    let initials: Vec<&str> = i.project.resources.iter().map(|r| r.initials.as_str()).collect();
+    assert_eq!(initials, ["", "B", "CZ"], "no Initials element: the first letter of the name");
 }
 
 #[test]

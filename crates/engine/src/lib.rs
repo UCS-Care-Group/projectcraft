@@ -6,6 +6,7 @@
 //! server) all call [`Session::run`], which checks params against the schema first.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod export;
 mod file;
 mod import;
 
@@ -18,6 +19,7 @@ pub use projectcraft_interchange as interchange;
 pub use projectcraft_model as model;
 pub use projectcraft_time as time;
 
+pub use export::check_export_path;
 pub use file::{FORMAT_VERSION, TempSweep, create_private_dir_all, sweep_stale_temps, write_private};
 
 use model::{Date, ModelError, Project, ResourceField, ResourceId, Schedule, TaskId, Usage};
@@ -145,6 +147,7 @@ impl Session {
                 self.level_report = report;
                 return Ok(());
             }
+            "file.export" => return self.export_command(params),
             _ => {}
         }
         self.apply(id, |p| (spec.run)(p, params))
@@ -1258,7 +1261,7 @@ const COMMANDS: &[CommandSpec] = &[
             Ok(())
         },
     },
-    // Undo, redo and import are handled by `Session::run`; they're here for their metadata.
+    // Undo, redo, import and export are handled by `Session::run`; they're here for their metadata.
     CommandSpec { id: "edit.undo", label: "Undo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
     CommandSpec { id: "edit.redo", label: "Redo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
     CommandSpec {
@@ -1271,6 +1274,22 @@ const COMMANDS: &[CommandSpec] = &[
                 json!({
                     "format": {"type": "string", "enum": formats, "description": "mspdi: Microsoft Project XML; csv: comma- or semicolon-separated values, UTF-8, whose first row names the columns (Task Name required; Duration, Predecessors by row, Resource Names, Outline Level, Constraint Type, Constraint Date and Deadline read)"},
                     "path": {"type": "string", "description": "the file to import; it becomes a new, untitled project in place of the open one (never merged into it), with an import report"},
+                }),
+                &["format", "path"],
+            )
+        },
+        run: |_, _| Ok(()),
+    },
+    CommandSpec {
+        id: "file.export",
+        label: "Export",
+        effect: Effect::File,
+        schema: || {
+            let formats: Vec<&str> = interchange::Format::EXPORTS.iter().map(|f| f.code()).collect();
+            object(
+                json!({
+                    "format": {"type": "string", "enum": formats, "description": "mspdi: Microsoft Project XML, with every task, link, calendar, resource and assignment, and ProjectCraft's computed Start, Finish and slack"},
+                    "path": {"type": "string", "description": "the file to write, named with the format's extension (.xml); a copy, written atomically: the open project and its undo history are unchanged, and a .projectcraft file is never written"},
                 }),
                 &["format", "path"],
             )
@@ -1790,9 +1809,16 @@ mod tests {
                     json!({"format": "csv", "path": concat!(env!("CARGO_MANIFEST_DIR"), "/../interchange/tests/fixtures/kitchen-refit.csv")}),
                 ]
             }
+            "file.export" => vec![json!({"format": "mspdi", "path": hostile_export_path().to_string_lossy()})],
             _ => vec![],
         };
         if picked.is_empty() { vec![Value::Object(valid_from(&(c.schema)()))] } else { picked }
+    }
+
+    /// Where the hostile tests' exports go: a file of their own in the temporary folder. Junk
+    /// paths never get written, having no `.xml`.
+    fn hostile_export_path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("projectcraft-hostile-export-{}.xml", std::process::id()))
     }
 
     /// The sample with what some commands need to succeed: task 3 indented under task 2 (to
@@ -1895,6 +1921,13 @@ mod tests {
                 let before = s.project.clone();
                 match s.run(c.id, &valid) {
                     Err(e) => shallow.push(format!("{} {valid}: {e}", c.id)),
+                    // An export changes no project: it writes its file instead.
+                    Ok(()) if c.id == "file.export" => {
+                        let written = std::fs::read_to_string(hostile_export_path()).unwrap_or_default();
+                        if s.project != before || written != s.export(interchange::Format::Mspdi).unwrap_or_default() {
+                            shallow.push(format!("{} {valid} didn't write the export, or changed the project", c.id));
+                        }
+                    }
                     Ok(()) if s.project == before && !c.id.starts_with("edit.") => shallow.push(format!("{} {valid} changed nothing", c.id)),
                     Ok(()) => {}
                 }

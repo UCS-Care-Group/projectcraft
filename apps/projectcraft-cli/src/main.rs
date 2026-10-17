@@ -13,6 +13,7 @@ usage:
   projectcraft-cli commands [--json]                         list every command, its effect and params
   projectcraft-cli run SOURCE [--cmd ID[=JSON]]... [--save OUT]
   projectcraft-cli schedule SOURCE                           print the task sheet with its dates
+  projectcraft-cli export SOURCE --format mspdi OUT.xml      write a copy as Microsoft Project XML
 
 SOURCE is --sample, a .projectcraft FILE, or --import FILE: Microsoft Project XML or a .csv
 (Task Name column required), imported as a new project (its import report goes to stderr; --save
@@ -106,6 +107,20 @@ fn run(args: Vec<String>) -> Result<(), String> {
                     _ => return Err(format!("unknown option {a}\n\n{USAGE}")),
                 }
             }
+            Ok(())
+        }
+        Some("export") => {
+            let (s, used) = open(args.get(1..).unwrap_or_default())?;
+            let rest = args.get(1 + used..).unwrap_or_default();
+            let (format, out) = match rest {
+                [flag, code, out] if flag == "--format" => (code.as_str(), out.as_str()),
+                _ => return Err(format!("export needs --format mspdi and a file to write\n\n{USAGE}")),
+            };
+            let format = projectcraft_engine::interchange::Format::from_code(format)
+                .filter(|f| f.exports())
+                .ok_or_else(|| format!("--format {format}: ProjectCraft exports mspdi (Microsoft Project XML)"))?;
+            s.export_to(std::path::Path::new(out), format).map_err(|e| e.to_string())?;
+            eprintln!("exported {} tasks to {out}", s.project.tasks.len());
             Ok(())
         }
         Some("schedule") => {

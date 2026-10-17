@@ -283,6 +283,41 @@ fn reschedule_200_tasks_under_10_ms() {
     }
 }
 
+/// The most exporting the 2,000-task staffed plan as Microsoft Project XML may take, in release:
+/// a generous ceiling over what is reported (a few milliseconds), to catch a quadratic export.
+const EXPORT_GATE: Duration = Duration::from_secs(1);
+
+/// Exporting a 2,000-task plan with 30 resources and 300 assignments as Microsoft Project XML,
+/// and importing that file again, are timed and reported; the export is gated by
+/// [`EXPORT_GATE`]. The round trip is checked too: the file imports as the same plan.
+#[test]
+#[ignore = "timing; run in release by `cargo xtask perf`"]
+fn exporting_a_large_plan_is_reported() {
+    use projectcraft_engine::interchange::Format;
+    let s = Session::new(staffed(2_000, 19));
+    let mut times = Vec::new();
+    let mut xml = String::new();
+    for _ in 0..9 {
+        let t0 = Instant::now();
+        xml = s.export(Format::Mspdi).unwrap();
+        times.push(t0.elapsed());
+    }
+    times.sort();
+    let t_export = times[times.len() / 2];
+    let t0 = Instant::now();
+    let back = Session::import(Format::Mspdi, xml.as_bytes()).unwrap();
+    let t_import = t0.elapsed();
+    assert_eq!(back.export(Format::Mspdi).unwrap(), xml, "export → import → export is the same file");
+    let build = if cfg!(debug_assertions) { "debug" } else { "release" };
+    println!(
+        "perf ({build}): export 2,000 tasks, {STAFF} resources, {STAFFED_ASSIGNMENTS} assignments as Microsoft Project XML ({} KB) {t_export:.2?} (median of 9; gate: under {EXPORT_GATE:?}), import it again {t_import:.2?} (reported)",
+        xml.len() / 1024
+    );
+    if !cfg!(debug_assertions) {
+        assert!(t_export < EXPORT_GATE, "exporting 2,000 tasks took {t_export:.2?}, over the {EXPORT_GATE:?} gate");
+    }
+}
+
 /// A hostile plan for the finish-type hold search: one summary over everything, Finish No
 /// Earlier Than a far date, holding blocks of `depth` nested summaries with the same constraint,
 /// each over two subtasks the hold can't move (Must Start On and Start No Later Than the project

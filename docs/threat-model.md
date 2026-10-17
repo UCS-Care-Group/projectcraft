@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (Microsoft Project XML resources and costs) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (Microsoft Project XML export) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -83,6 +83,11 @@ have produced.
   panic (`crates/interchange/tests/mspdi.rs`, `crates/interchange/tests/mspdi_resources.rs`,
   `crates/interchange/tests/csv.rs`), and `file.import` is in
   `hostile_params_never_panic`.
+- **An export never overwrites a project:** `file.export` only takes a name with the format's
+  extension (`.xml`), so never a `.projectcraft` or the project's own file; it is written
+  atomically, all text is XML-escaped and characters XML can't hold are dropped
+  (`crates/engine/src/export.rs`, `crates/interchange/src/mspdi_export.rs`), and `file.export` is
+  in `hostile_params_never_panic`.
 
 ### Hostile command parameters
 
@@ -196,3 +201,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 | 2026-10-17 | minor | CSV import: own RFC 4180 reader, records streamed, 1,000-column cap, loops of links dropped in bounded time (#103) |
 | 2026-10-17 | minor | Microsoft Project XML links: 1,000,000-link cap, lags clamped, loops dropped, date-comparison lines bounded (#98) |
 | 2026-10-17 | minor | Microsoft Project XML resources and costs: resource and assignment caps, exact decimal money and units clamped to the model, one exception budget for resource calendars (#101) |
+| 2026-10-17 | minor | Microsoft Project XML export: `.xml` names only (never a project file), atomic write, text escaped (#102) |

@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** current · **Written:** 2026-10-17 · **Change:** minor (import date comparison)
+> **Status:** current · **Written:** 2026-10-17 · **Change:** minor (Microsoft Project XML export)
 
 ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCS-Care-Group/mailcraft/blob/main/docs/architecture.md).
 
@@ -8,8 +8,8 @@ ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://g
 |---|---|---|---|
 | L0 | `projectcraft-time` | — | `Date` (days since 1970-01-01), weekday, ISO text |
 | L1 | `projectcraft-model` | time | `Project`, `Task`, `Link`, `Calendar`; `schedule()` (critical path) |
-| L2 | `projectcraft-interchange` | model, quick-xml | other programs' files: Microsoft Project XML (MSPDI) and CSV import to a new project and an import report; export and XER later |
-| L4 | `projectcraft-engine` | model, time, interchange | `Session` (project, schedule, undo), `COMMANDS`, sample, JSON file, `file.import` |
+| L2 | `projectcraft-interchange` | model, quick-xml | other programs' files: Microsoft Project XML (MSPDI) and CSV import to a new project and an import report; MSPDI export; XER later |
+| L4 | `projectcraft-engine` | model, time, interchange | `Session` (project, schedule, undo), `COMMANDS`, sample, JSON file, `file.import`, `file.export` |
 | L5 | *(planned)* `mcp` | engine | MCP server |
 | L6 | `projectcraft-ui-egui` | engine | Gantt Chart view |
 | apps | `projectcraft`, `projectcraft-cli` | any | desktop shell (eframe), command line |
@@ -24,6 +24,9 @@ ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://g
 
 ## Importing
 `file.import` (`format`, `path`) and Open of a `.xml` or `.csv` read the file with `interchange::import`: bytes in, a new `Project` and an `ImportReport` out, pure and deterministic. The project is validated as a `.projectcraft` file is and scheduled by ProjectCraft; nothing in the file's own dates is used: they are only compared, and each task whose dates differ is a report line. The session it makes replaces the open one whole (no undo back into the old project), keeps the report (`Session::import_report`), and has no file: Save asks for a `.projectcraft` name. Everything the project can't hold yet is a report line (converted, dropped or not yet imported, with where and why), never kept hidden.
+
+## Exporting
+`file.export` (`format`, `path`), File › Export and `projectcraft-cli export` write a copy with `interchange::export`: the project and its schedule in, text out, pure and deterministic (no clock, fixed order). The copy is written atomically; the project, its file and its undo history are unchanged. Only the format's own extension is accepted, so an export never writes a `.projectcraft` file.
 
 ## Scheduling
 Times are offsets in working minutes from the first working minute of the project, counted on the calendar's working times; durations, lags and slack are working minutes, and a day of duration is the project's hours per day. The forward pass gives early start/finish per link kind (FS, SS, FF, SF, with lag); the backward pass from the latest early finish gives late dates; total slack is late start minus early start; slack ≤ 0 is critical. Offsets become moments (a date and a minute of the day) through one walk of the calendar.
@@ -49,3 +52,4 @@ What the program protects, from whom, and which code does it: [threat-model.md](
 | 2026-10-17 | minor | `interchange` crate (L2) and `file.import`: Microsoft Project XML import (#97) |
 | 2026-10-17 | minor | CSV import (#103) |
 | 2026-10-17 | minor | Imports compare the file's dates with the scheduler's (#98) |
+| 2026-10-17 | minor | Microsoft Project XML export, `file.export` (#102) |

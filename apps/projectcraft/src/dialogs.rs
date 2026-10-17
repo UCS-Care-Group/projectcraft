@@ -1,4 +1,4 @@
-//! Native Open and Save As dialogs through `rfd`, without freezing the window.
+//! Native Open, Save As and Export dialogs through `rfd`, without freezing the window.
 //!
 //! The dialog is built on the UI thread with the window as its parent (so it stays on top, and
 //! macOS shows it as a sheet); a background thread waits for the answer and wakes the UI. Only
@@ -63,6 +63,8 @@ impl Dialogs {
                 .add_filter("Microsoft Project XML", &["xml"])
                 .add_filter("CSV", &["csv"]),
             FileRequest::SaveAs => dialog.add_filter("ProjectCraft project", &[EXTENSION]),
+            // A copy for another program: only its own kind of file is offered.
+            FileRequest::Export(f) => dialog.add_filter(f.name(), &[f.extension()]),
         };
         if let Some(dir) = app.path.as_deref().and_then(Path::parent).filter(|d| d.is_dir()) {
             dialog = dialog.set_directory(dir);
@@ -70,6 +72,7 @@ impl Dialogs {
         let picking: std::pin::Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>> = match request {
             FileRequest::Open => Box::pin(dialog.pick_file()),
             FileRequest::SaveAs => Box::pin(dialog.set_file_name(app.save_as_name()).save_file()),
+            FileRequest::Export(f) => Box::pin(dialog.set_file_name(app.export_name(f)).save_file()),
         };
         let (tx, rx) = channel();
         let ctx = ctx.clone();

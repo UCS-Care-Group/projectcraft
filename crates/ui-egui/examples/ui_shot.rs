@@ -12,7 +12,7 @@
 //! unsaved changes for the Save changes? prompt; a task's name selects its row; `"last": true`
 //! clicks the last, such as an open list's entry over a sheet showing the same text), with
 //! `"mods": "shift" | "ctrl" | "alt+shift"` held, `{"key": "ArrowDown"}` presses a key (egui's key
-//! names, same `mods`), `{"browse": "open" | "save", "dir": "/abs/dir"}` opens the built-in file
+//! names, same `mods`), `{"browse": "open" | "save" | "export", "dir": "/abs/dir"}` opens the built-in file
 //! browser as when no system dialog can be shown, `{"open": "/abs/file"}` opens a file as Open
 //! does (a `.xml` is imported, with its report), `{"recover": "/abs/dir"}` turns on the
 //! recovery copy with `dir` as the untitled folder (an `untitled.projectcraft.recovery` there is
@@ -70,13 +70,19 @@ fn run() -> Result<(), String> {
             // The first widget with this label (a toolbar button, a menu, a menu item).
             let last = l.get("last").and_then(Value::as_bool).unwrap_or(false);
             let found = if last { harness.query_all_by_label(label).last() } else { harness.query_all_by_label(label).next() };
+            // A submenu's button carries its arrow in its label: match the start of it.
+            let found = found.or_else(|| harness.query_by_label_contains(label));
             match found {
                 Some(node) => node.click_modifiers(mods(&l)),
                 None => println!("click: no `{label}`"),
             }
             harness.run_steps(4);
         } else if let Some(what) = l.get("browse").and_then(Value::as_str) {
-            let request = if what == "save" { FileRequest::SaveAs } else { FileRequest::Open };
+            let request = match what {
+                "save" => FileRequest::SaveAs,
+                "export" => FileRequest::Export(projectcraft_engine::interchange::Format::Mspdi),
+                _ => FileRequest::Open,
+            };
             let dir = l.get("dir").and_then(Value::as_str).map(std::path::PathBuf::from);
             harness.state_mut().open_file_browser(request, dir, true);
             harness.run_steps(4);

@@ -86,7 +86,8 @@ struct FileResource {
     kind: Option<String>,
     cost: bool,
     null: bool,
-    initials: String,
+    /// `None` when the file has no `Initials`: the resource gets the first letter of its name.
+    initials: Option<String>,
     group: String,
     material_label: String,
     max_units: Option<String>,
@@ -245,7 +246,7 @@ fn resource_field(r: &mut FileResource, name: &str, text: &str) {
         "Type" => r.kind = kept(text),
         "IsCostResource" => r.cost = truthy(text),
         "IsNull" => r.null = truthy(text),
-        "Initials" => r.initials = text_kept(text),
+        "Initials" => r.initials = Some(text_kept(text)),
         "Group" => r.group = text_kept(text),
         "MaterialLabel" => r.material_label = text_kept(text),
         "MaxUnits" => r.max_units = kept(text),
@@ -614,9 +615,9 @@ pub(super) fn apply(p: &mut Project, reader: Reader, task_uids: &[Option<i64>], 
             n |= ResNote::Name.bit();
         }
         let mut res = Resource::new(*id, name, kind);
-        let initials = clean(&r.initials);
-        if !initials.is_empty() {
-            res.initials = initials;
+        // Empty initials in the file stay empty, as the resource had them.
+        if let Some(initials) = r.initials.as_deref() {
+            res.initials = clean(initials);
         }
         res.group = clean(&r.group);
         res.material_label = clean(&r.material_label);
@@ -810,7 +811,13 @@ fn assign(
                     }
                     Some(Some(m)) => m,
                 };
-                let length = if outline.is_summary(row) || units == 0 {
+                // Work is whole minutes, so work ÷ units can miss the duration it came from by a
+                // minute (53 minutes at 50% is 27 minutes' work, and 27 at 50% is 54; an
+                // effort-driven task's work is shared out rounded): work within a minute of what
+                // the task's duration gives at these units keeps that duration.
+                let near =
+                    (i128::from(work) * i128::from(FULL_TIME) - i128::from(duration) * i128::from(units)).abs() <= i128::from(units.max(FULL_TIME));
+                let length = if outline.is_summary(row) || units == 0 || near {
                     duration
                 } else {
                     let l = ratio(work, i64::from(FULL_TIME), i64::from(units));
