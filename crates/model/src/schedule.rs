@@ -977,18 +977,27 @@ impl<'a> Crews<'a> {
         worked
     }
 
+    /// Before the project start there is no calendar to walk: offsets there count plain working
+    /// minutes, as for a task without resources (`lf - d`) and for lags. So an assignment whose
+    /// walk back runs past offset 0 starts as many minutes before it as it has left to work, and
+    /// a finish at or before offset 0 starts its whole duration before that: late dates, and so
+    /// negative slack, that don't depend on whether a resource has a calendar of its own.
     fn back_walk(&self, i: usize, f: i64) -> Option<i64> {
         let crew = self.crew(i)?;
-        let to = moment_at(self.line, self.r, f, false)?;
-        let mut start: Option<Moment> = None;
+        let to = if f > 0 { Some(moment_at(self.line, self.r, f, false)?) } else { None };
+        let mut start: Option<i64> = None;
         for &(c, dur, _) in crew {
-            let a = self.on(c, |cal| {
-                let (day, at) = counts_to(cal, self.r, to);
-                moment_from(cal, self.r, to.date, day, at.saturating_sub(dur), true)
-            })?;
+            let a = match to {
+                None => f.saturating_sub(dur),
+                Some(to) => self.on(c, |cal| {
+                    let (day, at) = counts_to(cal, self.r, to);
+                    let k = at.saturating_sub(dur);
+                    if k < 0 { Some(k) } else { moment_from(cal, self.r, to.date, day, k, true).map(|m| count_to(self.line, self.r, m)) }
+                })?,
+            };
             start = Some(start.map_or(a, |s| s.min(a)));
         }
-        Some(count_to(self.line, self.r, start?))
+        start
     }
 }
 
@@ -1126,7 +1135,11 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
                 for (r, a, b) in w.each {
                     assignments.insert((t.id, r), (a, b));
                 }
-                (w.start, w.finish)
+                // A finish a link holds to a moment at the start of a day is that moment, as for
+                // a task on the project calendar (see `moments`): the same working minute, so the
+                // same offset, on the side the link asks for.
+                let finish = if fm.1 && fm.0 == f { clock.moment(fm).ok_or_else(bad)?.max(w.finish) } else { w.finish };
+                (w.start, finish)
             }
             Some(Err(Some(r))) => return Err(off_calendar(p, r)),
             Some(Err(None)) => return Err(bad()),
@@ -1696,6 +1709,142 @@ mod tests {
                     let Some(pd) = sch.tasks.get(&l.pred) else { continue };
                     proptest::prop_assert!(finish >= pd.finish, "{} finishes {finish:?} before its FF predecessor", t.name);
                 }
+            }
+        }
+    }
+
+    /// The plan scheduled twice: as it is, and with Ann's own `weekday` set to exactly the
+    /// project calendar's times for it, which changes nothing she works. Her tasks are then walked
+    /// on her calendar rather than counted as plain offsets; the dates must not care.
+    fn with_and_without_own_weekday(p: &Project, ann: crate::ResourceId, weekday: usize) -> (Schedule, Schedule) {
+        let mut own = p.clone();
+        own.set_resource_weekday_times(ann, weekday, Some(p.calendar.weekday_times(weekday).to_vec())).unwrap();
+        (schedule(p).unwrap(), schedule(&own).unwrap())
+    }
+
+    fn tuesday() -> usize {
+        usize::from(date("2026-03-03").weekday())
+    }
+
+    /// Monday 2026-03-02. P (1 day) → A (3 days, Ann), A Finish No Later Than Tuesday: A may start
+    /// as late as a day before the project start, so it has −2 days of slack (LS −1 day, early
+    /// start day 1), and P, which must finish by then, −2 days too. Walked back on Ann's calendar
+    /// the late start used to stop at the project start (−1 day for A, 0 for P).
+    #[test]
+    fn a_late_start_before_the_project_start_gives_negative_slack_on_a_resource_calendar() {
+        let mut p = Project::new("t", date("2026-03-02"));
+        let pre = p.add_task("P", D).unwrap();
+        let a = p.add_task("A", 3 * D).unwrap();
+        p.set_preds(a, parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
+        p.task_mut(a).unwrap().constraint = Constraint::FinishNoLaterThan(date("2026-03-03"));
+        let ann = p.add_resource(Some("Ann"), crate::ResourceType::Work, None).unwrap();
+        p.assign(a, ann, Some(crate::Units::Work(10_000))).unwrap();
+        let (plain, own) = with_and_without_own_weekday(&p, ann, tuesday());
+        assert_eq!((plain.tasks[&pre].slack, plain.tasks[&a].slack), (-2 * D, -2 * D));
+        assert_eq!(own.tasks, plain.tasks);
+    }
+
+    /// B (3 days, Ann) finish-to-finish after A (1 day) would start two days before the project
+    /// start, so the project start drives it, not the link, on Ann's calendar too (her walk back
+    /// used to stop at the start, tie with it and name the link).
+    #[test]
+    fn a_link_that_reaches_before_the_project_start_does_not_drive_on_a_resource_calendar() {
+        let mut p = Project::new("t", date("2026-03-02"));
+        p.add_task("A", D).unwrap();
+        let b = p.add_task("B", 3 * D).unwrap();
+        p.set_preds(b, parse_preds("1FF", &crate::Options::default()).unwrap()).unwrap();
+        let ann = p.add_resource(Some("Ann"), crate::ResourceType::Work, None).unwrap();
+        p.assign(b, ann, Some(crate::Units::Work(10_000))).unwrap();
+        let (plain, own) = with_and_without_own_weekday(&p, ann, tuesday());
+        assert_eq!(plain.tasks[&b].driver, Driver::ProjectStart);
+        assert_eq!(own.tasks, plain.tasks);
+    }
+
+    /// B (1 day, Ann) start-to-finish after a milestone that must start on Wednesday (8:00)
+    /// finishes at that moment, not at Tuesday 17:00 (the same working minute), on Ann's calendar
+    /// too: the walk's finish used to keep the end of the day before.
+    #[test]
+    fn a_finish_held_to_the_start_of_a_day_is_that_moment_on_a_resource_calendar() {
+        let mut p = Project::new("t", date("2026-03-02"));
+        let m = p.add_task("M", 0).unwrap();
+        p.task_mut(m).unwrap().constraint = Constraint::MustStartOn(date("2026-03-04"));
+        let b = p.add_task("B", D).unwrap();
+        p.set_preds(b, parse_preds("1SF", &crate::Options::default()).unwrap()).unwrap();
+        let ann = p.add_resource(Some("Ann"), crate::ResourceType::Work, None).unwrap();
+        p.assign(b, ann, Some(crate::Units::Work(10_000))).unwrap();
+        let (plain, own) = with_and_without_own_weekday(&p, ann, tuesday());
+        assert_eq!((plain.tasks[&b].start_at, plain.tasks[&b].finish_at), (at("2026-03-03", 8, 0), at("2026-03-04", 8, 0)));
+        assert_eq!(own.tasks, plain.tasks);
+    }
+
+    proptest::proptest! {
+        /// A resource whose own weekday is exactly the project calendar's times for it works just
+        /// as one with no calendar of its own, so the plan schedules the same: every task's dates,
+        /// late dates, slack and driver, the finish and the summaries' durations. Plans with
+        /// summaries, links with lags and leads, every constraint type (dates before the start
+        /// too), deadlines, a project holiday and the other resource's leave.
+        #[test]
+        fn a_resource_weekday_equal_to_the_projects_changes_no_dates(
+            levels in proptest::collection::vec(0u32..3, 2..9),
+            durations in proptest::collection::vec(0i64..9, 9),
+            links in proptest::collection::vec((0usize..9, 0usize..9, 0u8..4, -2i64..3), 0..9),
+            constraints in proptest::collection::vec((0usize..9, 0u8..7, -3i64..16), 0..4),
+            deadlines in proptest::collection::vec((0usize..9, 0i64..14), 0..2),
+            assigned in proptest::collection::vec((0usize..9, 0usize..2, 0usize..4), 0..10),
+            holiday in proptest::option::of(0i64..10),
+            leave in proptest::option::of(0i64..10),
+            weekday in 0usize..7,
+        ) {
+            let start = date("2026-03-02");
+            let mut p = Project::new("t", start);
+            if let Some(day) = holiday {
+                p.calendar.add_exception(start.add_days(day).unwrap(), false).unwrap();
+            }
+            for (i, l) in levels.iter().enumerate() {
+                let id = p.add_task(format!("T{i}"), durations[i] * 240).unwrap();
+                p.task_mut(id).unwrap().outline_level = *l;
+            }
+            let ids: Vec<TaskId> = p.tasks.iter().map(|t| t.id).collect();
+            let kinds = [LinkKind::FS, LinkKind::SS, LinkKind::FF, LinkKind::SF];
+            for (succ, pred, kind, lag) in links {
+                if let (Some(&s), Some(&pr)) = (ids.get(succ), ids.get(pred)) {
+                    let _ = p.set_preds(s, vec![crate::Link { pred: pr, kind: kinds[usize::from(kind)], lag: lag * 240, lag_unit: crate::DurationUnit::Hours }]);
+                }
+            }
+            for (row, ty, day) in constraints {
+                let d = start.add_days(day).unwrap();
+                let c = [Constraint::Asap, Constraint::StartNoEarlierThan(d), Constraint::FinishNoEarlierThan(d), Constraint::StartNoLaterThan(d),
+                    Constraint::FinishNoLaterThan(d), Constraint::MustStartOn(d), Constraint::MustFinishOn(d)][usize::from(ty)];
+                if let Some(&id) = ids.get(row) {
+                    p.task_mut(id).unwrap().constraint = c;
+                }
+            }
+            for (row, day) in deadlines {
+                if let Some(&id) = ids.get(row) {
+                    p.task_mut(id).unwrap().deadline = Some(start.add_days(day).unwrap());
+                }
+            }
+            let people: Vec<crate::ResourceId> =
+                ["Ann", "Bob"].iter().map(|n| p.add_resource(Some(n), crate::ResourceType::Work, None).unwrap()).collect();
+            for (row, r, units) in assigned {
+                if let Some(&id) = ids.get(row) {
+                    let _ = p.assign(id, people[r], Some(crate::Units::Work([2500, 5000, 10_000, 20_000][units])));
+                }
+            }
+            if let Some(day) = leave {
+                p.set_resource_exception(people[1], start.add_days(day).unwrap(), vec![]).unwrap();
+            }
+            let mut own = p.clone();
+            own.set_resource_weekday_times(people[0], weekday, Some(p.calendar.weekday_times(weekday).to_vec())).unwrap();
+            match (schedule(&p), schedule(&own)) {
+                (Ok(a), Ok(b)) => {
+                    for (id, x) in &a.tasks {
+                        proptest::prop_assert_eq!(Some(x), b.tasks.get(id), "{:?}", id);
+                    }
+                    proptest::prop_assert_eq!(a.tasks.len(), b.tasks.len());
+                    proptest::prop_assert_eq!((a.finish, a.rolled_up), (b.finish, b.rolled_up));
+                }
+                (a, b) => proptest::prop_assert_eq!(a.err(), b.err()),
             }
         }
     }
