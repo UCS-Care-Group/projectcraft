@@ -33,8 +33,9 @@ use theme::Tokens;
 mod assign;
 mod browser;
 mod files;
+mod import_report;
 mod options;
-pub use files::{EXTENSION, FileRequest, MAX_RECENT, parse_recent, push_recent, recent_text};
+pub use files::{EXTENSION, FileRequest, IMPORT_EXTENSION, MAX_RECENT, is_import, parse_recent, push_recent, recent_text};
 mod recovery;
 mod resource_sheet;
 mod resource_usage;
@@ -286,6 +287,10 @@ pub struct App {
     assign: Option<assign::AssignForm>,
     /// The Columns dialog is open.
     columns_open: bool,
+    /// The project was imported and hasn't been saved as a `.projectcraft` yet.
+    unsaved_import: bool,
+    /// The import report, while it shows: the imported file's name and the report.
+    import_report: Option<(String, projectcraft_engine::interchange::ImportReport)>,
 }
 
 const ROW_H: f32 = 22.0;
@@ -332,7 +337,14 @@ impl App {
             resources: resource_sheet::ResourceSheet::default(),
             assign: None,
             columns_open: false,
+            unsaved_import: false,
+            import_report: None,
         }
+    }
+
+    /// The status bar's message, if any (the last error, or what Open or Save did).
+    pub fn status(&self) -> &str {
+        &self.status
     }
 
     /// Runs a command; an error goes to the status bar. True when it ran.
@@ -515,6 +527,7 @@ impl App {
         self.retype_prompt(&ctx);
         self.delete_resources_prompt(&ctx);
         self.unsaved_prompt(&ctx);
+        self.import_report_dialog(&ctx);
         self.recovery_prompt(&ctx);
         self.file_browser(&ctx);
         self.update_title(&ctx);
@@ -532,6 +545,7 @@ impl App {
             || self.resources.retype.is_some()
             || self.resources.delete.is_some()
             || self.browser.is_some()
+            || self.import_report.is_some()
             || self.keeper.as_ref().is_some_and(|k| k.offer.is_some());
         if self.view == View::ResourceSheet {
             if self.resources.editing.is_some() || ctx.text_edit_focused() || modal {

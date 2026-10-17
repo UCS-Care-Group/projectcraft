@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (assignments validated on load) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (Microsoft Project XML import) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -46,11 +46,23 @@ may be malformed, enormous, or crafted to make the scheduler loop or overflow.
 
 ### Imported files
 
-Microsoft Project XML (MSPDI), Primavera XER and CSV, once they can be imported. Each is read by a
-parser of its own under the rules above: everything in the file is hostile, sizes and counts are
-capped, and every parser has property tests that feed it arbitrary input. An import becomes a
-project through the same validation as a `.projectcraft` file, so the scheduler never sees
-anything the editing commands couldn't have produced.
+Microsoft Project XML (MSPDI) now; CSV and Primavera XER later. Each is read by a parser of its
+own in `crates/interchange` under the rules above: everything in the file is hostile, sizes and
+counts are capped, and every parser has property tests that feed it arbitrary input. An import
+becomes a project through the same validation as a `.projectcraft` file (`Session::import`,
+`crates/engine/src/import.rs`), so the scheduler never sees anything the editing commands couldn't
+have produced.
+
+- **XML** (`crates/interchange/src/xml.rs`, over `quick-xml`): a file over 100 MB is refused
+  before parsing, and so is one that isn't UTF-8. A document type definition (`<!DOCTYPE>`) is
+  refused, so no entity can be declared (no billion laughs, no external entities, nothing is ever
+  fetched); any entity other than XML's five and character references is refused; nesting is
+  capped at 64, so a depth bomb is refused at the cap. The file's tasks are capped at
+  `MAX_TASKS`, durations clamped to `MAX_MINUTES`, outline levels kept to the outline rule.
+- **An import never touches the open project:** it makes a new, untitled one, and Save never
+  writes over the imported file (it asks for a `.projectcraft` name, and refuses an `.xml` one).
+- Tests: billion laughs and depth bombs refused fast, arbitrary bytes and damaged files never
+  panic (`crates/interchange/tests/mspdi.rs`), and `file.import` is in `hostile_params_never_panic`.
 
 ### Hostile command parameters
 
@@ -160,3 +172,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 | 2026-10-16 | minor | Durations and lags capped in working minutes; version-1 files migrate with the day cap kept (#52) |
 | 2026-10-16 | minor | Saves, `.bak`, recovery copy and settings written through craft-atomic; craft-libs allowed as a pinned git source (#67) |
 | 2026-10-16 | minor | Assignments validated on load: counts capped, tasks and resources must exist, units in range (#55) |
+| 2026-10-17 | minor | Microsoft Project XML import: DTDs and entities refused, 100 MB and depth 64 caps, imports validated as project files, never written back (#97) |

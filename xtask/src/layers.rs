@@ -35,9 +35,8 @@ impl Class {
 pub const TABLE: &[(&str, Class)] = &[
     ("time", Class::Layer(0)),
     ("model", Class::Layer(1)),
-    // file formats (planned): MSPDI XML, Primavera XER
-    ("mspdi", Class::Layer(2)),
-    ("xer", Class::Layer(2)),
+    // other programs' files: Microsoft Project XML (MSPDI) now; CSV and XER later
+    ("interchange", Class::Layer(2)),
     ("engine", Class::Layer(4)),
     ("mcp", Class::Layer(5)),
     ("ui-egui", Class::Layer(6)),
@@ -252,9 +251,12 @@ mod tests {
     }
 
     #[test]
-    fn sideways_dependency_flagged() {
-        let v = check(&[c("projectcraft-mspdi", &[("projectcraft-xer", Normal, true)])]);
-        assert!(matches!(v[..], [Violation::Upward { from: 2, to: 2, .. }]));
+    fn interchange_sits_on_the_model_below_the_engine() {
+        assert!(check(&[c("projectcraft-interchange", &[("projectcraft-model", Normal, true), ("quick-xml", Normal, false)])]).is_empty());
+        assert!(check(&[c("projectcraft-engine", &[("projectcraft-interchange", Normal, true)])]).is_empty());
+        let v = check(&[c("projectcraft-interchange", &[("projectcraft-engine", Normal, true)])]);
+        assert!(matches!(v[..], [Violation::Upward { from: 2, to: 4, .. }]));
+        assert!(!check(&[c("projectcraft-interchange", &[("egui", Normal, false)])]).is_empty());
     }
 
     #[test]

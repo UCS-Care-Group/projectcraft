@@ -1,4 +1,6 @@
-//! Open, Save, Save As, the recent-files list and the unsaved-changes prompt.
+//! Open, Save, Save As, the recent-files list and the unsaved-changes prompt. Open also imports
+//! Microsoft Project XML (`.xml`) as a new, untitled project, then shows the import report; Save
+//! never writes the `.xml`, it asks for a `.projectcraft` name.
 //!
 //! The UI never shows a native dialog itself: it asks for one with a [`FileRequest`] that the
 //! desktop shell takes ([`App::take_file_request`]), shows with `rfd`, and answers through
@@ -16,6 +18,13 @@ use crate::{App, Selection, i18n};
 pub const MAX_RECENT: usize = 10;
 /// The extension of a ProjectCraft project.
 pub const EXTENSION: &str = "projectcraft";
+/// The extension of Microsoft Project XML, which Open imports.
+pub const IMPORT_EXTENSION: &str = "xml";
+
+/// Whether Open imports `path` (Microsoft Project XML) rather than opening it as a project.
+pub fn is_import(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(IMPORT_EXTENSION))
+}
 
 /// A native dialog the UI wants shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,9 +73,10 @@ pub fn recent_text(list: &[PathBuf]) -> String {
 }
 
 impl App {
-    /// True when the project differs from what was last opened or saved.
+    /// True when the project differs from what was last opened or saved, or was imported and
+    /// not saved yet.
     pub fn is_dirty(&self) -> bool {
-        self.session.project != self.saved
+        self.unsaved_import || self.session.project != self.saved
     }
 
     /// The dialog the UI is waiting for, if any; the shell shows it and calls [`App::file_picked`].
@@ -92,6 +102,14 @@ impl App {
     pub fn file_picked(&mut self, request: FileRequest, path: Option<PathBuf>) {
         match (request, path) {
             (FileRequest::Open, Some(p)) => self.open_path(&p),
+            (FileRequest::SaveAs, Some(p)) if is_import(&p) => {
+                // Never write a project over (or as) Microsoft Project XML.
+                self.after_save = None;
+                self.status = i18n::fmt(
+                    tl!("Couldn't save: {path} is a Microsoft Project XML name; ProjectCraft saves .projectcraft files"),
+                    &[("path", &p.display().to_string())],
+                );
+            }
             (FileRequest::SaveAs, Some(p)) => {
                 let p = with_extension(p);
                 if self.save_to(&p) {
@@ -105,9 +123,14 @@ impl App {
         }
     }
 
-    /// Opens `path` in place of the current project. A file that can't be read, or that a newer
-    /// ProjectCraft wrote, leaves the current project as it was and says why.
+    /// Opens `path` in place of the current project, or imports it when it is Microsoft Project
+    /// XML ([`App::import_path`]). A file that can't be read, or that a newer ProjectCraft wrote,
+    /// leaves the current project as it was and says why.
     pub fn open_path(&mut self, path: &Path) {
+        if is_import(path) {
+            self.import_path(path);
+            return;
+        }
         match Session::open(path) {
             Ok(session) => {
                 // The project being left was saved or its changes dropped: its recovery copy goes.
@@ -118,6 +141,8 @@ impl App {
                 self.editing = None;
                 self.sel = Selection::default();
                 self.resources = crate::resource_sheet::ResourceSheet::default();
+                self.unsaved_import = false;
+                self.import_report = None;
                 self.status = i18n::fmt(tl!("Opened {path}"), &[("path", &path.display().to_string())]);
                 if let Some(notice) = crate::calendar_notice(&self.session.project) {
                     self.status = format!("{} · {notice}", self.status);
@@ -137,11 +162,45 @@ impl App {
         }
     }
 
+    /// Imports `path` (Microsoft Project XML) as a new, untitled project in place of the current
+    /// one, scheduled by ProjectCraft, and shows the import report. The file itself is never
+    /// written: Save asks for a `.projectcraft` name. One that can't be imported leaves the current
+    /// project as it was and says why.
+    pub fn import_path(&mut self, path: &Path) {
+        match Session::import_file(path, None) {
+            Ok(session) => {
+                self.drop_recovery();
+                self.saved = session.project.clone();
+                self.import_report = session.import_report().cloned().map(|r| (crate::import_report::file_name(path), r));
+                self.session = session;
+                self.path = None;
+                self.unsaved_import = true;
+                self.editing = None;
+                self.sel = Selection::default();
+                self.resources = crate::resource_sheet::ResourceSheet::default();
+                self.status = i18n::fmt(
+                    tl!("Imported {path} as a new project; Save keeps it as a ProjectCraft project"),
+                    &[("path", &path.display().to_string())],
+                );
+                push_recent(&mut self.recent, path);
+                self.recent_changed = true;
+            }
+            Err(e) => {
+                self.status = i18n::fmt(tl!("Couldn't import: {error}"), &[("error", &e.to_string())]);
+                if !path.exists() && self.recent.iter().any(|p| p == path) {
+                    self.recent.retain(|p| p != path);
+                    self.recent_changed = true;
+                }
+            }
+        }
+    }
+
     /// Writes the project to `path` (atomically) and marks it clean. Undo history is kept: saving,
     /// manual or auto, never clears it. A clean save deletes the recovery copy.
     pub(crate) fn write_file(&mut self, path: &Path) -> Result<(), projectcraft_engine::CmdError> {
         self.session.save_to(path)?;
         self.saved = self.session.project.clone();
+        self.unsaved_import = false;
         push_recent(&mut self.recent, path);
         self.recent_changed = true;
         self.drop_recovery();
@@ -309,7 +368,7 @@ impl App {
 
     /// Ctrl+O, Ctrl+S, Ctrl+Shift+S (Cmd on macOS). Ignored while the prompt is open.
     pub(crate) fn file_keys(&mut self, ctx: &egui::Context) {
-        if self.prompt.is_some() || self.recovery_offered() || self.browser.is_some() {
+        if self.prompt.is_some() || self.recovery_offered() || self.browser.is_some() || self.import_report.is_some() {
             return;
         }
         // Save As first: Ctrl+S would match Ctrl+Shift+S too.

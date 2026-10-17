@@ -19,7 +19,7 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
 
 use eframe::egui;
-use projectcraft_ui_egui::{App, EXTENSION, FileRequest};
+use projectcraft_ui_egui::{App, EXTENSION, FileRequest, IMPORT_EXTENSION};
 
 /// A dialog's answer: the chosen path (`None` when cancelled), or no system dialog to show.
 pub enum Answer {
@@ -54,7 +54,15 @@ impl Dialogs {
     }
 
     pub fn show(&mut self, request: FileRequest, app: &App, parent: &eframe::Frame, ctx: &egui::Context) {
-        let mut dialog = rfd::AsyncFileDialog::new().set_parent(parent).add_filter("ProjectCraft project", &[EXTENSION]);
+        let mut dialog = rfd::AsyncFileDialog::new().set_parent(parent);
+        // Open also takes Microsoft Project XML, which it imports as a new project.
+        dialog = match request {
+            FileRequest::Open => dialog
+                .add_filter("ProjectCraft project or Microsoft Project XML", &[EXTENSION, IMPORT_EXTENSION])
+                .add_filter("ProjectCraft project", &[EXTENSION])
+                .add_filter("Microsoft Project XML", &[IMPORT_EXTENSION]),
+            FileRequest::SaveAs => dialog.add_filter("ProjectCraft project", &[EXTENSION]),
+        };
         if let Some(dir) = app.path.as_deref().and_then(Path::parent).filter(|d| d.is_dir()) {
             dialog = dialog.set_directory(dir);
         }

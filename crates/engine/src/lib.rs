@@ -7,12 +7,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod file;
+mod import;
 
 use std::cell::OnceCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use serde_json::{Value, json};
 
+pub use projectcraft_interchange as interchange;
 pub use projectcraft_model as model;
 pub use projectcraft_time as time;
 
@@ -73,6 +75,8 @@ pub struct Session {
     /// Each work resource's usage over the schedule, worked out when first asked for after a
     /// change ([`Session::usage`]).
     usage: OnceCell<Result<Usage, ModelError>>,
+    /// What the import that made this project converted or dropped ([`Session::import_report`]).
+    import_report: Option<interchange::ImportReport>,
     undo: Vec<Project>,
     redo: Vec<Project>,
 }
@@ -83,7 +87,7 @@ const UNDO_DEPTH: usize = 200;
 impl Session {
     pub fn new(project: Project) -> Self {
         let schedule = model::schedule(&project);
-        let mut s = Session { project, schedule, usage: OnceCell::new(), undo: Vec::new(), redo: Vec::new() };
+        let mut s = Session { project, schedule, usage: OnceCell::new(), import_report: None, undo: Vec::new(), redo: Vec::new() };
         s.reschedule();
         s
     }
@@ -128,6 +132,7 @@ impl Session {
         match id {
             "edit.undo" => return self.step(true),
             "edit.redo" => return self.step(false),
+            "file.import" => return self.import_command(params),
             _ => {}
         }
         let before = self.project.clone();
@@ -1161,9 +1166,25 @@ const COMMANDS: &[CommandSpec] = &[
             Ok(())
         },
     },
-    // Undo and redo are handled by `Session::run`; they're here for their metadata.
+    // Undo, redo and import are handled by `Session::run`; they're here for their metadata.
     CommandSpec { id: "edit.undo", label: "Undo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
     CommandSpec { id: "edit.redo", label: "Redo", effect: Effect::Edit, schema: no_params, run: |_, _| Ok(()) },
+    CommandSpec {
+        id: "file.import",
+        label: "Import",
+        effect: Effect::File,
+        schema: || {
+            let formats: Vec<&str> = interchange::Format::ALL.iter().map(|f| f.code()).collect();
+            object(
+                json!({
+                    "format": {"type": "string", "enum": formats, "description": "mspdi: Microsoft Project XML"},
+                    "path": {"type": "string", "description": "the file to import; it becomes a new, untitled project in place of the open one (never merged into it), with an import report"},
+                }),
+                &["format", "path"],
+            )
+        },
+        run: |_, _| Ok(()),
+    },
 ];
 
 /// A small invented project to try things on.
@@ -1624,6 +1645,7 @@ mod tests {
     fn valid_from(schema: &Value) -> serde_json::Map<String, Value> {
         let props = schema["properties"].as_object().cloned().unwrap_or_default();
         let good = |p: &Value| match p["type"].as_str() {
+            _ if p["enum"].is_array() && p["enum"][1].is_null() => p["enum"][0].clone(),
             _ if p["enum"].is_array() => p["enum"][1].clone(),
             Some("integer") | Some("number") => p["minimum"].clone(),
             Some("string") if p["format"] == "date" => json!("2026-11-02"),
@@ -1670,6 +1692,9 @@ mod tests {
             "assignment.setUnits" => vec![json!({"task": 1, "resource": 1, "units": "50%"}), json!({"tasks": [2, 5], "resource": 2, "units": "25%"})],
             "assignment.remove" => vec![json!({"task": 1, "resource": 1}), json!({"tasks": [1, 2, 3], "resource": 1})],
             "task.setResourceNames" => vec![json!({"id": 4, "text": "Priya Shah[50%], Packing boxes[2 boxes/d], Travel[£20], New person"})],
+            "file.import" => {
+                vec![json!({"format": "mspdi", "path": concat!(env!("CARGO_MANIFEST_DIR"), "/../interchange/tests/fixtures/garden-studio.xml")})]
+            }
             _ => vec![],
         };
         if picked.is_empty() { vec![Value::Object(valid_from(&(c.schema)()))] } else { picked }
