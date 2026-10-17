@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (Microsoft Project XML links) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (Microsoft Project XML resources and costs) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -62,7 +62,13 @@ have produced.
   Links are capped at 1,000,000 a file (the rest counted and reported), lags clamped to
   `MAX_MINUTES` with every conversion done in 128-bit arithmetic, and links that would close a
   loop dropped as for CSV; the report lines comparing the file's dates with ProjectCraft's stop
-  at 1,000, then one line for the rest.
+  at 1,000, then one line for the rest. Resources are capped at `MAX_RESOURCES` and assignments
+  at `MAX_TASK_ASSIGNMENTS` a task and `MAX_ASSIGNMENTS` a file (the rest counted and reported);
+  amounts, units and quantities are read as exact decimals (no floating point, 128-bit
+  arithmetic, saturating) and clamped to the model's limits (`MAX_MONEY`, `MAX_UNITS`,
+  `MAX_QUANTITY`, `MAX_WORK`); resource calendars' recurring exceptions share one budget of
+  steps, and the exception days given to resources one cap, so a calendar shared by many
+  resources can't multiply.
 - **CSV** (`crates/interchange/src/csv.rs`, a reader of its own, no new dependency): a file over
   100 MB is refused, and so is one that isn't UTF-8 (a BOM is allowed); records are read one at a
   time, so a file of blank lines or separators holds no more than one row; columns are capped at
@@ -74,7 +80,8 @@ have produced.
 - **An import never touches the open project:** it makes a new, untitled one, and Save never
   writes over the imported file (it asks for a `.projectcraft` name, and refuses an `.xml` or `.csv` one).
 - Tests: billion laughs and depth bombs refused fast, arbitrary bytes and damaged files never
-  panic (`crates/interchange/tests/mspdi.rs`, `crates/interchange/tests/csv.rs`), and `file.import` is in
+  panic (`crates/interchange/tests/mspdi.rs`, `crates/interchange/tests/mspdi_resources.rs`,
+  `crates/interchange/tests/csv.rs`), and `file.import` is in
   `hostile_params_never_panic`.
 
 ### Hostile command parameters
@@ -188,3 +195,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 | 2026-10-17 | minor | Microsoft Project XML import: DTDs and entities refused, 100 MB and depth 64 caps, imports validated as project files, never written back (#97) |
 | 2026-10-17 | minor | CSV import: own RFC 4180 reader, records streamed, 1,000-column cap, loops of links dropped in bounded time (#103) |
 | 2026-10-17 | minor | Microsoft Project XML links: 1,000,000-link cap, lags clamped, loops dropped, date-comparison lines bounded (#98) |
+| 2026-10-17 | minor | Microsoft Project XML resources and costs: resource and assignment caps, exact decimal money and units clamped to the model, one exception budget for resource calendars (#101) |

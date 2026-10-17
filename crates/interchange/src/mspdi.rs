@@ -7,8 +7,10 @@
 //! `WorkingTimes`) and its exceptions (each `Exception`, recurring ones worked out to their days,
 //! with its own working times; or, in older files, `DayType` 0 weekdays), and each task's name,
 //! outline level and duration (in the unit its `DurationFormat` gives), constraint, deadline, task
-//! type and effort-driven setting ([`fields`]). Other base calendars and
-//! task calendars are dropped, a report line each. The project summary task (UID 0) is skipped:
+//! type, effort-driven setting and fixed cost ([`fields`]); the currency (`CurrencyCode`,
+//! `CurrencySymbol`, `CurrencyDigits`); and the resources, their calendars, the assignments and
+//! their costs ([`resources`]). Other base calendars and task calendars are dropped, a report
+//! line each. The project summary task (UID 0) is skipped:
 //! ProjectCraft rolls the project up itself. Everything else that the file holds and the project
 //! can't is a report line.
 //!
@@ -16,17 +18,19 @@
 //! (`PT16H0M0S` is two 8-hour days). A day component (`P1D`) is 24 hours, as `xs:duration` has
 //! it; years and months are refused as unreadable, having no fixed length.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::model::{
-    self, Calendar, Constraint, DEFAULT_CURRENCY_CODE, Date, DurationUnit, MAX_MINUTES, MAX_OUTLINE_LEVEL, MAX_TASKS, MINUTES_IN_DAY, Options,
-    Outline, Project, Task, TaskId, TaskType, WorkingTime,
+    self, Calendar, Constraint, Currency, DEFAULT_CURRENCY_CODE, Date, DurationUnit, MAX_CURRENCY_DIGITS, MAX_MINUTES, MAX_OUTLINE_LEVEL, MAX_TASKS,
+    MINUTES_IN_DAY, Options, Outline, Project, ResourceCalendar, Task, TaskId, TaskType, WorkingTime,
 };
 use crate::mspdi_links::{self, FileRow};
 use crate::xml::{self, Visitor};
 use crate::{Format, Import, ImportError, ImportReport, Outcome, ReportLine};
 
 mod fields;
+mod number;
+mod resources;
 
 /// The MSPDI namespace Microsoft Project writes on its root `Project` element.
 pub(crate) const NAMESPACE: &str = "http://schemas.microsoft.com/project";
@@ -78,7 +82,6 @@ enum Note {
     Outline,
     Manual,
     Recurring,
-    FixedCost,
     Progress,
     Baseline,
     Notes,
@@ -92,7 +95,7 @@ enum Note {
 }
 
 impl Note {
-    const ALL: [Note; 20] = [
+    const ALL: [Note; 19] = [
         Note::NoDuration,
         Note::BadDuration,
         Note::NegativeDuration,
@@ -102,7 +105,6 @@ impl Note {
         Note::Outline,
         Note::Manual,
         Note::Recurring,
-        Note::FixedCost,
         Note::Progress,
         Note::Baseline,
         Note::Notes,
@@ -138,7 +140,6 @@ impl Note {
             Note::Recurring => {
                 (Dropped, "Recurring task", "the recurrence is dropped; its occurrences are imported as ordinary tasks under a summary task")
             }
-            Note::FixedCost => (NotYetImported, "Fixed cost", "costs come in a later version"),
             Note::Progress => (Dropped, "Progress (actuals, % complete)", "tracking comes in a later version"),
             Note::Baseline => (Dropped, "Baselines", "baselines come in a later version"),
             Note::Notes => (Dropped, "Notes", "ProjectCraft doesn't hold task notes yet"),
@@ -217,6 +218,8 @@ struct FileCalendar {
     uid: Option<i64>,
     name: Option<String>,
     base: bool,
+    /// `BaseCalendarUID`: the base calendar a resource calendar is based on.
+    base_uid: Option<i64>,
     week: Vec<FileWeekDay>,
     /// The `Exceptions` collection, in file order.
     exceptions: Vec<FileException>,
@@ -245,6 +248,8 @@ struct Fields {
     days_per_month: Option<i64>,
     from_finish: bool,
     currency: Option<String>,
+    currency_symbol: Option<String>,
+    currency_digits: Option<i64>,
     /// The type and effort-driven setting new tasks get ([`fields`]).
     defaults: fields::ProjectDefaults,
     /// `WeekStartDay`: 0 Sunday … 6 Saturday.
@@ -265,10 +270,8 @@ struct FileProject {
     /// Exceptions held across every calendar, against [`MAX_STORED_EXCEPTIONS`].
     stored_exceptions: usize,
     time: Option<(String, String)>,
-    resources: usize,
-    resource_uid: Option<i64>,
-    assignments: usize,
-    assignment_resource: Option<i64>,
+    /// The resources and assignments ([`resources`]).
+    res: resources::Reader,
     custom_fields: usize,
     outline_codes: usize,
     /// Links kept, and links past [`mspdi_links::MAX_FILE_LINKS`], only counted.
@@ -298,8 +301,6 @@ const EXCEPTION: &[&str] = &["Project", "Calendars", "Calendar", "Exceptions", "
 const EXCEPTION_PERIOD: &[&str] = &["Project", "Calendars", "Calendar", "Exceptions", "Exception", "TimePeriod"];
 const EXCEPTION_TIME: &[&str] = &["Project", "Calendars", "Calendar", "Exceptions", "Exception", "WorkingTimes", "WorkingTime"];
 const WORK_WEEK: &[&str] = &["Project", "Calendars", "Calendar", "WorkWeeks", "WorkWeek"];
-const RESOURCE: &[&str] = &["Project", "Resources", "Resource"];
-const ASSIGNMENT: &[&str] = &["Project", "Assignments", "Assignment"];
 
 fn int(text: &str) -> Option<i64> {
     text.trim().parse().ok()
@@ -327,6 +328,9 @@ fn text_field(text: &str) -> Option<String> {
 
 impl Visitor for FileProject {
     fn open(&mut self, path: &[String]) -> Result<(), ImportError> {
+        if self.res.open(path) {
+            return Ok(());
+        }
         if is(path, TASK) {
             self.task = Some(FileTask::default());
         } else if let (Some(name), Some(task)) = (child(path, TASK), self.task.as_mut()) {
@@ -357,10 +361,6 @@ impl Visitor for FileProject {
             if is(path, WORK_WEEK) {
                 cal.work_weeks = cal.work_weeks.saturating_add(1);
             }
-        } else if is(path, RESOURCE) {
-            self.resource_uid = None;
-        } else if is(path, ASSIGNMENT) {
-            self.assignment_resource = None;
         } else if child(path, &["Project", "ExtendedAttributes"]) == Some("ExtendedAttribute") {
             self.custom_fields = self.custom_fields.saturating_add(1);
         } else if child(path, &["Project", "OutlineCodes"]) == Some("OutlineCode") {
@@ -370,6 +370,9 @@ impl Visitor for FileProject {
     }
 
     fn close(&mut self, path: &[String], text: &str) -> Result<(), ImportError> {
+        if self.res.close(path, text) {
+            return Ok(());
+        }
         if is(path, TASK) {
             if let Some(t) = self.task.take() {
                 if self.tasks.len() >= MAX_TASKS.saturating_add(1) {
@@ -453,23 +456,10 @@ impl Visitor for FileProject {
                     "UID" => c.uid = int(text),
                     "Name" => c.name = text_field(text).map(|n| n.chars().take(40).collect()),
                     "IsBaseCalendar" => c.base = truthy(text),
+                    "BaseCalendarUID" => c.base_uid = int(text),
                     _ => {}
                 }
             }
-        } else if is(path, RESOURCE) {
-            // UID 0 is Project's own placeholder, not a resource.
-            if self.resource_uid != Some(0) {
-                self.resources = self.resources.saturating_add(1);
-            }
-        } else if child(path, RESOURCE) == Some("UID") {
-            self.resource_uid = int(text);
-        } else if is(path, ASSIGNMENT) {
-            // A task without resources has an assignment to resource -65535.
-            if !self.assignment_resource.is_some_and(|r| r < 0) {
-                self.assignments = self.assignments.saturating_add(1);
-            }
-        } else if child(path, ASSIGNMENT) == Some("ResourceUID") {
-            self.assignment_resource = int(text);
         } else if let Some(name) = child(path, &["Project"]) {
             self.project_field(name, text);
         }
@@ -522,10 +512,10 @@ impl FileProject {
         }
     }
 
-    /// Keeps a calendar read. A calendar known not to be the project calendar keeps no
-    /// exceptions: they are never imported.
+    /// Keeps a calendar read. A base calendar known not to be the project calendar keeps no
+    /// exceptions: they are never imported. A resource calendar keeps its own.
     fn close_calendar(&mut self, mut c: FileCalendar) {
-        if self.fields.calendar_uid.is_some() && c.uid != self.fields.calendar_uid {
+        if c.base && self.fields.calendar_uid.is_some() && c.uid != self.fields.calendar_uid {
             self.stored_exceptions = self.stored_exceptions.saturating_sub(c.stored());
             c.exceptions = Vec::new();
             c.old_exceptions = Vec::new();
@@ -548,7 +538,9 @@ impl FileProject {
             "MinutesPerWeek" => f.minutes_per_week = int(text),
             "DaysPerMonth" => f.days_per_month = int(text),
             "ScheduleFromStart" => f.from_finish = !truthy(text),
-            "CurrencyCode" => f.currency = text_field(text),
+            "CurrencyCode" => f.currency = text_field(text).map(|c| c.chars().take(20).collect()),
+            "CurrencySymbol" => f.currency_symbol = text_field(text).map(|c| c.chars().take(20).collect()),
+            "CurrencyDigits" => f.currency_digits = int(text),
             "WeekStartDay" => f.week_start = int(text),
             _ => {
                 f.defaults.read(name, text);
@@ -597,7 +589,6 @@ impl FileProject {
             "Manual" => truthy(text).then_some(Note::Manual),
             "Recurring" => truthy(text).then_some(Note::Recurring),
             "IsSubproject" => truthy(text).then_some(Note::Subproject),
-            "FixedCost" => nonzero(text).then_some(Note::FixedCost),
             "CalendarUID" => {
                 t.calendar = int(text).filter(|c| *c != -1);
                 None
@@ -639,25 +630,21 @@ impl FileProject {
                 "scheduled from the start date instead; scheduling from the finish comes later",
             ));
         }
-        if let Some(code) = f.currency.as_deref().filter(|c| !c.eq_ignore_ascii_case(DEFAULT_CURRENCY_CODE)) {
-            let code: String = code.chars().take(10).collect();
-            lines.push(line(
-                Outcome::NotYetImported,
-                "Currency",
-                &code,
-                "the currency comes with costs in a later version; the project is in pounds sterling",
-            ));
-        }
+        p.currency = currency(f, &mut lines);
         p.calendar = self.calendar(&mut lines);
-        let (tasks, task_lines, on, rows) = tasks(std::mem::take(&mut self.tasks), &p.options, p.start)?;
+        let (tasks, task_lines, on, rows) = tasks(std::mem::take(&mut self.tasks), &p.options, p.start, p.currency.digits)?;
         lines.extend(task_lines);
-        lines.extend(self.other_calendars(&tasks, &on));
+        let resource_calendars = self.res.calendar_uids();
+        lines.extend(self.other_calendars(&tasks, &on, &resource_calendars));
+        let built = self.resource_calendars(&resource_calendars, &p.calendar);
         let count = tasks.len();
         p.next_id = tasks.iter().map(|t| t.id.0).max().unwrap_or(0).saturating_add(1);
         p.tasks = tasks;
         lines.extend(self.collections());
         lines.extend(outline_lines(&mut p));
         lines.extend(mspdi_links::links(&mut p, &rows, self.links_overflow));
+        let uids: Vec<Option<i64>> = rows.iter().map(|r| r.uid).collect();
+        lines.extend(resources::apply(&mut p, std::mem::take(&mut self.res), &uids, &built));
         lines.extend(mspdi_links::date_lines(&p, &rows));
         lines.sort_by_key(|l| l.outcome);
         Ok(Import { project: p, report: ImportReport { format: Format::Mspdi, tasks: count, lines } })
@@ -692,14 +679,15 @@ impl FileProject {
         // Newer files write each exception twice, as an Exception and as a DayType 0 WeekDay.
         let each = if cal.exceptions.is_empty() { &cal.old_exceptions } else { &cal.exceptions };
         let week_start = self.fields.week_start.filter(|d| (0..7).contains(d)).unwrap_or(0);
-        lines.extend(exception_days(&mut c, each, cal.overflow, week_start));
+        let mut steps = 0u64;
+        lines.extend(exception_days(&mut c, each, cal.overflow, week_start, &mut steps));
         c
     }
 
     /// A line for each calendar other than the project calendar: a task calendar names the tasks
-    /// on it; a base calendar no task uses is dropped; resource calendars share a line.
-    /// `on` is each task's calendar, by row.
-    fn other_calendars(&self, tasks: &[Task], on: &[Option<i64>]) -> Vec<ReportLine> {
+    /// on it; a base calendar no task uses is dropped, and so is a resource calendar no resource
+    /// uses. `on` is each task's calendar, by row; `resources` the calendars resources name.
+    fn other_calendars(&self, tasks: &[Task], on: &[Option<i64>], resources: &BTreeSet<i64>) -> Vec<ReportLine> {
         let project = self.project_calendar();
         let project_uid = project.and_then(|i| self.calendars.get(i)).and_then(|c| c.uid);
         let label = |c: &FileCalendar| match c.uid {
@@ -728,41 +716,87 @@ impl FileProject {
         }
         let others =
             self.calendars.iter().enumerate().filter(|(i, c)| Some(*i) != project && !c.uid.is_some_and(|u| used.iter().any(|(x, _)| *x == u)));
-        let (mut base_lines, mut resources) = (Vec::new(), 0usize);
+        let (mut base_lines, mut unused) = (Vec::new(), Vec::new());
         for (_, c) in others {
             if c.base {
                 base_lines.push(line(Outcome::Dropped, "Base calendar", &label(c), "only the project calendar is imported; no task uses this one"));
-            } else {
-                resources += 1;
+            } else if !c.uid.is_some_and(|u| resources.contains(&u)) {
+                unused.push(line(Outcome::Dropped, "Resource calendars", &label(c), "no resource uses this calendar"));
             }
         }
         let mut out = capped(task_lines, "Task calendar");
         out.extend(capped(base_lines, "Base calendar"));
-        if resources > 0 {
-            out.push(line(
-                Outcome::NotYetImported,
-                "Resource calendars",
-                &plural(resources, "calendar"),
-                "resource calendars come with resources in a later version",
-            ));
+        out.extend(capped(unused, "Resource calendars"));
+        out
+    }
+
+    /// Each resource calendar the resources name, built on the project calendar `base`: its own
+    /// weekdays (and those of another base calendar it is based on), and its exceptions worked
+    /// out to their days. Exceptions are worked out against one budget of steps for the file.
+    fn resource_calendars(&self, wanted: &BTreeSet<i64>, base: &Calendar) -> BTreeMap<i64, resources::BuiltCalendar> {
+        let project = self.project_calendar().and_then(|i| self.calendars.get(i)).and_then(|c| c.uid);
+        let week_start = self.fields.week_start.filter(|d| (0..7).contains(d)).unwrap_or(0);
+        let mut steps = 0u64;
+        let mut out = BTreeMap::new();
+        // Base calendars by UID, the first of any repeated.
+        let mut bases: HashMap<i64, &FileCalendar> = HashMap::new();
+        for c in self.calendars.iter().filter(|c| c.base) {
+            if let Some(u) = c.uid {
+                bases.entry(u).or_insert(c);
+            }
+        }
+        for c in self.calendars.iter().filter(|c| !c.base && c.uid.is_some_and(|u| wanted.contains(&u))) {
+            let Some(uid) = c.uid else { continue };
+            if out.contains_key(&uid) {
+                continue;
+            }
+            let mut built = resources::BuiltCalendar::default();
+            let mut week: [Option<Vec<WorkingTime>>; 7] = Default::default();
+            // Another base calendar's own weekdays first, then the calendar's own on top.
+            let other = c.base_uid.filter(|b| *b >= 0 && Some(*b) != project).and_then(|b| bases.get(&b).copied());
+            built.other_base = other.is_some();
+            for (inherited, cal) in other.into_iter().map(|o| (true, o)).chain(std::iter::once((false, c))) {
+                for d in &cal.week {
+                    let Some(i) = weekday_index(d) else { continue };
+                    match (day_times(d), week.get_mut(i)) {
+                        (Some(times), Some(slot)) => *slot = Some(times),
+                        _ if !inherited => built.lines.push(line(
+                            Outcome::Converted,
+                            "Working times",
+                            WEEKDAY_NAMES.get(i).copied().unwrap_or("A weekday"),
+                            "unreadable, overlapping or out of order; the day follows the project calendar",
+                        )),
+                        _ => {}
+                    }
+                }
+            }
+            // A weekday the same as the project's follows it, so a later change there reaches it.
+            for (i, day) in week.iter_mut().enumerate() {
+                if day.as_deref().is_some_and(|t| t == base.weekday_times(i)) {
+                    *day = None;
+                }
+            }
+            if c.work_weeks > 0 {
+                built.lines.push(line(
+                    Outcome::NotYetImported,
+                    "Work weeks",
+                    &plural(c.work_weeks, "work week"),
+                    "work weeks come in a later version; the default week is used all year",
+                ));
+            }
+            let mut scratch = Calendar::default();
+            let each = if c.exceptions.is_empty() { &c.old_exceptions } else { &c.exceptions };
+            built.lines.extend(exception_days(&mut scratch, each, c.overflow, week_start, &mut steps));
+            let exceptions = scratch.exceptions.keys().map(|d| (*d, scratch.times_on(*d).to_vec())).collect();
+            built.calendar = ResourceCalendar { week, exceptions };
+            out.insert(uid, built);
         }
         out
     }
 
-    /// Resources, assignments and the project's custom field definitions, as report lines.
+    /// The project's custom field definitions, as report lines.
     fn collections(&self) -> Vec<ReportLine> {
         let mut out = Vec::new();
-        if self.resources > 0 {
-            out.push(line(Outcome::NotYetImported, "Resources", &plural(self.resources, "resource"), "resources come in a later version"));
-        }
-        if self.assignments > 0 {
-            out.push(line(
-                Outcome::NotYetImported,
-                "Assignments",
-                &plural(self.assignments, "assignment"),
-                "assignments come with resources in a later version",
-            ));
-        }
         if self.custom_fields > 0 {
             out.push(line(
                 Outcome::Dropped,
@@ -789,6 +823,41 @@ pub(crate) fn line(outcome: Outcome, feature: &str, place: &str, why: &str) -> R
 
 pub(crate) fn plural(n: usize, what: &str) -> String {
     if n == 1 { format!("1 {what}") } else { format!("{n} {what}s") }
+}
+
+/// The project's currency: the file's `CurrencyCode` with its `CurrencySymbol` and
+/// `CurrencyDigits` (<https://learn.microsoft.com/office-project/xml-data-interchange/currencydigits-element>),
+/// as far as they can be used; pounds sterling for a file without one.
+fn currency(f: &Fields, lines: &mut Vec<ReportLine>) -> Currency {
+    let mut report = |why: String| lines.push(line(Outcome::Converted, "Currency", "Project", &why));
+    let digits = match f.currency_digits {
+        None => None,
+        Some(d) => match u32::try_from(d).ok().filter(|d| *d <= MAX_CURRENCY_DIGITS) {
+            Some(d) => Some(d),
+            None => {
+                report(format!("{d} decimal places is more than a currency has; the currency's own are used"));
+                None
+            }
+        },
+    };
+    let symbol = f.currency_symbol.as_deref();
+    let code = match f.currency.as_deref() {
+        Some(code) => code,
+        None if symbol.is_none() && digits.is_none() => return Currency::default(),
+        None => {
+            report(format!("the file gives no currency code; {DEFAULT_CURRENCY_CODE} is used with the file's symbol and decimal places"));
+            DEFAULT_CURRENCY_CODE
+        }
+    };
+    if let Ok(c) = Currency::new(code, symbol, digits) {
+        return c;
+    }
+    if let Ok(c) = Currency::new(code, None, digits) {
+        report(format!("the symbol `{}` could be mistaken for part of an amount or is too long; {} used", symbol.unwrap_or(""), c.symbol));
+        return c;
+    }
+    report(format!("`{code}` isn't a currency code (three letters, such as GBP); the project is in pounds sterling"));
+    Currency::default()
 }
 
 /// Hours per day and week and days per month, when the file's are in range.
@@ -840,18 +909,8 @@ fn week(cal: &FileCalendar, lines: &mut Vec<ReportLine>) -> Calendar {
     let standard = Calendar::default();
     let mut times: [Vec<WorkingTime>; 7] = std::array::from_fn(|i| standard.weekday_times(i).to_vec());
     for d in &cal.week {
-        let Some(i) = d.day_type.filter(|t| (1..=7).contains(t)).map(|t| ((t + 5) % 7) as usize) else { continue };
-        let day: Option<Vec<WorkingTime>> = match d.working {
-            Some(false) => Some(Vec::new()),
-            _ if d.times.is_empty() => Some(model::DEFAULT_WORKING_TIMES.to_vec()),
-            _ => d
-                .times
-                .iter()
-                .map(|(from, to)| WorkingTime::new(clock(from, false)?, clock(to, true)?).ok())
-                .collect::<Option<Vec<_>>>()
-                .filter(|t| model::check_working_times(t).is_ok()),
-        };
-        match (day, times.get_mut(i)) {
+        let Some(i) = weekday_index(d) else { continue };
+        match (day_times(d), times.get_mut(i)) {
             (Some(day), Some(slot)) => *slot = day,
             _ => lines.push(line(
                 Outcome::Converted,
@@ -874,6 +933,26 @@ fn week(cal: &FileCalendar, lines: &mut Vec<ReportLine>) -> Calendar {
         }
     }
     c
+}
+
+/// A weekday's index, Monday first, from its `DayType` (1 Sunday … 7 Saturday).
+fn weekday_index(d: &FileWeekDay) -> Option<usize> {
+    d.day_type.filter(|t| (1..=7).contains(t)).and_then(|t| usize::try_from((t + 5) % 7).ok())
+}
+
+/// A weekday's working times (none: non-working), or `None` if unreadable. A working day with no
+/// times of its own has the default times.
+fn day_times(d: &FileWeekDay) -> Option<Vec<WorkingTime>> {
+    match d.working {
+        Some(false) => Some(Vec::new()),
+        _ if d.times.is_empty() => Some(model::DEFAULT_WORKING_TIMES.to_vec()),
+        _ => d
+            .times
+            .iter()
+            .map(|(from, to)| WorkingTime::new(clock(from, false)?, clock(to, true)?).ok())
+            .collect::<Option<Vec<_>>>()
+            .filter(|t| model::check_working_times(t).is_ok()),
+    }
 }
 
 /// Minutes in an `xs:duration` (`PT16H0M0S`, `-PT1H30M`, `P1DT2H`, `PT0.5S`), rounded to the
@@ -960,7 +1039,7 @@ type Tasks = (Vec<Task>, Vec<ReportLine>, Vec<Option<i64>>, Vec<FileRow>);
 
 /// The file's tasks as the project's, in the file's ID order. An elapsed duration is read as the
 /// same number of working units.
-fn tasks(file: Vec<FileTask>, options: &Options, start: Date) -> Result<Tasks, ImportError> {
+fn tasks(file: Vec<FileTask>, options: &Options, start: Date, digits: u32) -> Result<Tasks, ImportError> {
     let mut lines = Vec::new();
     let (mut summary, mut blank) = (false, 0usize);
     let mut kept: Vec<FileTask> = Vec::with_capacity(file.len());
@@ -1045,7 +1124,7 @@ fn tasks(file: Vec<FileTask>, options: &Options, start: Date) -> Result<Tasks, I
             task_type: TaskType::FixedUnits,
             effort_driven: false,
         };
-        field_notes.push(fields::apply(&t.fields, &mut task, start));
+        field_notes.push(fields::apply(&t.fields, &mut task, start, digits));
         out.push(task);
         notes.push(t.notes);
         on.push(t.calendar);
@@ -1139,15 +1218,15 @@ enum Stop {
 
 /// Sets each exception's days on `c`, in file order (a later one wins on a shared day), with
 /// report lines for those dropped. `overflow` exceptions were never kept; `week_start` is the
-/// file's first day of the week (0 Sunday), for weekly exceptions every n weeks.
-fn exception_days(c: &mut Calendar, each: &[FileException], overflow: usize, week_start: i64) -> Vec<ReportLine> {
+/// file's first day of the week (0 Sunday), for weekly exceptions every n weeks; `steps` the days
+/// looked at so far, against [`MAX_EXCEPTION_STEPS`].
+fn exception_days(c: &mut Calendar, each: &[FileException], overflow: usize, week_start: i64, steps: &mut u64) -> Vec<ReportLine> {
     let mut lines = Vec::new();
-    let mut steps = 0u64;
     let mut unreadable = Vec::new();
     let mut unreadable_count = 0usize;
     let mut stopped = None;
     for (n, e) in each.iter().enumerate() {
-        match expand(c, e, week_start, &mut steps) {
+        match expand(c, e, week_start, steps) {
             Stop::Done => {}
             Stop::Unreadable => {
                 unreadable_count += 1;

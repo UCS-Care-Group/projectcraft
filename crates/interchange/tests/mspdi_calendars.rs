@@ -245,7 +245,7 @@ fn each_dropped_base_calendar_and_task_calendar_has_a_line() {
         [(Outcome::Dropped, "Weekend crew (UID 4): ID 2 B, ID 4 D".to_string()), (Outcome::Dropped, "UID 9, not in the file: ID 3 C".to_string())],
         "a task on the project calendar (UID 1) or none (-1) has no line"
     );
-    assert_eq!(got("Resource calendars"), [(Outcome::NotYetImported, "1 calendar".to_string())]);
+    assert_eq!(got("Resource calendars"), [(Outcome::Dropped, "Rhiannon Price (UID 3)".to_string())], "no resource uses it");
     assert!(lines(&i, "Task calendar").iter().all(|l| l.why.contains("project calendar")));
 }
 

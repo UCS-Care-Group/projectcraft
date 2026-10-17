@@ -2,7 +2,8 @@
 //! (<https://learn.microsoft.com/office-project/xml-data-interchange/constrainttype-element>) with
 //! its date, its deadline, its task type
 //! (<https://learn.microsoft.com/office-project/xml-data-interchange/type-element-multiple-parents>)
-//! and whether it is effort-driven; and the project's defaults for new tasks
+//! whether it is effort-driven and its fixed cost (a decimal amount of the project currency, read
+//! exactly into minor units); and the project's defaults for new tasks
 //! (<https://learn.microsoft.com/office-project/xml-data-interchange/defaulttasktype-element>).
 //!
 //! `ConstraintType` codes: 0 As Soon As Possible, 1 As Late As Possible, 2 Must Start On, 3 Must
@@ -15,8 +16,10 @@
 //! Every file is hostile: an unknown code, a missing or unreadable date, and a date further than
 //! [`MAX_DAYS`] days from the project start are each a report line, never an error.
 
-use crate::model::{Constraint, Date, MAX_DAYS, Options, Task, TaskType};
+use crate::model::{Constraint, Date, MAX_DAYS, MAX_MONEY, Options, Task, TaskType};
 use crate::{Outcome, ReportLine};
+
+use super::number::{self, Read};
 
 use super::{date_of, int, line, rows_named, truthy};
 
@@ -30,6 +33,8 @@ pub(super) struct TaskFields {
     effort_driven: Option<bool>,
     stop: Option<String>,
     resume: Option<String>,
+    fixed_cost: Option<String>,
+    fixed_cost_accrual: Option<String>,
 }
 
 /// Longest text kept of a field; a date or a code is far shorter.
@@ -51,6 +56,8 @@ impl TaskFields {
             "EffortDriven" => self.effort_driven = Some(truthy(text)),
             "Stop" => self.stop = kept(text),
             "Resume" => self.resume = kept(text),
+            "FixedCost" => self.fixed_cost = kept(text),
+            "FixedCostAccrual" => self.fixed_cost_accrual = kept(text),
             _ => return false,
         }
         true
@@ -70,10 +77,13 @@ enum Note {
     UnknownTaskType,
     FixedWorkEffortDriven,
     Split,
+    FixedCost,
+    FixedCostRounded,
+    FixedCostAccrual,
 }
 
 impl Note {
-    const ALL: [Note; 9] = [
+    const ALL: [Note; 12] = [
         Note::Alap,
         Note::UnknownConstraint,
         Note::NoConstraintDate,
@@ -83,6 +93,9 @@ impl Note {
         Note::UnknownTaskType,
         Note::FixedWorkEffortDriven,
         Note::Split,
+        Note::FixedCost,
+        Note::FixedCostRounded,
+        Note::FixedCostAccrual,
     ];
 
     fn bit(self) -> u32 {
@@ -108,6 +121,17 @@ impl Note {
             Note::Split => {
                 (Dropped, "Split (Stop, Resume)", "work stops on one date and resumes on a later one; ProjectCraft schedules each task in one piece")
             }
+            Note::FixedCost => {
+                (Converted, "Fixed cost", "negative, unreadable or larger than ProjectCraft holds; 0 or the largest amount (ten billion) used")
+            }
+            Note::FixedCostRounded => {
+                (Converted, "Amounts finer than the currency", "rounded half to even to the currency's smallest unit (the penny for pounds)")
+            }
+            Note::FixedCostAccrual => (
+                Dropped,
+                "Fixed cost accrual",
+                "accrued at the start or end; ProjectCraft holds when costs accrue for tracking, which comes later, and keeps the fixed cost",
+            ),
         }
     }
 }
@@ -121,9 +145,10 @@ fn near(d: Date, start: Date) -> (Date, bool) {
     (start.add_days(MAX_DAYS * away.signum()).unwrap_or(d), true)
 }
 
-/// Sets the task's constraint, deadline, type and effort-driven flag from the file's fields;
-/// the report notes about them, as bits.
-pub(super) fn apply(f: &TaskFields, t: &mut Task, start: Date) -> u32 {
+/// Sets the task's constraint, deadline, type, effort-driven flag and fixed cost (in minor units
+/// of a currency with `digits` decimal places) from the file's fields; the report notes about
+/// them, as bits.
+pub(super) fn apply(f: &TaskFields, t: &mut Task, start: Date, digits: u32) -> u32 {
     let mut notes = 0u32;
     let mut note = |n: Note| notes |= n.bit();
     t.constraint = match f.constraint_type.as_deref().map(int) {
@@ -194,6 +219,20 @@ pub(super) fn apply(f: &TaskFields, t: &mut Task, start: Date) -> u32 {
         && r > s
     {
         note(Note::Split);
+    }
+    if let Some(text) = f.fixed_cost.as_deref() {
+        let (minor, read) = number::within(text, digits, MAX_MONEY, 0);
+        match read {
+            Read::Exact => {}
+            Read::Rounded => note(Note::FixedCostRounded),
+            Read::OutOfRange => note(Note::FixedCost),
+        }
+        t.fixed_cost = minor;
+    }
+    // 1 start, 2 end, 3 prorated (Project's default); only of a task with a fixed cost.
+    let has_cost = f.fixed_cost.as_deref().and_then(|t| number::scaled(t, digits)).is_some_and(|(v, _)| v != 0);
+    if has_cost && f.fixed_cost_accrual.as_deref().map(int).is_some_and(|a| matches!(a, Some(1 | 2))) {
+        note(Note::FixedCostAccrual);
     }
     notes
 }

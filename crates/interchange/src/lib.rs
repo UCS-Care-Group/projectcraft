@@ -11,8 +11,8 @@
 //! file's own Start and Finish dates are only compared: each task whose dates differ is a line.
 //!
 //! Every file is hostile: DTDs and entities are refused, the file is capped at
-//! [`MAX_IMPORT_BYTES`] and its nesting at [`MAX_DEPTH`], and the model's caps (tasks) and clamps
-//! (durations, lags) apply.
+//! [`MAX_IMPORT_BYTES`] and its nesting at [`MAX_DEPTH`], and the model's caps (tasks, resources,
+//! assignments) and clamps (durations, lags, units, work, money) apply.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod csv;
