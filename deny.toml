@@ -17,7 +17,15 @@ version = 2
 db-urls = ["https://github.com/rustsec/advisory-db"]
 unmaintained = "all"
 yanked = "warn"
-ignore = []
+ignore = [
+    # 2026-10-17: zbus_names, zvariant and zvariant_derive are unmaintained as standalone crates
+    # (merged into zbus 6). They come only through eframe → egui-winit → accesskit_winit →
+    # accesskit_unix → zbus 5 (Linux screen-reader support); no vulnerability. Drop these once
+    # accesskit moves to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "unmaintained, via eframe's accesskit_unix (zbus 5); no fix upstream yet" },
+    { id = "RUSTSEC-2026-0371", reason = "unmaintained, via eframe's accesskit_unix (zbus 5); no fix upstream yet" },
+    { id = "RUSTSEC-2026-0372", reason = "unmaintained, via eframe's accesskit_unix (zbus 5); no fix upstream yet" },
+]
 
 [licenses]
 version = 2
