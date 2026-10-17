@@ -7,6 +7,7 @@
 mod assignment;
 mod cost;
 mod duration;
+mod level;
 mod outline;
 mod resource;
 mod resource_calendar;
@@ -28,6 +29,7 @@ pub use assignment::{
 };
 pub use cost::{Currency, DEFAULT_CURRENCY_CODE, KNOWN_CURRENCIES, MAX_CURRENCY_DIGITS, MAX_CURRENCY_SYMBOL, assignment_cost, div_half_even};
 pub use duration::{DurationUnit, duration_text, lag_text, parse_duration, parse_lag, parse_work};
+pub use level::{DEFAULT_PRIORITY, LevelReport, MAX_LEVEL_ROUNDS, MAX_PRIORITY, check_priority, level};
 pub use outline::{CIRCULAR_OUTLINE, MAX_OUTLINE_LEVEL, Outline};
 pub use projectcraft_time::Date;
 pub use resource::{
@@ -223,6 +225,25 @@ pub struct Task {
     /// Always on for Fixed Work. A file without it has it off.
     #[serde(default, skip_serializing_if = "is_false")]
     pub effort_driven: bool,
+    /// How much levelling may move it, as Microsoft Project's Priority field: 0 to
+    /// [`MAX_PRIORITY`]; a lower priority is delayed first, and [`MAX_PRIORITY`] is never
+    /// delayed. A file without one has [`DEFAULT_PRIORITY`].
+    #[serde(default = "default_priority", skip_serializing_if = "is_default_priority")]
+    pub priority: u32,
+    /// Working minutes of the project calendar its start is put off by, after its links and
+    /// constraint, as Microsoft Project's Leveling Delay field: set by levelling ([`level`]) or
+    /// typed, cleared by Clear Leveling. The scheduler adds it, so dates still come only from
+    /// [`schedule`]. A file without one has none.
+    #[serde(default, skip_serializing_if = "is_no_cost")]
+    pub leveling_delay: i64,
+}
+
+fn default_priority() -> u32 {
+    DEFAULT_PRIORITY
+}
+
+fn is_default_priority(n: &u32) -> bool {
+    *n == DEFAULT_PRIORITY
 }
 
 fn is_no_cost(n: &i64) -> bool {

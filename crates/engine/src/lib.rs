@@ -77,6 +77,8 @@ pub struct Session {
     usage: OnceCell<Result<Usage, ModelError>>,
     /// What the import that made this project converted or dropped ([`Session::import_report`]).
     import_report: Option<interchange::ImportReport>,
+    /// What the last Level All did ([`Session::level_report`]).
+    level_report: Option<model::LevelReport>,
     undo: Vec<Project>,
     redo: Vec<Project>,
 }
@@ -87,7 +89,8 @@ const UNDO_DEPTH: usize = 200;
 impl Session {
     pub fn new(project: Project) -> Self {
         let schedule = model::schedule(&project);
-        let mut s = Session { project, schedule, usage: OnceCell::new(), import_report: None, undo: Vec::new(), redo: Vec::new() };
+        let mut s =
+            Session { project, schedule, usage: OnceCell::new(), import_report: None, level_report: None, undo: Vec::new(), redo: Vec::new() };
         s.reschedule();
         s
     }
@@ -133,11 +136,31 @@ impl Session {
             "edit.undo" => return self.step(true),
             "edit.redo" => return self.step(false),
             "file.import" => return self.import_command(params),
+            "project.level" => {
+                let mut report = None;
+                self.apply(id, |p| {
+                    report = Some(p.level()?);
+                    Ok(())
+                })?;
+                self.level_report = report;
+                return Ok(());
+            }
             _ => {}
         }
+        self.apply(id, |p| (spec.run)(p, params))
+    }
+
+    /// What the last Level All did ([`model::LevelReport`]), until the next one.
+    pub fn level_report(&self) -> Option<&model::LevelReport> {
+        self.level_report.as_ref()
+    }
+
+    /// Runs `edit` on the project as command `id`, then reschedules: one undo step when it
+    /// changed anything. On error, or if it panics, the project is left exactly as it was.
+    fn apply(&mut self, id: &str, edit: impl FnOnce(&mut Project) -> Result<(), CmdError>) -> Result<(), CmdError> {
         let before = self.project.clone();
         let result = catch_unwind(AssertUnwindSafe(|| {
-            (spec.run)(&mut self.project, params)?;
+            edit(&mut self.project)?;
             self.reschedule();
             Ok(())
         }))
@@ -663,6 +686,26 @@ const COMMANDS: &[CommandSpec] = &[
         },
     },
     CommandSpec {
+        id: "project.level",
+        label: "Level All",
+        effect: Effect::Edit,
+        schema: no_params,
+        run: |p, _| {
+            p.level()?;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "project.clearLeveling",
+        label: "Clear Leveling",
+        effect: Effect::Edit,
+        schema: no_params,
+        run: |p, _| {
+            p.clear_leveling();
+            Ok(())
+        },
+    },
+    CommandSpec {
         id: "task.add",
         label: "New Task",
         effect: Effect::Edit,
@@ -831,6 +874,55 @@ const COMMANDS: &[CommandSpec] = &[
                 None => None,
             };
             p.task_mut(id_param(v)?)?.deadline = date;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.setPriority",
+        label: "Priority",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "id": task_id(),
+                    "priority": {"type": "integer", "minimum": 0, "maximum": model::MAX_PRIORITY, "description": "how much levelling may move the task: a lower priority is delayed first; 1000 is never delayed. Default 500"},
+                }),
+                &["id", "priority"],
+            )
+        },
+        run: |p, v| {
+            let priority = model::check_priority(int_param(v, "priority")?)?;
+            p.task_mut(id_param(v)?)?.priority = priority;
+            Ok(())
+        },
+    },
+    CommandSpec {
+        id: "task.setLevelingDelay",
+        label: "Leveling Delay",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({
+                    "id": task_id(),
+                    "delay": {"type": ["integer", "string"], "minimum": 0, "maximum": model::MAX_DAYS, "description": "working time of the project calendar the task's start is put off by, after its links and constraint: whole days (2) or text with a unit (4h, 1.5d, 1w); 0 clears it. Level All sets it, Clear Leveling clears it"},
+                }),
+                &["id", "delay"],
+            )
+        },
+        run: |p, v| {
+            let id = id_param(v)?;
+            if p.is_summary(id) {
+                return Err(CmdError::Params("a summary task is never delayed itself; delay its subtasks".into()));
+            }
+            let (delay, _) = match v.get("delay") {
+                Some(Value::String(text)) => model::parse_duration(text, &p.options)?,
+                Some(n) => {
+                    let days = n.as_i64().ok_or_else(|| CmdError::Params("`delay` must be a whole number of days or text such as 4h".into()))?;
+                    (p.days_to_minutes(days)?, model::DurationUnit::Days)
+                }
+                None => return Err(CmdError::Params("`delay` is required".into())),
+            };
+            p.task_mut(id)?.leveling_delay = delay;
             Ok(())
         },
     },
@@ -1705,8 +1797,8 @@ mod tests {
 
     /// The sample with what some commands need to succeed: task 3 indented under task 2 (to
     /// outdent), a project holiday on Thursday 5 November and a day's leave for Priya Shah on
-    /// Wednesday 4 November (to remove), and Priya working Monday mornings only (to follow the
-    /// project calendar again).
+    /// Wednesday 4 November (to remove), Priya working Monday mornings only (to follow the
+    /// project calendar again), and a levelling delay on task 4 (to clear).
     fn hostile_base() -> Session {
         let mut s = sample();
         for (id, params) in [
@@ -1714,6 +1806,7 @@ mod tests {
             ("calendar.addException", json!({"date": "2026-11-05"})),
             ("calendar.addException", json!({"date": "2026-11-04", "resource": 1})),
             ("calendar.setWorkingTimes", json!({"weekday": "Mon", "times": ["8:00-12:00"], "resource": 1})),
+            ("task.setLevelingDelay", json!({"id": 4, "delay": "4h"})),
         ] {
             assert!(s.run(id, &params).is_ok(), "{id} {params}");
         }

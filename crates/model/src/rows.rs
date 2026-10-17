@@ -120,6 +120,8 @@ impl Project {
             fixed_cost: 0,
             task_type: self.options.task_type,
             effort_driven: self.options.effort_driven || self.options.task_type == TaskType::FixedWork,
+            priority: crate::DEFAULT_PRIORITY,
+            leveling_delay: 0,
         })
     }
 

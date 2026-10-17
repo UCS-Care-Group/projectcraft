@@ -111,6 +111,9 @@ pub enum Driver {
     /// The hold of a summary it sits in (by Unique ID): the summary whose own link or constraint
     /// allows no earlier start, the innermost when several tie.
     ParentSummary(TaskId),
+    /// Its levelling delay ([`crate::Task::leveling_delay`]) put it off from where its links and
+    /// constraint allow.
+    LevelingDelay,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -337,13 +340,19 @@ fn link_start(t: &Task, o: &Days, index: &HashMap<TaskId, usize>, es: &[i64], ef
 /// What a constraint makes of a start the links put at `start` (driven by `why`), for a task that
 /// starts at `back(f)` to finish at `f`: the start it is held at, its early start for slack, what
 /// drove it, and whether a link can't be honoured.
-fn constrain(o: &Days, c: Constraint, start: i64, why: Driver, back: &impl Fn(i64) -> i64) -> (i64, i64, Driver, bool) {
-    // Where the links (and a No Earlier Than date) put it; then what a hard constraint makes of it.
+///
+/// A levelling delay (`delay`, working minutes of the project calendar) puts the start off from
+/// there, before a No Later Than date caps it; Must Start/Finish On ignore it.
+fn constrain(o: &Days, c: Constraint, start: i64, why: Driver, back: &impl Fn(i64) -> i64, delay: i64) -> (i64, i64, Driver, bool) {
+    // Where the links (and a No Earlier Than date) put it, and any levelling delay; then what a
+    // hard constraint makes of it.
     let natural = match c {
         Constraint::StartNoEarlierThan(cd) => start.max(start_offset(o, cd)),
         Constraint::FinishNoEarlierThan(cd) => start.max(back(finish_offset(o, cd))),
         _ => start,
     };
+    let undelayed = natural;
+    let natural = if delay > 0 { o.lags.after(natural, delay.min(MAX_MINUTES), false) } else { natural };
     let must = matches!(c, Constraint::MustStartOn(_) | Constraint::MustFinishOn(_));
     let held = match c {
         Constraint::StartNoLaterThan(cd) => natural.min(start_offset(o, cd)),
@@ -353,7 +362,15 @@ fn constrain(o: &Days, c: Constraint, start: i64, why: Driver, back: &impl Fn(i6
         _ => natural,
     }
     .max(0);
-    let why = if natural > start || held != natural || must { Driver::Constraint } else { why };
+    let why = if held != natural || must {
+        Driver::Constraint
+    } else if natural > undelayed {
+        Driver::LevelingDelay
+    } else if undelayed > start {
+        Driver::Constraint
+    } else {
+        why
+    };
     // Must Start/Finish On set the early dates too (ES = CD); the No Later Than types leave them.
     let soft_early = if must { held } else { natural };
     (held, soft_early, why, start > held)
@@ -479,7 +496,7 @@ impl Pass<'_> {
             start = h;
             why = src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(self.id(u)));
         }
-        let (held, soft_early, why, conflict) = constrain(self.o, t.constraint, start, why, &back);
+        let (held, soft_early, why, conflict) = constrain(self.o, t.constraint, start, why, &back, t.leveling_delay);
         // On its resources' calendars it may start later than it is held (one on leave).
         let (es, ef) = crews.fwd(i, held).unwrap_or((held, held + d));
         let f = &mut self.f;

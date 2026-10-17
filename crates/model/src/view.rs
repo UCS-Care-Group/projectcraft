@@ -19,11 +19,31 @@ pub enum Column {
     Deadline,
     Type,
     EffortDriven,
+    Priority,
+    LevelingDelay,
 }
 
 impl Column {
     /// Every column, left to right as a new project shows them.
-    pub const ALL: [Column; 11] = [
+    pub const ALL: [Column; 13] = [
+        Column::Duration,
+        Column::Work,
+        Column::Start,
+        Column::Finish,
+        Column::Predecessors,
+        Column::ResourceNames,
+        Column::Cost,
+        Column::FixedCost,
+        Column::Deadline,
+        Column::Type,
+        Column::EffortDriven,
+        Column::Priority,
+        Column::LevelingDelay,
+    ];
+
+    /// The columns a new project shows: all but the levelling ones (Priority, Leveling Delay),
+    /// which Microsoft Project's Entry table doesn't show either.
+    pub const DEFAULT: [Column; 11] = [
         Column::Duration,
         Column::Work,
         Column::Start,
@@ -51,6 +71,8 @@ impl Column {
             Column::Deadline => "Deadline",
             Column::Type => "Type",
             Column::EffortDriven => "Effort Driven",
+            Column::Priority => "Priority",
+            Column::LevelingDelay => "Leveling Delay",
         }
     }
 
@@ -62,13 +84,14 @@ impl Column {
 }
 
 /// The task sheet's columns after ID and Task Name, left to right; each at most once. A file
-/// without them shows every column; a column name this version doesn't know is dropped on load.
+/// without them shows the default columns ([`Column::DEFAULT`]); a column name this version
+/// doesn't know is dropped on load.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Columns(Vec<Column>);
 
 impl Default for Columns {
     fn default() -> Self {
-        Columns(Column::ALL.to_vec())
+        Columns(Column::DEFAULT.to_vec())
     }
 }
 
@@ -129,6 +152,11 @@ impl Columns {
 
     pub fn is_default(&self) -> bool {
         *self == Columns::default()
+    }
+
+    /// Every column, in the usual order.
+    pub fn all() -> Columns {
+        Columns(Column::ALL.to_vec())
     }
 
     /// These columns with `c` shown or hidden. A column shown again goes back after the shown

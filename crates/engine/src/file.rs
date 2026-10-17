@@ -144,6 +144,8 @@ pub(crate) fn validate(p: &mut Project) -> Result<(), CmdError> {
         }
         model::check_minutes(t.duration).map_err(|e| bad(format!("task {}: {e}", t.id)))?;
         model::check_money(t.fixed_cost).map_err(|e| bad(format!("task {}: fixed cost: {e}", t.id)))?;
+        model::check_priority(i64::from(t.priority)).map_err(|e| bad(format!("task {}: {e}", t.id)))?;
+        model::check_minutes(t.leveling_delay).map_err(|e| bad(format!("task {}: leveling delay: {e}", t.id)))?;
     }
     for t in &p.tasks {
         for l in &t.preds {
@@ -403,6 +405,8 @@ mod tests {
                 fixed_cost: 0,
                 task_type: model::TaskType::FixedUnits,
                 effort_driven: false,
+                priority: 500,
+                leveling_delay: 0,
             },
             // A subtask of task 2, which is a summary storing its rolled-up duration.
             Task {
@@ -417,6 +421,8 @@ mod tests {
                 fixed_cost: 123_456,
                 task_type: model::TaskType::FixedWork,
                 effort_driven: true,
+                priority: 750,
+                leveling_delay: 960,
             },
             Task {
                 id: TaskId(5),
@@ -430,6 +436,8 @@ mod tests {
                 fixed_cost: 0,
                 task_type: model::TaskType::FixedDuration,
                 effort_driven: true,
+                priority: 500,
+                leveling_delay: 0,
             },
         ];
         p.next_id = 9;
@@ -683,6 +691,10 @@ mod tests {
             json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 1, "name": "a", "duration": 1}, {"id": 1, "name": "b", "duration": 1}]}),
             json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 0, "name": "a", "duration": 1}]}),
             json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 1, "name": "a", "duration": -1}]}),
+            json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 1, "name": "a", "duration": 1, "priority": 1001}]}),
+            json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 1, "name": "a", "duration": 1, "priority": -1}]}),
+            json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 1, "name": "a", "duration": 1, "leveling_delay": -1}]}),
+            json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 1, "name": "a", "duration": 1, "leveling_delay": model::MAX_MINUTES + 1}]}),
             json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 1, "name": "a", "duration": 1, "preds": [{"pred": 7}]}]}),
             json!({"name": "x", "start": "2026-01-05", "tasks": [{"id": 1, "name": "a", "duration": 1}, {"id": 2, "name": "b", "duration": 1, "preds": [{"pred": 1, "lag": i64::MIN}]}]}),
             json!([1, 2]),

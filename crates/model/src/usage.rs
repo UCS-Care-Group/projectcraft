@@ -132,6 +132,12 @@ fn spread(work: i64, minutes: &[(Date, i64)]) -> BTreeMap<Date, i64> {
     out
 }
 
+/// The calendar a work resource is scheduled on: its own, or the project's (no calendar of its
+/// own, or one a file left with no working weekday: those named in `off`).
+pub(crate) fn calendar_of<'a>(p: &'a Project, r: &crate::Resource, off: &[&str]) -> Cow<'a, Calendar> {
+    if r.calendar.is_empty() || off.contains(&r.name.as_str()) { Cow::Borrowed(&p.calendar) } else { Cow::Owned(r.calendar.on(&p.calendar)) }
+}
+
 /// Each work resource's usage over `s`, the schedule of `p`. An error when the assignments span
 /// more than [`MAX_USAGE_DAYS`] days in all.
 pub fn usage(p: &Project, s: &Schedule) -> Result<Usage, ModelError> {
@@ -145,10 +151,7 @@ pub fn usage(p: &Project, s: &Schedule) -> Result<Usage, ModelError> {
         by_resource.entry(a.resource).or_default().push(a);
     }
     for r in p.resources.iter().filter(|r| r.kind == ResourceType::Work) {
-        // The calendar it is scheduled on: its own, or the project's (no calendar of its own, or
-        // one a file left with no working weekday).
-        let cal: Cow<'_, Calendar> =
-            if r.calendar.is_empty() || off.contains(&r.name.as_str()) { Cow::Borrowed(&p.calendar) } else { Cow::Owned(r.calendar.on(&p.calendar)) };
+        let cal = calendar_of(p, r, &off);
         let mut u = ResourceUsage { id: r.id, days: BTreeMap::new(), assignments: Vec::new(), over: BTreeSet::new() };
         for a in by_resource.get(&r.id).into_iter().flatten() {
             let Units::Work(_) = a.units else { continue };

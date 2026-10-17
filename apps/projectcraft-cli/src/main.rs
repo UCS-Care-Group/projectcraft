@@ -88,6 +88,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
                         let (id, params) = v.split_once('=').unwrap_or((v, "{}"));
                         let params = serde_json::from_str(params).map_err(|e| format!("{id}: params aren't JSON: {e}"))?;
                         s.run(id, &params).map_err(|e| format!("{id}: {e}"))?;
+                        if id == "project.level"
+                            && let Some(report) = s.level_report()
+                        {
+                            eprintln!("{}", report.text(&s.project));
+                        }
                     }
                     "--save" => {
                         let path = std::path::Path::new(v);

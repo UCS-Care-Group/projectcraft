@@ -1123,6 +1123,8 @@ fn tasks(file: Vec<FileTask>, options: &Options, start: Date, digits: u32) -> Re
             fixed_cost: 0,
             task_type: TaskType::FixedUnits,
             effort_driven: false,
+            priority: model::DEFAULT_PRIORITY,
+            leveling_delay: 0,
         };
         field_notes.push(fields::apply(&t.fields, &mut task, start, digits));
         out.push(task);

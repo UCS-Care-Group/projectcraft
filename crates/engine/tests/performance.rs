@@ -8,7 +8,8 @@
 //! same 10 ms. A 2,000-task plan, and the staffed plan's resource usage, are timed and reported,
 //! not gated. Typing a long Resource Names text into a large plan is gated too
 //! (`resource_names_on_a_large_plan_stay_fast`), and so is the resource usage of a plan at the
-//! assignment cap.
+//! assignment cap. Level All is gated too (`levelling_a_staffed_plan_stays_bounded`): the staffed
+//! plan under 2 s, and plans of 20,000 and 1,000,000 assignments within their round caps.
 
 use std::time::{Duration, Instant};
 
@@ -496,5 +497,71 @@ fn resource_names_on_a_large_plan_stay_fast() {
     );
     if !cfg!(debug_assertions) {
         assert!(t < NAMES_GATE, "Resource Names took {t:.2?}, over the {NAMES_GATE:?} gate");
+    }
+}
+
+/// The most Level All on the staffed 200-task plan may take, in release, rounds and all.
+const LEVEL_GATE: Duration = Duration::from_secs(2);
+/// The most Level All on a large staffed plan may take, in release: its rounds are capped by the
+/// plan's size, so this bounds the worst a big plan costs.
+const LEVEL_LARGE_GATE: Duration = Duration::from_secs(20);
+
+/// Level All on the staffed 200-task plan (30 people on their own calendars, 300 assignments)
+/// through the command, under [`LEVEL_GATE`] in release (median of 3), the same result every
+/// time; on the crowded 5,000-task plan with 20,000 assignments and on the plan at the
+/// assignment cap, under [`LEVEL_LARGE_GATE`], ending however far it got with a report.
+#[test]
+#[ignore = "timing; run in release by `cargo xtask perf`"]
+fn levelling_a_staffed_plan_stays_bounded() {
+    let build = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let mut times = Vec::new();
+    let mut last: Option<Project> = None;
+    for _ in 0..3 {
+        let mut s = Session::new(staffed(200, 19));
+        let t0 = Instant::now();
+        s.run("project.level", &json!({})).unwrap();
+        times.push(t0.elapsed());
+        if let Some(prev) = &last {
+            assert_eq!(prev, &s.project, "same plan, same levelling");
+        }
+        last = Some(s.project.clone());
+        let r = s.level_report().unwrap();
+        if times.len() == 1 {
+            // Overallocated person-days before and after: what is left is held by Must Start/Finish
+            // On dates and the generator's finish-type summary holds.
+            let over_days = |s: &Session| s.usage().unwrap().resources.iter().map(|r| r.over.len()).sum::<usize>();
+            let before = over_days(&Session::new(staffed(200, 19)));
+            let after = over_days(&s);
+            println!(
+                "perf ({build}): levelled the staffed 200-task plan in {} rounds, overallocated person-days {before} → {after}: {}",
+                r.rounds,
+                r.text(&s.project)
+            );
+            assert!(!r.stopped && after * 5 < before, "{before} → {after}");
+        }
+    }
+    times.sort();
+    let t = times[1];
+    println!(
+        "perf ({build}, median of 3): Level All, 200 tasks, {STAFF} resources, {STAFFED_ASSIGNMENTS} assignments {t:.2?} (gate: under {LEVEL_GATE:?})"
+    );
+    if !cfg!(debug_assertions) {
+        assert!(t < LEVEL_GATE, "Level All took {t:.2?}, over the {LEVEL_GATE:?} gate");
+    }
+    for (what, p) in [("5,000 tasks with 20,000 assignments", crowded()), ("the assignment cap", staffed_to_the_cap())] {
+        let mut s = Session::new(p);
+        let t0 = Instant::now();
+        s.run("project.level", &json!({})).unwrap();
+        let t = t0.elapsed();
+        let r = s.level_report().unwrap();
+        println!(
+            "perf ({build}): Level All, {what}: {} rounds, stopped {}, {} delayed, {t:.2?} (gate: under {LEVEL_LARGE_GATE:?})",
+            r.rounds,
+            r.stopped,
+            r.delayed.len()
+        );
+        if !cfg!(debug_assertions) {
+            assert!(t < LEVEL_LARGE_GATE, "Level All on {what} took {t:.2?}, over the {LEVEL_LARGE_GATE:?} gate");
+        }
     }
 }

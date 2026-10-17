@@ -61,10 +61,14 @@ enum Field {
     Type,
     /// Yes or No.
     EffortDriven,
+    /// 0 to 1000: how much levelling may move the task.
+    Priority,
+    /// Working time its start is put off by; Level All sets it.
+    LevelingDelay,
 }
 
 /// The columns, left to right: each field, its heading and its width.
-const COLUMNS: [(Field, &str, f32); 12] = [
+const COLUMNS: [(Field, &str, f32); 14] = [
     (Field::Name, "Task Name", NAME_W),
     (Field::Duration, "Duration", 60.0),
     (Field::Work, "Work", 60.0),
@@ -77,6 +81,8 @@ const COLUMNS: [(Field, &str, f32); 12] = [
     (Field::Deadline, "Deadline", 80.0),
     (Field::Type, "Type", 100.0),
     (Field::EffortDriven, "Effort Driven", 90.0),
+    (Field::Priority, "Priority", 60.0),
+    (Field::LevelingDelay, "Leveling Delay", 100.0),
 ];
 
 impl Field {
@@ -94,6 +100,8 @@ impl Field {
             Column::Deadline => Field::Deadline,
             Column::Type => Field::Type,
             Column::EffortDriven => Field::EffortDriven,
+            Column::Priority => Field::Priority,
+            Column::LevelingDelay => Field::LevelingDelay,
         }
     }
 
@@ -460,6 +468,7 @@ impl App {
                     }
                 });
                 self.view_menu(ui);
+                self.resource_menu(ui);
                 ui.separator();
                 ui.heading(&self.session.project.name);
                 ui.separator();
@@ -687,7 +696,7 @@ impl App {
         let date = |d: Option<Date>| d.map_or_else(String::new, |d| d.to_string());
         Some(match field {
             Field::Name => t.name.clone(),
-            Field::Duration | Field::Work | Field::Type | Field::EffortDriven if p.is_summary(id) => return None,
+            Field::Duration | Field::Work | Field::Type | Field::EffortDriven | Field::LevelingDelay if p.is_summary(id) => return None,
             Field::Duration => duration_text(t.duration, t.duration_unit, &p.options),
             Field::Cost => return None,
             Field::FixedCost => p.currency.format(t.fixed_cost),
@@ -699,6 +708,8 @@ impl App {
             Field::Preds => p.preds_text_rows(&t.preds),
             Field::Resources => p.resource_names(id),
             Field::Deadline => date(t.deadline),
+            Field::Priority => t.priority.to_string(),
+            Field::LevelingDelay => duration_text(t.leveling_delay, DurationUnit::Days, &p.options),
         })
     }
 
@@ -758,6 +769,48 @@ impl App {
                 }
                 None => self.status = tl!("Type Yes or No.").to_owned(),
             },
+            Field::Priority => match text.trim().parse::<i64>() {
+                Ok(n) => {
+                    self.run("task.setPriority", json!({"id": id.0, "priority": n}));
+                }
+                Err(_) => self.status = tl!("Type a priority from 0 to 1000.").to_owned(),
+            },
+            // As typed, in days when no unit is given; empty clears it.
+            Field::LevelingDelay => {
+                let text = if text.trim().is_empty() { "0" } else { text.trim() };
+                self.run("task.setLevelingDelay", json!({"id": id.0, "delay": text}));
+            }
+        }
+    }
+
+    /// Resource: Assign Resources, and levelling: Level All delays tasks until no resource is
+    /// overallocated (the status bar says what it did); Clear Leveling takes the delays away.
+    /// Each is one undo step.
+    fn resource_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button(tl!("Resource"), |ui| {
+            let can = self.view == View::GanttChart && self.sel.cursor.is_some();
+            if ui.add_enabled(can, egui::Button::new(tl!("Assign Resources…")).shortcut_text("Alt+F10")).clicked() {
+                self.open_assign_resources();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button(tl!("Level All")).on_hover_text(tl!("Delay tasks until no resource is overallocated, day by day")).clicked() {
+                self.level_all();
+                ui.close();
+            }
+            let levelled = self.session.project.tasks.iter().any(|t| t.leveling_delay > 0);
+            let clear = egui::Button::new(tl!("Clear Leveling"));
+            if ui.add_enabled(levelled, clear).on_hover_text(tl!("Take away every levelling delay")).clicked() {
+                self.run("project.clearLeveling", json!({}));
+                ui.close();
+            }
+        });
+    }
+
+    /// Level All, with what it did in the status bar.
+    pub fn level_all(&mut self) {
+        if self.run("project.level", json!({})) {
+            self.status = self.session.level_report().map(|r| r.text(&self.session.project)).unwrap_or_default();
         }
     }
 
@@ -835,8 +888,8 @@ impl App {
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.add_enabled(!current.is_default(), egui::Button::new(tl!("Show All"))).clicked() {
-                    chosen = Some(Columns::default());
+                if ui.add_enabled(current != Columns::all(), egui::Button::new(tl!("Show All"))).clicked() {
+                    chosen = Some(Columns::all());
                 }
                 if ui.button(tl!("Close")).clicked() {
                     close = true;
@@ -1179,6 +1232,7 @@ impl App {
                         (None, Field::Cost) => p.currency.format(costs.get(&id).copied().unwrap_or(0)),
                         (None, Field::Type) => tl!(p.task_type_of(id).name()).to_owned(),
                         (None, Field::EffortDriven) => tl!(yes_no(false)).to_owned(),
+                        (None, Field::LevelingDelay) => String::new(),
                         (None, _) => duration_text(duration, DurationUnit::Days, &p.options),
                     };
                     let inner = ui.horizontal(|ui| {
@@ -1273,6 +1327,7 @@ impl App {
             Field::Type | Field::EffortDriven if !editable => {
                 r.on_hover_text(tl!("A summary task is scheduled as Fixed Duration and is never effort-driven"))
             }
+            Field::LevelingDelay if !editable => r.on_hover_text(tl!("Levelling delays a summary task's subtasks, never the summary")),
             _ if !editable => r.on_hover_text(tl!("A summary task's duration is rolled up from its subtasks")),
             _ => r,
         };
@@ -2144,7 +2199,7 @@ mod tests {
         click(&mut h, "View", Modifiers::NONE);
         click(&mut h, "Columns…", Modifiers::NONE);
         click(&mut h, "Show All", Modifiers::NONE);
-        assert!(h.state().session.project.columns.is_default());
+        assert_eq!(h.state().session.project.columns, Columns::all(), "every column, the levelling ones too");
     }
 
     #[test]
@@ -2170,5 +2225,37 @@ mod tests {
         h.run_steps(3);
         assert!(h.state().resources.retype.is_none());
         assert_eq!(h.state().session.project.resource(ResourceId(2)).unwrap().kind, ResourceType::Cost);
+    }
+
+    /// Resource ▸ Level All delays the survey (Priya Shah is over on Wednesday) and says so in the
+    /// status bar; Resource ▸ Clear Leveling takes it back. Priority and Leveling Delay are
+    /// hidden columns, shown from Columns…, and typed like any cell.
+    #[test]
+    fn level_all_and_clear_leveling_from_the_resource_menu() {
+        let mut h = sheet(projectcraft_engine::sample());
+        let before = h.state().session.project.clone();
+        assert!(!h.state().session.project.columns.contains(Column::Priority));
+        click(&mut h, "Resource", Modifiers::NONE);
+        click(&mut h, "Level All", Modifiers::NONE);
+        assert_eq!(h.state().status(), "Levelling delayed 1 task.");
+        assert!(h.state().session.project.task(TaskId(2)).unwrap().leveling_delay > 0);
+        click(&mut h, "Resource", Modifiers::NONE);
+        click(&mut h, "Clear Leveling", Modifiers::NONE);
+        assert_eq!(h.state().session.project, before);
+
+        h.state_mut().run("view.setColumns", json!({"columns": ["Duration", "Priority", "Leveling Delay"]}));
+        h.run_steps(3);
+        assert_eq!(h.state().cell_text(TaskId(2), Field::Priority).as_deref(), Some("500"));
+        h.state_mut().commit(TaskId(2), Field::Priority, "1000".into());
+        assert_eq!(h.state().session.project.task(TaskId(2)).unwrap().priority, 1000);
+        h.state_mut().commit(TaskId(2), Field::Priority, "high".into());
+        assert_eq!(h.state().status(), "Type a priority from 0 to 1000.");
+        h.state_mut().commit(TaskId(2), Field::Priority, "1001".into());
+        assert!(h.state().status().contains("between"), "{}", h.state().status());
+        h.state_mut().commit(TaskId(5), Field::LevelingDelay, "2".into());
+        assert_eq!(h.state().session.project.task(TaskId(5)).unwrap().leveling_delay, 960);
+        assert_eq!(h.state().cell_text(TaskId(5), Field::LevelingDelay).as_deref(), Some("2d"));
+        h.state_mut().commit(TaskId(5), Field::LevelingDelay, "".into());
+        assert_eq!(h.state().session.project.task(TaskId(5)).unwrap().leveling_delay, 0);
     }
 }
