@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change list:** minor (M4 acceptance: parity fixtures, import speed gate, import gaps refreshed) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change list:** minor (M2 reached) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -39,7 +39,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] About 15 worked examples citing Project's documentation; 200 tasks under 10 ms
 - [x] Theme tokens (light/dark), `tl!` translation, look checked in screenshots (`ui_shot`)
 
-## M2 — Resources and assignments
+## M2 — Resources and assignments ✅ (2026-10-17)
 - [x] Working time in hours and minutes: part-day durations, working hours in calendars, files from M1 open with the same dates
 - [x] Resource Sheet: work, material and cost resources
 - [x] Assignments: Resource Names column, Assign Resources dialog, material quantities
@@ -141,6 +141,7 @@ Import gaps, until later work closes them (each is a line in the import report):
 | 2026-10-17 | Fix: a resource whose own weekday matches the project calendar's schedules exactly as one with no calendar of its own. A task walked back on a resource calendar past the project start now gets a late start before it (negative slack carried to its predecessors, as without a resource calendar) instead of stopping at the start, so a link reaching before the start no longer drives the task; and a task held by a link to finish at a milestone at the start of a day finishes at that moment on a resource calendar too. Worked-example regression tests and a property test comparing the two schedules |
 | 2026-10-17 | M4.4: CSV export: File › Export › CSV… (system dialog or the built-in browser, a `.csv` name suggested), `file.export` format `csv` and `projectcraft-cli export SOURCE --format csv OUT.csv` write the task sheet's shown columns, atomically, `.csv` names only. The sheet's text now comes from one place, `model::SheetText` (the whole project read once), which the sheet draws and the export writes. UTF-8 with a BOM (so Excel reads non-ASCII names), commas, CRLF, RFC 4180 quoting of cells with a separator, quote, line break or spaces at their ends; formula-injection guard on the free-text cells (an apostrophe, taken off on import; threat model updated). The CSV import reads Fixed Cost, Type, Effort Driven, Priority and Leveling Delay (a summary's follow its subtasks, with a line), keeps a quoted Task Name's spaces, picks the currency from the first amount's symbol, and types new resources by their units. Property tests: generated projects (hostile names, formula-like names, every currency) and the sample export → import → export to the same cells in every column the import reads; hidden columns never written. `cargo xtask perf`: 2,000 tasks with every column ~3 ms (gate 1 s), importing it again ~7 ms, 20,000 tasks ~30 ms (#104) |
 | 2026-10-17 | M4.6: acceptance: parity fixtures in `crates/interchange/tests/fixtures/parity/`, each a plan with the Start and Finish Microsoft Project works out and a `.expected` file of the "Dates differ" lines accepted as listed gaps; a test imports each and fails on any other difference or on a listed one that no longer happens, so files made in Microsoft Project, ProjectLibre or GanttProject (invented tasks, an `ATTRIBUTION.md` row each) are added without code. Three hand-written from Microsoft's published schema with their dates worked out by hand from Project's published rules: a boathouse repair (summaries, all four link types with lags and a lead, every constraint type but As Late As Possible, a deadline, holidays, a working Saturday morning) and a village hall kitchen (work, material and cost resources, a part-time calendar with leave, two people on different calendars, each task type, costs), dates all matching; an orchard replant with each conversion that moves dates (elapsed duration, elapsed lag, As Late As Possible, task calendar, constraint time of day, elapsed leveling delay), six accepted differences, the percent lag matching. Found and fixed: a constraint's time of day was left without a report line, so a task held to Start No Earlier Than 13:00 finished a day early with nothing saying why; now a Converted line when the time would move the task (regression tests). The parity fixtures round-trip through export too. `cargo xtask perf` gates importing a 2,000-task Microsoft Project XML file under 1 s (about 20 ms). Import gaps refreshed: converted, dropped, and what only a file saved by Microsoft Project can settle (#105) |
+| 2026-10-17 | M2 reached: every item on its checklist passes, levelling (the stretch) included; 11 / 11 tickets |
 
 ## Revision history
 | Date | Change | Summary |
@@ -186,3 +187,4 @@ Import gaps, until later work closes them (each is a line in the import report):
 | 2026-10-17 | minor | Fix: resource-calendar late dates before the project start |
 | 2026-10-17 | minor | M4.4 CSV export (#104) |
 | 2026-10-17 | minor | M4 acceptance (#105): parity fixtures, import speed gate, import gaps refreshed; M4 done |
+| 2026-10-17 | minor | M2 reached |
