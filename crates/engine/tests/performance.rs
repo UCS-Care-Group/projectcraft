@@ -6,7 +6,8 @@
 //! a debug build; `cargo xtask ci` runs it in release (`cargo xtask perf`). A 2,000-task plan,
 //! and the 200-task plan staffed with 30 resources on calendars of their own, are timed and
 //! reported, not gated. Typing a long Resource Names text into a large plan is gated too
-//! (`resource_names_on_a_large_plan_stay_fast`).
+//! (`resource_names_on_a_large_plan_stay_fast`), and so is the resource usage of a plan at the
+//! assignment cap.
 
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,9 @@ const RUNS: usize = 31;
 /// 310 ms on a shared Windows CI runner. The ceiling still catches a budget raised far enough to
 /// make every edit of a hostile file take seconds.
 const HOSTILE_GATE: Duration = Duration::from_secs(1);
+/// The most working out the resource usage of a plan at the assignment cap may take, in release:
+/// about 0.4 s on a developer machine. The UI works it out once per change, not every frame.
+const USAGE_GATE: Duration = Duration::from_secs(2);
 
 /// A day of duration at the default 8 hours, in working minutes.
 const DAY: i64 = 480;
@@ -242,8 +246,15 @@ fn reschedule_200_tasks_under_10_ms() {
     let build = if cfg!(debug_assertions) { "debug" } else { "release" };
     let mut crewed = Session::new(staffed(200, 19));
     let t_crewed = median_reschedule(&mut crewed, RUNS);
+    let crewed_schedule = crewed.schedule.clone().unwrap();
+    let t0 = Instant::now();
+    let u = projectcraft_engine::model::usage(&crewed.project, &crewed_schedule);
+    let t_usage = t0.elapsed();
+    assert!(u.is_ok());
     println!("perf ({build}, median of {RUNS}): reschedule 200 tasks {t200:.2?}, 2,000 tasks {t2000:.2?} (gate: 200 under {GATE:?})");
-    println!("perf ({build}, median of {RUNS}): reschedule 200 tasks with 30 resources on their own calendars {t_crewed:.2?} (reported)");
+    println!(
+        "perf ({build}, median of {RUNS}): reschedule 200 tasks with 30 resources on their own calendars {t_crewed:.2?}, their usage {t_usage:.2?} (reported)"
+    );
     if !cfg!(debug_assertions) {
         assert!(t200 < GATE, "200-task reschedule took {t200:.2?}, over the {GATE:?} gate");
     }
@@ -375,6 +386,16 @@ fn hostile_finish_holds_stay_bounded() {
     );
     if !cfg!(debug_assertions) {
         assert!(t < HOSTILE_GATE, "a schedule at the assignment cap took {t:.2?}, over the {HOSTILE_GATE:?} gate");
+    }
+    // Its resource usage, day by day: every assignment walked once more.
+    let s = s.unwrap();
+    let t0 = Instant::now();
+    let u = projectcraft_engine::model::usage(&p, &s);
+    let t = t0.elapsed();
+    assert!(u.is_ok());
+    println!("perf ({build}): resource usage of {} assignments {t:.2?} (gate: under {USAGE_GATE:?})", p.assignments.len());
+    if !cfg!(debug_assertions) {
+        assert!(t < USAGE_GATE, "usage at the assignment cap took {t:.2?}, over the {USAGE_GATE:?} gate");
     }
 }
 

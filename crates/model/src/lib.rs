@@ -13,6 +13,7 @@ mod resource_calendar;
 mod rows;
 mod schedule;
 mod task_type;
+mod usage;
 mod view;
 mod working_time;
 
@@ -37,6 +38,7 @@ pub use resource::{
 pub use resource_calendar::ResourceCalendar;
 pub use schedule::{Driver, Moment, Schedule, TaskDates, schedule};
 pub use task_type::{MAX_WORK, TaskType};
+pub use usage::{MAX_USAGE_DAYS, ResourceUsage, Usage, usage};
 pub use view::{Column, Columns};
 pub use working_time::{
     DEFAULT_WORKING_TIMES, MAX_WORKING_TIMES, MINUTES_IN_DAY, Options, UnitsFormat, WorkingTime, check_working_times, clock, minutes_of, parse_clock,
@@ -52,7 +54,7 @@ pub const MAX_MINUTES: i64 = MAX_DAYS * MINUTES_IN_DAY as i64;
 /// Most tasks in one project. ponytail: a cap, not a measured limit; raise with a benchmark.
 pub const MAX_TASKS: usize = 100_000;
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum ModelError {
     #[error("no task {0}")]
     NoTask(TaskId),

@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (M2.4 resource calendars) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (M2.6 overallocation and Resource Usage) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -9,7 +9,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | Number | Value | Kind |
 |---|---|---|
 | M1 tickets done | **16 / 16**, plus follow-ups #26, #28, #37, #39 | measured (GitHub issues) |
-| M2 tickets done | **7 / 11** (#51–#56, #58), plus #65 Project Options | measured (GitHub issues) |
+| M2 tickets done | **9 / 11** (#51–#59), plus #65 Project Options | measured (GitHub issues) |
 | Commands / crates | 32 commands · 4 crates, 2 apps, `xtask` | measured (`projectcraft-cli commands`, source) |
 | Tests | 286 `#[test]`s; property tests in 11 modules: the file reader, the duration, predecessor and Resource Names parsers, outline changes, working times, resources, task types, costs and the scheduler | measured (source) |
 | Builds verified | Windows, macOS and Linux (CI on each), the browser build (wasm) | measured |
@@ -41,7 +41,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] Task types (Fixed Units, Fixed Duration, Fixed Work) and effort-driven scheduling, as Microsoft Project documents them
 - [x] Resource calendars (leave and part-time working)
 - [x] Costs: rates, cost per use, fixed costs, cost resources, rolled up to the penny
-- [ ] Overallocation shown in red; Resource Usage view
+- [x] Overallocation shown in red; Resource Usage view
 - [ ] Stretch: manual resource levelling (delays only)
 - [ ] 200 tasks with 30 resources reschedule under 10 ms
 
@@ -106,6 +106,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-17 | M2: assignment units shown as decimals on request, as Project's "Show assignment units as a" option: `project.setOptions` takes `assignmentUnitsAs` (Percentage, the default, or Decimal), shown under Assignment units in Project › Options…; with Decimal, Resource Names (`Ann[0.5]`), Max Units in the Resource Sheet and Assign Resources show `0.5` and `1` and read a bare number as a decimal (up to four places); a number with `%` always reads as a percentage; additive file field, written only when Decimal, so older files load and save unchanged (#84) |
 | 2026-10-17 | M2: a material resource's standard rate shows its material label, as Project shows material rates: `£2.50/ton` in the Resource Sheet and in the rate shown on a resource's name in Assign Resources (work resources `£45.00/hr`); typed with the label or without (`£2.50/ton`, `2.50 / Ton`, `£2.50`), any other label refused; a material with no label shows the amount alone (#85) |
 | 2026-10-17 | M2.4: resource calendars: each work resource has its own calendar based on the project calendar, keeping only what differs (weekdays with their own working times, exceptions of its own such as leave or a short day); on a day its own exception comes first, then the project's, then its own weekday; a resource works only within the project calendar's working time (Microsoft Project also lets one work when the project doesn't: not yet); each work assignment is scheduled on its resource's calendar from the task's start and the task spans its earliest assignment's start to its latest's finish (Project's default, Ignore Resource Calendar No); a task without resources stays on the project calendar; late dates and slack are worked back on the same calendars; `calendar.setWorking`, `calendar.setWorkingTimes` (with `fromProject` to follow the project again), `calendar.addException` and `calendar.removeException` take a `resource`, refusing materials, costs and a week with no working day, and a project-calendar edit that would leave a resource no working weekday is refused, naming it (a file already so opens with that resource on the project calendar, and the status line names it); a resource made a material or cost loses its calendar; Change Working Time has a For calendar picker (the project calendar and each work resource), Use Project Times, and says which of a resource's own times aren't worked; calendars are counted from an index built once per schedule, never copied per resource, so the project calendar's exceptions cost a binary search (constrained tasks on main too); each task's assignments are walked from a known count a day at a time; `cargo xtask perf` gates under 1 s a hostile plan staffed on resource calendars (100,000 tasks, 181,800 assignments, 2,000 exceptions: about 0.09 s) and a plan at the assignment cap (1,000,000 assignments: about 0.23 s), and reports 200 tasks with 30 resources on their own calendars (under 1 ms); additive `calendar` field on resources, validated on load; worked examples (#57) |
+| 2026-10-17 | M2.6: overallocation and Resource Usage: a work resource is overallocated on a working day when its work that day is more than Max Units × that day's working time on its calendar (counted day by day; flat contours, each assignment's work spread over the working minutes it spans and adding up exactly); materials and cost resources are never overallocated; an overallocated resource's row is red in the Resource Sheet, and a task with an assignment working on one of its overallocated days shows a red person (drawn in code) in the indicators column, which now holds two indicators side by side; View › Resource Usage lists each resource with its assignments, their total work and their work on a timescale of its own (days, weeks or months, zoomed apart from the Gantt Chart's), red on a red ground where a resource's work is over Max Units; worked out from the schedule once per change, bounded (5,000,000 assignment-days) so a hostile file is refused rather than walked; colours from two new theme tokens; worked examples with a part-time calendar, Max Units 50% and leave (#59) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -136,3 +137,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-17 | minor | Assignment units as decimals (#84) |
 | 2026-10-17 | minor | Material rates show their label (#85) |
 | 2026-10-17 | minor | M2.4 resource calendars |
+| 2026-10-17 | minor | M2.6 overallocation and Resource Usage |
