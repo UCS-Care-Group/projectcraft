@@ -2,10 +2,12 @@
 //! (<https://learn.microsoft.com/office-project/xml-data-interchange/project-element>).
 //!
 //! Imported so far: the project's name and start date, hours per day and week and days per month,
+//! its default task type and whether new tasks are effort-driven,
 //! the project calendar's working week (its `WeekDays` with `DayType` 1 to 7 and their
 //! `WorkingTimes`) and its exceptions (each `Exception`, recurring ones worked out to their days,
 //! with its own working times; or, in older files, `DayType` 0 weekdays), and each task's name,
-//! outline level and duration (in the unit its `DurationFormat` gives). Other base calendars and
+//! outline level and duration (in the unit its `DurationFormat` gives), constraint, deadline, task
+//! type and effort-driven setting ([`fields`]). Other base calendars and
 //! task calendars are dropped, a report line each. The project summary task (UID 0) is skipped:
 //! ProjectCraft rolls the project up itself. Everything else that the file holds and the project
 //! can't is a report line.
@@ -22,6 +24,8 @@ use crate::model::{
 };
 use crate::xml::{self, Visitor};
 use crate::{Format, Import, ImportError, ImportReport, Outcome, ReportLine};
+
+mod fields;
 
 /// The MSPDI namespace Microsoft Project writes on its root `Project` element.
 pub(crate) const NAMESPACE: &str = "http://schemas.microsoft.com/project";
@@ -74,10 +78,6 @@ enum Note {
     Manual,
     Recurring,
     Links,
-    Constraint,
-    Deadline,
-    TaskType,
-    EffortDriven,
     FixedCost,
     Progress,
     Baseline,
@@ -92,7 +92,7 @@ enum Note {
 }
 
 impl Note {
-    const ALL: [Note; 25] = [
+    const ALL: [Note; 21] = [
         Note::NoDuration,
         Note::BadDuration,
         Note::NegativeDuration,
@@ -103,10 +103,6 @@ impl Note {
         Note::Manual,
         Note::Recurring,
         Note::Links,
-        Note::Constraint,
-        Note::Deadline,
-        Note::TaskType,
-        Note::EffortDriven,
         Note::FixedCost,
         Note::Progress,
         Note::Baseline,
@@ -140,12 +136,10 @@ impl Note {
             Note::Estimated => (Dropped, "Estimated duration (?)", "ProjectCraft has no estimate mark; the duration is kept"),
             Note::Outline => (Converted, "Outline level", "deeper than the row above allows; moved up to fit the outline"),
             Note::Manual => (Converted, "Manually scheduled", "auto-scheduled: ProjectCraft schedules every task"),
-            Note::Recurring => (Converted, "Recurring task", "imported as a summary task with its occurrences as subtasks"),
+            Note::Recurring => {
+                (Dropped, "Recurring task", "the recurrence is dropped; its occurrences are imported as ordinary tasks under a summary task")
+            }
             Note::Links => (NotYetImported, "Links (predecessors)", "links come in a later version; the task is scheduled without them"),
-            Note::Constraint => (NotYetImported, "Constraint", "constraints come in a later version; the task is As Soon As Possible"),
-            Note::Deadline => (NotYetImported, "Deadline", "deadlines come in a later version"),
-            Note::TaskType => (NotYetImported, "Task type", "task types come in a later version; the task is Fixed Units"),
-            Note::EffortDriven => (NotYetImported, "Effort-driven", "comes in a later version; the task is not effort-driven"),
             Note::FixedCost => (NotYetImported, "Fixed cost", "costs come in a later version"),
             Note::Progress => (Dropped, "Progress (actuals, % complete)", "tracking comes in a later version"),
             Note::Baseline => (Dropped, "Baselines", "baselines come in a later version"),
@@ -175,6 +169,8 @@ struct FileTask {
     calendar: Option<i64>,
     /// [`Note`] bits.
     notes: u32,
+    /// Constraint, deadline, task type and the like ([`fields`]).
+    fields: fields::TaskFields,
 }
 
 impl FileTask {
@@ -249,7 +245,8 @@ struct Fields {
     days_per_month: Option<i64>,
     from_finish: bool,
     currency: Option<String>,
-    schedule_options: bool,
+    /// The type and effort-driven setting new tasks get ([`fields`]).
+    defaults: fields::ProjectDefaults,
     /// `WeekStartDay`: 0 Sunday … 6 Saturday.
     week_start: Option<i64>,
 }
@@ -537,10 +534,10 @@ impl FileProject {
             "DaysPerMonth" => f.days_per_month = int(text),
             "ScheduleFromStart" => f.from_finish = !truthy(text),
             "CurrencyCode" => f.currency = text_field(text),
-            "DefaultTaskType" => f.schedule_options |= int(text).is_some_and(|t| t != 0),
-            "NewTasksEffortDriven" => f.schedule_options |= truthy(text),
             "WeekStartDay" => f.week_start = int(text),
-            _ => {}
+            _ => {
+                f.defaults.read(name, text);
+            }
         }
     }
 
@@ -584,10 +581,6 @@ impl FileProject {
             "Manual" => truthy(text).then_some(Note::Manual),
             "Recurring" => truthy(text).then_some(Note::Recurring),
             "IsSubproject" => truthy(text).then_some(Note::Subproject),
-            "ConstraintType" => int(text).is_some_and(|c| c != 0).then_some(Note::Constraint),
-            "Deadline" => text_field(text).map(|_| Note::Deadline),
-            "Type" => int(text).is_some_and(|c| c != 0).then_some(Note::TaskType),
-            "EffortDriven" => truthy(text).then_some(Note::EffortDriven),
             "FixedCost" => nonzero(text).then_some(Note::FixedCost),
             "CalendarUID" => {
                 t.calendar = int(text).filter(|c| *c != -1);
@@ -595,11 +588,16 @@ impl FileProject {
             }
             "PercentComplete" | "PercentWorkComplete" | "PhysicalPercentComplete" => nonzero(text).then_some(Note::Progress),
             "ActualStart" | "ActualFinish" => text_field(text).map(|_| Note::Progress),
+            "ActualDuration" | "ActualWork" | "ActualOvertimeWork" => duration_minutes(text).is_some_and(|m| m != 0).then_some(Note::Progress),
+            "ActualCost" | "ActualOvertimeCost" => nonzero(text).then_some(Note::Progress),
             "Notes" => text_field(text).map(|_| Note::Notes),
             "Hyperlink" | "HyperlinkAddress" | "HyperlinkSubAddress" => text_field(text).map(|_| Note::Hyperlink),
             "Priority" => int(text).is_some_and(|p| p != 500).then_some(Note::Priority),
             "LevelingDelay" => nonzero(text).then_some(Note::LevelingDelay),
-            _ => None,
+            _ => {
+                t.fields.read(name, text);
+                None
+            }
         };
         if let Some(n) = note {
             t.note(n);
@@ -616,20 +614,13 @@ impl FileProject {
         }
         let mut p = Project::new(name.unwrap_or_else(|| "Imported project".into()), start.unwrap_or(Date::EPOCH));
         p.options = options(f, &mut lines);
+        f.defaults.apply(&mut p.options, &mut lines);
         if f.from_finish {
             lines.push(line(
                 Outcome::Converted,
                 "Scheduled from the finish date",
                 "Project",
                 "scheduled from the start date instead; scheduling from the finish comes later",
-            ));
-        }
-        if f.schedule_options {
-            lines.push(line(
-                Outcome::NotYetImported,
-                "Default task type, new tasks effort-driven",
-                "Project",
-                "these schedule options come with task types in a later version",
             ));
         }
         if let Some(code) = f.currency.as_deref().filter(|c| !c.eq_ignore_ascii_case(DEFAULT_CURRENCY_CODE)) {
@@ -642,7 +633,7 @@ impl FileProject {
             ));
         }
         p.calendar = self.calendar(&mut lines);
-        let (tasks, task_lines, on) = tasks(std::mem::take(&mut self.tasks), &p.options)?;
+        let (tasks, task_lines, on) = tasks(std::mem::take(&mut self.tasks), &p.options, p.start)?;
         lines.extend(task_lines);
         lines.extend(self.other_calendars(&tasks, &on));
         let count = tasks.len();
@@ -947,7 +938,7 @@ fn unit_of(format: Option<i64>) -> (DurationUnit, bool, bool) {
 
 /// The file's tasks as the project's, in the file's ID order, with the report lines about them
 /// and each one's own calendar.
-fn tasks(file: Vec<FileTask>, options: &Options) -> Result<(Vec<Task>, Vec<ReportLine>, Vec<Option<i64>>), ImportError> {
+fn tasks(file: Vec<FileTask>, options: &Options, start: Date) -> Result<(Vec<Task>, Vec<ReportLine>, Vec<Option<i64>>), ImportError> {
     let mut lines = Vec::new();
     let (mut summary, mut blank) = (false, 0usize);
     let mut kept: Vec<FileTask> = Vec::with_capacity(file.len());
@@ -982,6 +973,7 @@ fn tasks(file: Vec<FileTask>, options: &Options) -> Result<(Vec<Task>, Vec<Repor
     let day = options.day();
     let mut out = Vec::with_capacity(kept.len());
     let mut notes = Vec::with_capacity(kept.len());
+    let mut field_notes = Vec::with_capacity(kept.len());
     let mut on = Vec::with_capacity(kept.len());
     for (row, mut t) in kept.into_iter().enumerate() {
         let (unit, elapsed, estimated) = unit_of(t.format);
@@ -1015,7 +1007,7 @@ fn tasks(file: Vec<FileTask>, options: &Options) -> Result<(Vec<Task>, Vec<Repor
             _ => u32::try_from(row).unwrap_or(u32::MAX - 1).saturating_add(1),
         };
         let level = t.level.unwrap_or(1).clamp(1, i64::from(MAX_OUTLINE_LEVEL));
-        out.push(Task {
+        let mut task = Task {
             id: TaskId(id),
             name: std::mem::take(&mut t.name),
             duration,
@@ -1027,11 +1019,14 @@ fn tasks(file: Vec<FileTask>, options: &Options) -> Result<(Vec<Task>, Vec<Repor
             fixed_cost: 0,
             task_type: TaskType::FixedUnits,
             effort_driven: false,
-        });
+        };
+        field_notes.push(fields::apply(&t.fields, &mut task, start));
+        out.push(task);
         notes.push(t.notes);
         on.push(t.calendar);
     }
     lines.extend(task_lines(&out, &notes));
+    lines.extend(fields::lines(&out, &field_notes));
     Ok((out, lines, on))
 }
 
