@@ -884,15 +884,6 @@ impl App {
             form.rows = set_times(form.day).iter().map(|w| (clock(w.from), clock(w.to))).collect();
             form.loaded = Some((form.day, form.resource));
         }
-        // A resource works only within the project calendar's working time: say so where its own
-        // times reach outside it.
-        let worked_note = |set: &[WorkingTime], worked: &[WorkingTime]| -> Option<String> {
-            (set != worked).then(|| match worked {
-                [] => tl!("Not worked: the project calendar doesn't work then").to_owned(),
-                w => i18n::fmt(tl!("Worked within the project calendar: {times}"), &[("times", &times_text(w))]),
-            })
-        };
-        let day_note = own.and_then(|c| worked_note(set_times(form.day), &c.weekday_worked(base, form.day)));
         // Each command names the calendar it changes: the one shown as this frame began.
         let shown_resource = form.resource;
         let on = |mut params: Value| {
@@ -965,9 +956,6 @@ impl App {
             if form.rows.is_empty() {
                 ui.label(RichText::new(tl!("Non-working: add working times to work this day.")).color(t.text_dim));
             }
-            if let Some(note) = &day_note {
-                ui.label(RichText::new(note.as_str()).color(t.text_dim));
-            }
             let mut remove = None;
             for (i, (from, to)) in form.rows.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
@@ -1016,25 +1004,18 @@ impl App {
             } else {
                 let row_h = ui.spacing().interact_size.y;
                 egui::ScrollArea::vertical().max_height(180.0).show_rows(ui, row_h, count, |ui, range| {
-                    // Each row: its date, its times as set, and what is worked of them if less.
-                    let rows: Vec<(Date, Vec<WorkingTime>, Option<String>)> = match own {
-                        Some(c) => c
-                            .exceptions
-                            .iter()
-                            .skip(range.start)
-                            .take(range.len())
-                            .map(|(d, set)| (*d, set.clone(), worked_note(set, &c.times_on(base, *d))))
-                            .collect(),
-                        None => base.exceptions.keys().skip(range.start).take(range.len()).map(|d| (*d, base.times_on(*d).to_vec(), None)).collect(),
+                    // Each row: its date and its working times.
+                    let rows: Vec<(Date, Vec<WorkingTime>)> = match own {
+                        Some(c) => c.exceptions.iter().skip(range.start).take(range.len()).map(|(d, set)| (*d, set.clone())).collect(),
+                        None => base.exceptions.keys().skip(range.start).take(range.len()).map(|d| (*d, base.times_on(*d).to_vec())).collect(),
                     };
-                    egui::Grid::new("exceptions").striped(true).num_columns(6).spacing([16.0, 4.0]).show(ui, |ui| {
-                        for (date, set, note) in &rows {
+                    egui::Grid::new("exceptions").striped(true).num_columns(5).spacing([16.0, 4.0]).show(ui, |ui| {
+                        for (date, set) in &rows {
                             ui.label(date.to_string());
                             let weekday = WEEKDAYS.get(usize::from(date.weekday())).copied().unwrap_or("");
                             ui.label(RichText::new(tl!(weekday)).color(t.text_dim));
                             ui.label(if set.is_empty() { tl!("Non-working") } else { tl!("Working") });
                             ui.label(RichText::new(times_text(set)).color(t.text_dim));
-                            ui.label(RichText::new(note.as_deref().unwrap_or("")).color(t.text_dim));
                             if ui.small_button(tl!("Remove")).clicked() {
                                 commands.push(("calendar.removeException", on(json!({"date": date.to_string()}))));
                             }
@@ -1518,6 +1499,13 @@ mod tests {
         h.run_steps(3);
         assert_eq!(h.state().session.project.resource_calendar(priya).unwrap().working, [true, true, true, true, false, false, false]);
         assert_eq!(h.state().session.project.calendar, project_calendar);
+        // Saturdays too, though the project doesn't work them: worked, with no note saying otherwise.
+        h.get_by_label("Sat").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.project.resource_calendar(priya).unwrap().working, [true, true, true, true, false, true, false]);
+        assert!(h.query_by_label("Not worked: the project calendar doesn't work then").is_none());
+        h.get_by_label("Sat").click();
+        h.run_steps(3);
         // Leave on Tuesday 3 November: Agree the brief (Priya, 2 days from Monday) finishes Wednesday.
         let finish = |h: &Harness<'static, App>| h.state().session.schedule.as_ref().unwrap().tasks[&TaskId(1)].finish;
         assert_eq!(finish(&h), Date::from_ymd(2026, 11, 3).unwrap());
