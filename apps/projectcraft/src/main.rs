@@ -1,5 +1,5 @@
-//! ProjectCraft desktop app. `projectcraft [file.projectcraft | plan.xml] [--sample]`; a `.xml`
-//! (Microsoft Project XML) is imported as a new, untitled project.
+//! ProjectCraft desktop app. `projectcraft [file.projectcraft | plan.xml | plan.csv] [--sample]`;
+//! a `.xml` (Microsoft Project XML) or `.csv` is imported as a new, untitled project.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use projectcraft_engine::Session;
@@ -52,7 +52,7 @@ fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args.iter().find(|a| !a.starts_with("--")).map(std::path::PathBuf::from);
     let sample = args.iter().any(|a| a == "--sample");
-    // Microsoft Project XML is imported as a new, untitled project; the window opens on its report.
+    // Microsoft Project XML and CSV are imported as a new, untitled project; the window opens on its report.
     let (import, path) = match path {
         Some(p) if projectcraft_ui_egui::is_import(&p) && !sample => (Some(p), None),
         other => (None, other),

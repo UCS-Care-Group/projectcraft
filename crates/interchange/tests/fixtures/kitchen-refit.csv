@@ -1,0 +1,7 @@
+﻿ID;Task Name;Duration;Predecessors;Resource Names;Outline Level;Constraint Type;Constraint Date;Deadline;Notes
+1;Kitchen refit;;;;1;;;;
+2;Strip out the old units;2 days;;"Dev Patel, Skip hire[50%]";2;;;;Mind the boiler pipe
+3;"Plumbing; first fix";1.5d;2;Rosa Lind;2;Start No Earlier Than;2026-11-09;;
+4;Plaster the walls;3;3FS+1d;Dev Patel;2;;;2026-11-20;
+5;"Fit units, worktops and ""soft-close"" doors";1w;4;"Dev Patel[50%], Rosa Lind";2;;;;
+6;Kitchen ready;0;5;;1;MFO;2026-12-04;;

@@ -10,8 +10,8 @@ use std::process::Command;
 const ASSET_EXT: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico", "icns", "svg", "pdf", "ai", "eps", "psd", "icc", "icm", "ttf", "otf", "woff",
     "woff2", "ase", "indd", "idml", "aco", "abr", "docx", "odt", "rtf", "mp4", "wav", "mp3",
-    // Project files from other programs (test fixtures): Microsoft Project XML, Primavera XER.
-    "xml", "xer", "mpp",
+    // Project files from other programs (test fixtures): Microsoft Project XML, Primavera XER, CSV.
+    "xml", "xer", "mpp", "csv",
 ];
 const ASSET_DIRS: &[&str] = &["assets/", "docs/images/", "examples/"];
 

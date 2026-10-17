@@ -1177,7 +1177,7 @@ const COMMANDS: &[CommandSpec] = &[
             let formats: Vec<&str> = interchange::Format::ALL.iter().map(|f| f.code()).collect();
             object(
                 json!({
-                    "format": {"type": "string", "enum": formats, "description": "mspdi: Microsoft Project XML"},
+                    "format": {"type": "string", "enum": formats, "description": "mspdi: Microsoft Project XML; csv: comma- or semicolon-separated values, UTF-8, whose first row names the columns (Task Name required; Duration, Predecessors by row, Resource Names, Outline Level, Constraint Type, Constraint Date and Deadline read)"},
                     "path": {"type": "string", "description": "the file to import; it becomes a new, untitled project in place of the open one (never merged into it), with an import report"},
                 }),
                 &["format", "path"],
@@ -1693,7 +1693,10 @@ mod tests {
             "assignment.remove" => vec![json!({"task": 1, "resource": 1}), json!({"tasks": [1, 2, 3], "resource": 1})],
             "task.setResourceNames" => vec![json!({"id": 4, "text": "Priya Shah[50%], Packing boxes[2 boxes/d], Travel[£20], New person"})],
             "file.import" => {
-                vec![json!({"format": "mspdi", "path": concat!(env!("CARGO_MANIFEST_DIR"), "/../interchange/tests/fixtures/garden-studio.xml")})]
+                vec![
+                    json!({"format": "mspdi", "path": concat!(env!("CARGO_MANIFEST_DIR"), "/../interchange/tests/fixtures/garden-studio.xml")}),
+                    json!({"format": "csv", "path": concat!(env!("CARGO_MANIFEST_DIR"), "/../interchange/tests/fixtures/kitchen-refit.csv")}),
+                ]
             }
             _ => vec![],
         };

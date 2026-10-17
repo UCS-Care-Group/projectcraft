@@ -35,7 +35,7 @@ mod browser;
 mod files;
 mod import_report;
 mod options;
-pub use files::{EXTENSION, FileRequest, IMPORT_EXTENSION, MAX_RECENT, is_import, parse_recent, push_recent, recent_text};
+pub use files::{EXTENSION, FileRequest, IMPORT_EXTENSIONS, MAX_RECENT, is_import, parse_recent, push_recent, recent_text};
 mod recovery;
 mod resource_sheet;
 mod resource_usage;

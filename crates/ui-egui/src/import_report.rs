@@ -1,5 +1,5 @@
-//! The import report: shown after Open imports a Microsoft Project XML file, it lists what was
-//! converted, dropped or not imported yet, each with where in the file and why.
+//! The import report: shown after Open imports a Microsoft Project XML or CSV file, it lists
+//! what was converted, dropped or not imported yet, each with where in the file and why.
 
 use std::path::Path;
 
@@ -94,6 +94,7 @@ mod tests {
     use crate::{App, FileRequest};
 
     const GARDEN: &str = include_str!("../../interchange/tests/fixtures/garden-studio.xml");
+    const KITCHEN: &[u8] = include_bytes!("../../interchange/tests/fixtures/kitchen-refit.csv");
 
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("projectcraft-ui-import-{}-{name}", std::process::id()));
@@ -144,6 +145,40 @@ mod tests {
         assert!(!h.state().is_dirty());
         assert_eq!(Session::open(&d.join("Garden studio.projectcraft")).unwrap().project.tasks.len(), 8);
         assert_eq!(std::fs::read_to_string(&xml).unwrap(), GARDEN);
+    }
+
+    /// Open of a `.csv` imports it the same way: a new, untitled project named after the file,
+    /// the report, and Save asking for a `.projectcraft` name (a `.csv` one is refused).
+    #[test]
+    fn opening_csv_imports_shows_the_report_and_save_never_writes_the_csv() {
+        let d = dir("csv");
+        let csv = d.join("Kitchen refit.csv");
+        std::fs::write(&csv, KITCHEN).unwrap();
+        let mut h = harness();
+        h.state_mut().open_path(&csv);
+        h.run_steps(3);
+        assert_eq!(h.state().session.project.name, "Kitchen refit");
+        assert_eq!(h.state().session.project.tasks.len(), 6);
+        assert_eq!(h.state().path, None);
+        assert!(h.state().is_dirty());
+        h.get_by_label("Import Report");
+        h.get_by_label("Notes column");
+        h.run_steps(3);
+        h.get_by_label("Close").click();
+        h.run_steps(3);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        h.run_steps(2);
+        assert_eq!(h.state_mut().take_file_request(), Some(FileRequest::SaveAs));
+        assert_eq!(h.state().save_as_name(), "Kitchen refit.projectcraft");
+        h.state_mut().file_picked(FileRequest::SaveAs, Some(csv.clone()));
+        assert!(h.state().status().contains("CSV"), "{}", h.state().status());
+        assert_eq!(std::fs::read(&csv).unwrap(), KITCHEN);
+        // Without a Task Name column the import is refused and the project stays.
+        let bad = d.join("bad.csv");
+        std::fs::write(&bad, "Name of task,Duration\nA,1\n").unwrap();
+        h.state_mut().open_path(&bad);
+        assert!(h.state().status().contains("Task Name"), "{}", h.state().status());
+        assert_eq!(h.state().session.project.name, "Kitchen refit");
     }
 
     #[test]

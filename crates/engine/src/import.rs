@@ -23,17 +23,30 @@ impl Session {
     }
 
     /// Imports the file at `path` into a new session. Without a `format`, the file's content
-    /// says which (Microsoft Project XML is also taken from a `.xml` name, so its own errors show).
+    /// says which, else its name: `.xml` is Microsoft Project XML (so its own errors show), `.csv`
+    /// is CSV. A CSV has no project name: the file's is used.
     pub fn import_file(path: &Path, format: Option<Format>) -> Result<Session, CmdError> {
         let io = |e: io::Error| CmdError::Io(format!("{}: {e}", path.display()));
         let mut bytes = Vec::new();
         File::open(path).and_then(|f| f.take(MAX_IMPORT_BYTES as u64 + 1).read_to_end(&mut bytes)).map_err(io)?;
-        let is_xml = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("xml"));
-        let format = format
-            .or_else(|| interchange::detect(&bytes))
-            .or(is_xml.then_some(Format::Mspdi))
-            .ok_or_else(|| CmdError::Io(format!("{}: not a file ProjectCraft can import (it imports Microsoft Project XML)", path.display())))?;
-        Session::import(format, &bytes).map_err(|e| CmdError::Io(format!("{}: {e}", path.display())))
+        let by_name = match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+            Some("xml") => Some(Format::Mspdi),
+            Some("csv") => Some(Format::Csv),
+            _ => None,
+        };
+        let format = format.or_else(|| interchange::detect(&bytes)).or(by_name).ok_or_else(|| {
+            CmdError::Io(format!("{}: not a file ProjectCraft can import (it imports Microsoft Project XML and CSV)", path.display()))
+        })?;
+        let mut s = Session::import(format, &bytes).map_err(|e| CmdError::Io(format!("{}: {e}", path.display())))?;
+        if format == Format::Csv
+            && let Some(stem) = path
+                .file_stem()
+                .map(|n| n.to_string_lossy().chars().filter(|c| !c.is_control()).collect::<String>().trim().to_owned())
+                .filter(|n| !n.is_empty())
+        {
+            s.project.name = stem;
+        }
+        Ok(s)
     }
 
     /// The report of the import that made this session's project, if one did.
@@ -114,6 +127,25 @@ mod tests {
         assert_eq!(s.project.name, "Shed");
         assert!(!s.can_undo(), "an import is a new project, not an edit of the old one");
         assert!(s.import_report().is_some());
+    }
+
+    #[test]
+    fn a_csv_imports_by_its_name_and_is_named_after_the_file() {
+        let csv = tmp("Loft conversion.csv", "\u{feff}Task Name;Duration;Predecessors\r\nPlans;5;\r\nBuild;10;1\r\n");
+        let s = Session::import_file(&csv, None).unwrap();
+        assert_eq!(s.project.name, "Loft conversion");
+        assert_eq!(s.import_report().unwrap().format, Format::Csv);
+        let sched = s.schedule.as_ref().unwrap();
+        assert_eq!(sched.tasks.get(&model::TaskId(2)).map(|d| d.start.to_string()), Some("1970-01-08".into()), "after Plans' 5 days");
+        let mut s = crate::sample();
+        s.run("file.import", &json!({"format": "csv", "path": csv.to_str().unwrap()})).unwrap();
+        assert_eq!(s.project.tasks.len(), 2);
+        // A CSV without a Task Name column says so, and the open project stays.
+        let bad = tmp("bad.csv", "Name of task,Duration\nA,1\n");
+        let before = s.project.clone();
+        let e = s.run("file.import", &json!({"format": "csv", "path": bad.to_str().unwrap()})).unwrap_err();
+        assert!(e.to_string().contains("Task Name"), "{e}");
+        assert_eq!(s.project, before);
     }
 
     #[test]
