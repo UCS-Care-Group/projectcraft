@@ -14,6 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::links::Refused;
 use crate::model::{
     self, Constraint, Date, DurationUnit, Link, MAX_ASSIGNMENTS, MAX_MINUTES, MAX_OUTLINE_LEVEL, MAX_RESOURCES, MAX_TASKS, Outline, Project, Task,
     TaskId,
@@ -652,12 +653,12 @@ fn fit_outline(p: &mut Project, notes: &mut [u32], has_duration: bool, rows: &[R
 fn links(p: &mut Project, rows: &[Row], notes: &mut [u32]) {
     let options = p.options;
     let outline = Outline::of(p);
-    let within = |inner: usize, outer: usize| inner > outer && inner < outline.subtree_end(outer);
     // Rows are increasing: a row number's task is found by search.
     let row_numbers: Vec<usize> = rows.iter().map(|r| r.row).collect();
     let mut all = Vec::with_capacity(rows.len());
     for (i, r) in rows.iter().enumerate() {
         let mut preds: Vec<Link> = Vec::new();
+        let mut kept = HashSet::new();
         let mut n = 0u32;
         if let Some(text) = r.get(Field::Predecessors) {
             match model::parse_preds(text, &options) {
@@ -669,14 +670,14 @@ fn links(p: &mut Project, rows: &[Row], notes: &mut [u32]) {
                             continue;
                         };
                         let Some(pred) = p.tasks.get(j).map(|t| t.id) else { continue };
-                        if j == i {
-                            n |= Note::SelfLink.bit();
-                        } else if preds.iter().any(|x| x.pred == pred) {
-                            n |= Note::RepeatedLink.bit();
-                        } else if within(i, j) || within(j, i) {
-                            n |= Note::SummaryLink.bit();
-                        } else {
-                            preds.push(Link { pred, ..l });
+                        match crate::links::refused(&outline, &kept, j, i, pred) {
+                            Some(Refused::SelfLink) => n |= Note::SelfLink.bit(),
+                            Some(Refused::Repeated) => n |= Note::RepeatedLink.bit(),
+                            Some(Refused::Summary) => n |= Note::SummaryLink.bit(),
+                            None => {
+                                kept.insert(pred);
+                                preds.push(Link { pred, ..l });
+                            }
                         }
                     }
                 }

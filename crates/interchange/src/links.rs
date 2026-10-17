@@ -1,6 +1,7 @@
-//! Links read from another program's file that would close a loop. ProjectCraft's editing
-//! commands refuse such a link; an import drops it instead, with a report line, so the scheduler
-//! never meets a loop.
+//! Links read from another program's file that ProjectCraft's editing commands would refuse: to
+//! the task itself, repeated, between a summary and its own subtask ([`refused`]), or closing a
+//! loop ([`drop_loops`]). An import drops each instead, with a report line, so the scheduler never
+//! meets a loop.
 //!
 //! The graph is the scheduler's: each task's finish, and for each summary a hold that its
 //! predecessors feed, that comes after its own summary's hold and before each of its subtasks,
@@ -9,9 +10,35 @@
 //! inside a loop (one strongly connected part of the graph) are searched, within a budget; past it
 //! the rest of those links are dropped, so a hostile file can't make the import run on.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::model::{Outline, Project, TaskId};
+
+/// Why a link read from a file can't join its task's links.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Refused {
+    /// The task is its own predecessor.
+    SelfLink,
+    /// The task already has this predecessor; the first link is kept.
+    Repeated,
+    /// Between a summary task and its own subtask.
+    Summary,
+}
+
+/// Whether the link from row `from` (task `pred`) to row `to` is refused, given the predecessors
+/// `to` has kept so far.
+pub(crate) fn refused(outline: &Outline, kept: &HashSet<TaskId>, from: usize, to: usize, pred: TaskId) -> Option<Refused> {
+    let within = |inner: usize, outer: usize| inner > outer && inner < outline.subtree_end(outer);
+    if from == to {
+        Some(Refused::SelfLink)
+    } else if kept.contains(&pred) {
+        Some(Refused::Repeated)
+    } else if within(to, from) || within(from, to) {
+        Some(Refused::Summary)
+    } else {
+        None
+    }
+}
 
 /// Nodes visited, in all, looking for paths that would close a loop.
 const SEARCH_BUDGET: usize = 5_000_000;

@@ -53,13 +53,15 @@ fn a_hand_written_file_imports_names_outline_levels_and_durations() {
     );
     assert_eq!(p.next_id, 11, "Unique IDs are kept, and new tasks follow them");
     assert_eq!(i.report.tasks, 8);
-    assert!(p.tasks.iter().all(|t| t.preds.is_empty()));
     let held: Vec<(u32, Constraint, Option<Date>)> =
         p.tasks.iter().filter(|t| !t.constraint.is_asap() || t.deadline.is_some()).map(|t| (t.id.0, t.constraint, t.deadline)).collect();
     assert_eq!(
         held,
         [(3, Constraint::StartNoEarlierThan(Date::from_ymd(2026, 3, 4).unwrap()), None), (5, Constraint::Asap, Date::from_ymd(2026, 3, 20))]
     );
+    let preds: Vec<(u32, Vec<u32>)> = p.tasks.iter().map(|t| (t.id.0, t.preds.iter().map(|l| l.pred.0).collect())).collect();
+    let linked: Vec<&(u32, Vec<u32>)> = preds.iter().filter(|(_, ps)| !ps.is_empty()).collect();
+    assert_eq!(linked, [&(3, vec![2]), &(5, vec![3])], "links by the file's Unique IDs");
 }
 
 #[test]
@@ -81,7 +83,6 @@ fn everything_else_is_a_report_line() {
     let expect = [
         ("Project summary task", Outcome::Dropped, "UID 0"),
         ("Blank rows", Outcome::Dropped, "1 row"),
-        ("Links (predecessors)", Outcome::NotYetImported, "ID 3 Pour the base, ID 4 Base cured"),
         ("Priority", Outcome::Dropped, "ID 3 Pour the base"),
         ("Notes", Outcome::Dropped, "ID 6 Frame and roof"),
         ("Estimated duration (?)", Outcome::Dropped, "ID 6 Frame and roof"),
@@ -91,6 +92,7 @@ fn everything_else_is_a_report_line() {
         ("Resources", Outcome::NotYetImported, "1 resource"),
         ("Assignments", Outcome::NotYetImported, "1 assignment"),
         ("Currency", Outcome::NotYetImported, "EUR"),
+        ("Start and finish", Outcome::DatesDiffer, "ID 1 Groundworks"),
     ];
     for (feature, outcome, place) in expect {
         let line = find(l, feature);
@@ -98,11 +100,14 @@ fn everything_else_is_a_report_line() {
         assert!(!line.why.is_empty());
     }
     assert_eq!(l.len(), expect.len(), "{l:#?}");
-    // Converted first, then dropped, then not yet imported.
+    // Converted first, then dropped, then not yet imported, then dates that differ.
     assert!(l.windows(2).all(|w| w[0].outcome <= w[1].outcome));
     let text = r.text();
     assert!(text.starts_with("Imported 8 tasks from Microsoft Project XML."), "{text}");
-    assert!(text.contains("Not yet imported: Links (predecessors) (ID 3 Pour the base, ID 4 Base cured): links come"), "{text}");
+    assert!(
+        text.contains("Dates differ: Start and finish (ID 1 Groundworks): the file has 2026-03-02 to 2026-03-11; ProjectCraft works out 2026-03-02 to 2026-03-10"),
+        "{text}"
+    );
 }
 
 #[test]

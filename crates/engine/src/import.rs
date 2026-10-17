@@ -94,15 +94,16 @@ mod tests {
         let s = Session::import(Format::Mspdi, FILE.as_bytes()).unwrap();
         assert_eq!(s.project.name, "Shed");
         let sched = s.schedule.as_ref().unwrap();
-        // Links aren't imported yet: both subtasks start on the project start; the summary rolls up.
+        // Pour follows Dig by its link; the summary rolls both up.
         let dates = |uid| sched.tasks.get(&model::TaskId(uid)).map(|d| (d.start.to_string(), d.finish.to_string())).unwrap();
         assert_eq!(dates(2), ("2026-11-02".into(), "2026-11-03".into()));
-        assert_eq!(dates(3), ("2026-11-02".into(), "2026-11-02".into()));
-        assert_eq!(dates(1), ("2026-11-02".into(), "2026-11-03".into()));
-        assert_eq!(s.project.task(model::TaskId(1)).unwrap().duration, 16 * 60, "the summary's duration is rolled up");
+        assert_eq!(dates(3), ("2026-11-04".into(), "2026-11-04".into()));
+        assert_eq!(dates(1), ("2026-11-02".into(), "2026-11-04".into()));
+        assert_eq!(s.project.task(model::TaskId(1)).unwrap().duration, 24 * 60, "the summary's duration is rolled up");
         let r = s.import_report().unwrap();
         assert_eq!(r.tasks, 3);
-        assert!(r.lines.iter().any(|l| l.feature.starts_with("Links")));
+        assert!(r.lines.iter().any(|l| l.feature == "Project summary task"));
+        assert!(!r.lines.iter().any(|l| l.feature.starts_with("Links")), "the link is imported");
         assert!(!s.can_undo());
     }
 

@@ -22,6 +22,7 @@ use crate::model::{
     self, Calendar, Constraint, DEFAULT_CURRENCY_CODE, Date, DurationUnit, MAX_MINUTES, MAX_OUTLINE_LEVEL, MAX_TASKS, MINUTES_IN_DAY, Options,
     Outline, Project, Task, TaskId, TaskType, WorkingTime,
 };
+use crate::mspdi_links::{self, FileRow};
 use crate::xml::{self, Visitor};
 use crate::{Format, Import, ImportError, ImportReport, Outcome, ReportLine};
 
@@ -77,7 +78,6 @@ enum Note {
     Outline,
     Manual,
     Recurring,
-    Links,
     FixedCost,
     Progress,
     Baseline,
@@ -92,7 +92,7 @@ enum Note {
 }
 
 impl Note {
-    const ALL: [Note; 21] = [
+    const ALL: [Note; 20] = [
         Note::NoDuration,
         Note::BadDuration,
         Note::NegativeDuration,
@@ -102,7 +102,6 @@ impl Note {
         Note::Outline,
         Note::Manual,
         Note::Recurring,
-        Note::Links,
         Note::FixedCost,
         Note::Progress,
         Note::Baseline,
@@ -131,7 +130,7 @@ impl Note {
             Note::Elapsed => (
                 Converted,
                 "Elapsed duration",
-                "read as the same amount of working time; elapsed durations are converted on the calendar in a later version",
+                "ProjectCraft counts durations in working time, so the elapsed span is the same number of working units (3ed is 3d)",
             ),
             Note::Estimated => (Dropped, "Estimated duration (?)", "ProjectCraft has no estimate mark; the duration is kept"),
             Note::Outline => (Converted, "Outline level", "deeper than the row above allows; moved up to fit the outline"),
@@ -139,7 +138,6 @@ impl Note {
             Note::Recurring => {
                 (Dropped, "Recurring task", "the recurrence is dropped; its occurrences are imported as ordinary tasks under a summary task")
             }
-            Note::Links => (NotYetImported, "Links (predecessors)", "links come in a later version; the task is scheduled without them"),
             Note::FixedCost => (NotYetImported, "Fixed cost", "costs come in a later version"),
             Note::Progress => (Dropped, "Progress (actuals, % complete)", "tracking comes in a later version"),
             Note::Baseline => (Dropped, "Baselines", "baselines come in a later version"),
@@ -171,6 +169,8 @@ struct FileTask {
     notes: u32,
     /// Constraint, deadline, task type and the like ([`fields`]).
     fields: fields::TaskFields,
+    /// Its links and the file's dates for it.
+    row: FileRow,
 }
 
 impl FileTask {
@@ -271,6 +271,9 @@ struct FileProject {
     assignment_resource: Option<i64>,
     custom_fields: usize,
     outline_codes: usize,
+    /// Links kept, and links past [`mspdi_links::MAX_FILE_LINKS`], only counted.
+    links: usize,
+    links_overflow: usize,
 }
 
 fn is(path: &[String], pattern: &[&str]) -> bool {
@@ -286,6 +289,7 @@ fn child<'a>(path: &'a [String], pattern: &[&str]) -> Option<&'a str> {
 }
 
 const TASK: &[&str] = &["Project", "Tasks", "Task"];
+const LINK: &[&str] = &["Project", "Tasks", "Task", "PredecessorLink"];
 const CALENDAR: &[&str] = &["Project", "Calendars", "Calendar"];
 const WEEKDAY: &[&str] = &["Project", "Calendars", "Calendar", "WeekDays", "WeekDay"];
 const WORKING_TIME: &[&str] = &["Project", "Calendars", "Calendar", "WeekDays", "WeekDay", "WorkingTimes", "WorkingTime"];
@@ -327,7 +331,10 @@ impl Visitor for FileProject {
             self.task = Some(FileTask::default());
         } else if let (Some(name), Some(task)) = (child(path, TASK), self.task.as_mut()) {
             let note = match name {
-                "PredecessorLink" => Some(Note::Links),
+                "PredecessorLink" => {
+                    task.row.open_link();
+                    None
+                }
                 "Baseline" => Some(Note::Baseline),
                 "ExtendedAttribute" | "EnterpriseExtendedAttribute" => Some(Note::CustomFields),
                 "OutlineCode" => Some(Note::OutlineCodes),
@@ -369,6 +376,14 @@ impl Visitor for FileProject {
                     return Err(ImportError::TooManyTasks);
                 }
                 self.tasks.push(t);
+            }
+        } else if is(path, LINK) {
+            if let Some(t) = self.task.as_mut() {
+                t.row.close_link(&mut self.links, &mut self.links_overflow);
+            }
+        } else if let Some(name) = child(path, LINK) {
+            if let Some(t) = self.task.as_mut() {
+                t.row.link_field(name, text);
             }
         } else if let Some(name) = child(path, TASK) {
             self.task_field(name, text);
@@ -572,8 +587,9 @@ impl FileProject {
                 t.null = truthy(text);
                 None
             }
-            "Start" => {
-                if let Some(d) = date_of(text) {
+            "Start" | "Finish" => {
+                t.row.date_field(name, text);
+                if let Some(d) = date_of(text).filter(|_| name == "Start") {
                     self.first_start = Some(self.first_start.map_or(d, |f| f.min(d)));
                 }
                 None
@@ -633,7 +649,7 @@ impl FileProject {
             ));
         }
         p.calendar = self.calendar(&mut lines);
-        let (tasks, task_lines, on) = tasks(std::mem::take(&mut self.tasks), &p.options, p.start)?;
+        let (tasks, task_lines, on, rows) = tasks(std::mem::take(&mut self.tasks), &p.options, p.start)?;
         lines.extend(task_lines);
         lines.extend(self.other_calendars(&tasks, &on));
         let count = tasks.len();
@@ -641,6 +657,8 @@ impl FileProject {
         p.tasks = tasks;
         lines.extend(self.collections());
         lines.extend(outline_lines(&mut p));
+        lines.extend(mspdi_links::links(&mut p, &rows, self.links_overflow));
+        lines.extend(mspdi_links::date_lines(&p, &rows));
         lines.sort_by_key(|l| l.outcome);
         Ok(Import { project: p, report: ImportReport { format: Format::Mspdi, tasks: count, lines } })
     }
@@ -765,11 +783,11 @@ impl FileProject {
     }
 }
 
-fn line(outcome: Outcome, feature: &str, place: &str, why: &str) -> ReportLine {
+pub(crate) fn line(outcome: Outcome, feature: &str, place: &str, why: &str) -> ReportLine {
     ReportLine { outcome, feature: feature.into(), place: place.into(), why: why.into() }
 }
 
-fn plural(n: usize, what: &str) -> String {
+pub(crate) fn plural(n: usize, what: &str) -> String {
     if n == 1 { format!("1 {what}") } else { format!("{n} {what}s") }
 }
 
@@ -936,9 +954,13 @@ fn unit_of(format: Option<i64>) -> (DurationUnit, bool, bool) {
     (unit, elapsed, estimated)
 }
 
-/// The file's tasks as the project's, in the file's ID order, with the report lines about them
-/// and each one's own calendar.
-fn tasks(file: Vec<FileTask>, options: &Options, start: Date) -> Result<(Vec<Task>, Vec<ReportLine>, Vec<Option<i64>>), ImportError> {
+/// The project's tasks, the report lines about them, and by row each one's own calendar and its
+/// links and dates in the file.
+type Tasks = (Vec<Task>, Vec<ReportLine>, Vec<Option<i64>>, Vec<FileRow>);
+
+/// The file's tasks as the project's, in the file's ID order. An elapsed duration is read as the
+/// same number of working units.
+fn tasks(file: Vec<FileTask>, options: &Options, start: Date) -> Result<Tasks, ImportError> {
     let mut lines = Vec::new();
     let (mut summary, mut blank) = (false, 0usize);
     let mut kept: Vec<FileTask> = Vec::with_capacity(file.len());
@@ -975,9 +997,12 @@ fn tasks(file: Vec<FileTask>, options: &Options, start: Date) -> Result<(Vec<Tas
     let mut notes = Vec::with_capacity(kept.len());
     let mut field_notes = Vec::with_capacity(kept.len());
     let mut on = Vec::with_capacity(kept.len());
+    let mut rows = Vec::with_capacity(kept.len());
     for (row, mut t) in kept.into_iter().enumerate() {
         let (unit, elapsed, estimated) = unit_of(t.format);
-        let duration = match t.duration.as_deref().map(duration_minutes) {
+        let read =
+            t.duration.as_deref().map(|d| duration_minutes(d).map(|m| if elapsed { mspdi_links::elapsed_to_working(m, unit, options) } else { m }));
+        let duration = match read {
             None => {
                 t.note(Note::NoDuration);
                 day
@@ -1024,10 +1049,12 @@ fn tasks(file: Vec<FileTask>, options: &Options, start: Date) -> Result<(Vec<Tas
         out.push(task);
         notes.push(t.notes);
         on.push(t.calendar);
+        t.row.uid = t.uid;
+        rows.push(std::mem::take(&mut t.row));
     }
     lines.extend(task_lines(&out, &notes));
     lines.extend(fields::lines(&out, &field_notes));
-    Ok((out, lines, on))
+    Ok((out, lines, on, rows))
 }
 
 /// Rows whose level breaks the outline rule are moved up to fit, each with a report line.
@@ -1058,7 +1085,7 @@ fn task_lines(tasks: &[Task], notes: &[u32]) -> Vec<ReportLine> {
 }
 
 /// The first few of these rows' tasks by ID and name, and how many more.
-fn rows_named(tasks: &[Task], rows: &[usize]) -> String {
+pub(crate) fn rows_named(tasks: &[Task], rows: &[usize]) -> String {
     let named: Vec<String> =
         rows.iter().filter_map(|&r| tasks.get(r).map(|t| format!("ID {} {}", r + 1, t.name.chars().take(40).collect::<String>()))).collect();
     named_list(named, rows.len(), "more task")
