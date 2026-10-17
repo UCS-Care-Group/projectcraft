@@ -64,7 +64,8 @@ fn the_project_calendar_s_working_week_is_imported() {
     let t = |a, b| WorkingTime::new(a, b).unwrap();
     assert_eq!(c.weekday_times(0), [t(480, 720), t(780, 1020)]);
     assert_eq!(c.weekday_times(4), [t(480, 720)], "Friday is a half day");
-    assert!(c.exceptions.is_empty(), "exceptions are not imported yet");
+    let holiday = Date::from_ymd(2026, 4, 3).unwrap();
+    assert_eq!(c.exceptions.iter().collect::<Vec<_>>(), [(&holiday, &false)], "the spring holiday is a day off");
 }
 
 #[test]
@@ -81,8 +82,7 @@ fn everything_else_is_a_report_line() {
         ("Notes", Outcome::Dropped, "ID 6 Frame and roof"),
         ("Estimated duration (?)", Outcome::Dropped, "ID 6 Frame and roof"),
         ("Progress (actuals, % complete)", Outcome::Dropped, "ID 7 Fit windows"),
-        ("Calendar exceptions", Outcome::NotYetImported, "1 exception"),
-        ("Other base calendars", Outcome::Dropped, "1 calendar"),
+        ("Base calendar", Outcome::Dropped, "Night shift (UID 2)"),
         ("Resource calendars", Outcome::NotYetImported, "1 calendar"),
         ("Resources", Outcome::NotYetImported, "1 resource"),
         ("Assignments", Outcome::NotYetImported, "1 assignment"),
