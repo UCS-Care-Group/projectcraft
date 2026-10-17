@@ -397,6 +397,30 @@ fn hostile_finish_holds_stay_bounded() {
     if !cfg!(debug_assertions) {
         assert!(t < USAGE_GATE, "usage at the assignment cap took {t:.2?}, over the {USAGE_GATE:?} gate");
     }
+    // The same two with one person working Saturdays the project doesn't: every task is walked,
+    // those without resources on the project calendar, and lags count there.
+    for (what, p) in [("hostile finish holds staffed", hostile_staffed()), ("the assignment cap", staffed_to_the_cap())] {
+        let p = works_saturdays(p);
+        let t0 = Instant::now();
+        let s = projectcraft_engine::model::schedule(&p);
+        let t = t0.elapsed();
+        assert!(s.is_ok());
+        assert_eq!(s, projectcraft_engine::model::schedule(&p), "same dates every time");
+        println!("perf ({build}): {what}, one person working Saturdays outside the project's time {t:.2?} (gate: under {HOSTILE_GATE:?})");
+        if !cfg!(debug_assertions) {
+            assert!(t < HOSTILE_GATE, "{what} with Saturdays took {t:.2?}, over the {HOSTILE_GATE:?} gate");
+        }
+    }
+}
+
+/// `p` with its first person working the first 50 Saturdays, which the project calendar doesn't.
+fn works_saturdays(mut p: Project) -> Project {
+    let first = p.resources[0].id;
+    for k in 0..50 {
+        let sat = date("2026-01-10").add_days(7 * k).unwrap();
+        p.set_resource_exception(first, sat, projectcraft_engine::model::DEFAULT_WORKING_TIMES.to_vec()).unwrap();
+    }
+    p
 }
 
 /// The most typing 1,000 names into Resource Names on the large plan may take, in release,

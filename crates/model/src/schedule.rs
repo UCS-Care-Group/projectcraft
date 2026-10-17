@@ -1,8 +1,9 @@
 //! Critical-path scheduling: a forward pass for the early dates, a backward pass for the late
 //! dates, slack as the difference. Times are offsets in working minutes from the first working
-//! minute on or after the project start, counted on the calendar's working times; at the end each
-//! is turned into a [`Moment`] (a date and a minute of the day) through the calendar. Durations,
-//! lags and slack are working minutes. Integer arithmetic only.
+//! minute on or after the project start, counted on the plan's working time (the project calendar,
+//! with any resource calendar's time outside it added: see [`Crews`]); at the end each is turned
+//! into a [`Moment`] (a date and a minute of the day) through it. Durations, lags and slack are
+//! working minutes; lags and slack count on the project calendar. Integer arithmetic only.
 //!
 //! Constraints: Start No Earlier Than raises the early start to its date, Finish No Earlier Than
 //! the early finish (ES = max(ES, CD), EF = max(EF, CD)). A constraint date is a day: a start type
@@ -63,7 +64,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
-use crate::resource_calendar::{Counted, OnProject, ResView, Work, count_to, counts_to, moment_at, moment_from};
+use crate::resource_calendar::{Counted, OnProject, ResView, Work, count_to, counts_to, moment_at, moment_from, plan_time};
 use crate::{Constraint, Date, LinkKind, MAX_MINUTES, ModelError, Outline, Project, ResourceId, Task, TaskId, Units};
 
 /// A point in time on the calendar: a date and a minute of that day (0 is midnight, 1440 the
@@ -223,26 +224,67 @@ fn order_with(p: &Project, tree: &Tree) -> Result<Vec<usize>, ModelError> {
 }
 
 /// Each constraint and deadline date's offsets, worked out once from the calendar: the passes
-/// (and the finish-type hold searches, which run them many times) only look them up.
-struct Days {
+/// (and the finish-type hold searches, which run them many times) only look them up. With the
+/// lags, worked on the project calendar.
+struct Days<'a> {
     /// The project start: a date before it is offset 0.
     start: Date,
     /// Date on or after the start → (start of its working time, end of its working time).
     at: HashMap<Date, (i64, i64)>,
+    lags: Lags<'a>,
 }
 
-impl Days {
-    /// Counted on `base`, the project calendar indexed once, so each date costs a binary search
-    /// however many exceptions the calendar has.
-    fn of(p: &Project, base: &Counted<'_>) -> Days {
+impl<'a> Days<'a> {
+    /// Counted on `lags.line`, the plan's working time indexed once, so each date costs a binary
+    /// search however many exceptions the calendar has.
+    fn of(p: &Project, lags: Lags<'a>) -> Days<'a> {
         let mut at = HashMap::new();
         for cd in p.tasks.iter().flat_map(|t| t.constraint.date().into_iter().chain(t.deadline)).filter(|cd| *cd >= p.start) {
             at.entry(cd).or_insert_with(|| {
-                let start = base.minutes_between(p.start, cd);
-                (start, start + p.calendar.minutes_on(cd))
+                let start = lags.line.minutes_between(p.start, cd);
+                (start, start + lags.line.cal.minutes_on(cd))
             });
         }
-        Days { start: p.start, at }
+        Days { start: p.start, at, lags }
+    }
+}
+
+/// The line the scheduler counts offsets on: the plan's working time ([`plan_time`]), and the
+/// project calendar when that is something else (a resource works outside the project's working
+/// time). Lags are working time on the project calendar, as durations of tasks without resources.
+#[derive(Clone, Copy)]
+struct Lags<'a> {
+    r: Date,
+    line: &'a Counted<'a>,
+    /// The project calendar, when it isn't the line.
+    project: Option<&'a Counted<'a>>,
+}
+
+impl Lags<'_> {
+    /// The offset `lag` working minutes of the project calendar after the point at offset `off`:
+    /// a finish (the end of the working minute before) when `finish`, else a start. On the
+    /// project calendar's own line, `off + lag`.
+    /// Where it lands is the earliest moment that far on (the end of the working minute before):
+    /// a successor's earliest start or finish.
+    fn after(&self, off: i64, lag: i64, finish: bool) -> i64 {
+        self.shift(off, lag, finish, false)
+    }
+
+    /// The offset `lag` working minutes of the project calendar before the point at offset `off`,
+    /// landing on the latest moment that far back (the start of the next working minute): a
+    /// predecessor's latest finish.
+    fn before(&self, off: i64, lag: i64, finish: bool) -> i64 {
+        self.shift(off, lag.saturating_neg(), finish, true)
+    }
+
+    fn shift(&self, off: i64, lag: i64, finish: bool, late: bool) -> i64 {
+        let Some(pc) = self.project.filter(|_| lag != 0) else { return off.saturating_add(lag) };
+        let Some(from) = moment_at(self.line, self.r, off, !(finish && off > 0)) else { return off.saturating_add(lag) };
+        let k = count_to(pc, self.r, from).saturating_add(lag);
+        if k <= 0 {
+            return k;
+        }
+        moment_at(pc, self.r, k, late).map_or(off.saturating_add(lag), |m| count_to(self.line, self.r, m))
     }
 }
 
@@ -272,7 +314,7 @@ struct Forward {
 
 /// Where a task's links put its start, and which link did it. `back` is where it starts to finish
 /// at an offset: the offset less its duration, or worked back on its resources' calendars.
-fn link_start(t: &Task, index: &HashMap<TaskId, usize>, es: &[i64], ef: &[i64], back: &impl Fn(i64) -> i64) -> (i64, Driver) {
+fn link_start(t: &Task, o: &Days, index: &HashMap<TaskId, usize>, es: &[i64], ef: &[i64], back: &impl Fn(i64) -> i64) -> (i64, Driver) {
     let mut start = 0i64;
     let mut why = Driver::ProjectStart;
     for l in &t.preds {
@@ -280,10 +322,10 @@ fn link_start(t: &Task, index: &HashMap<TaskId, usize>, es: &[i64], ef: &[i64], 
         let (pes, pef) = (es.get(j).copied().unwrap_or(0), ef.get(j).copied().unwrap_or(0));
         let lag = l.lag.clamp(-MAX_MINUTES, MAX_MINUTES);
         let s = match l.kind {
-            LinkKind::FS => pef + lag,
-            LinkKind::SS => pes + lag,
-            LinkKind::FF => back(pef + lag),
-            LinkKind::SF => back(pes + lag),
+            LinkKind::FS => o.lags.after(pef, lag, true),
+            LinkKind::SS => o.lags.after(pes, lag, false),
+            LinkKind::FF => back(o.lags.after(pef, lag, true)),
+            LinkKind::SF => back(o.lags.after(pes, lag, false)),
         };
         if s > start || (s == start && why == Driver::ProjectStart) {
             (start, why) = (s, Driver::Link(l.pred));
@@ -336,7 +378,7 @@ const HOLD_JUMPS: u32 = 8;
 /// The forward pass: each node in [`order`] in turn, and each summary's hold.
 struct Pass<'a> {
     p: &'a Project,
-    o: &'a Days,
+    o: &'a Days<'a>,
     tree: &'a Tree,
     order: &'a [usize],
     /// Where each node sits in `order`.
@@ -354,7 +396,7 @@ struct Pass<'a> {
 }
 
 /// One forward pass.
-fn forward<'a>(p: &'a Project, o: &'a Days, tree: &'a Tree, order: &'a [usize], dur: &'a [i64], crews: &'a Crews<'a>) -> Forward {
+fn forward<'a>(p: &'a Project, o: &'a Days<'a>, tree: &'a Tree, order: &'a [usize], dur: &'a [i64], crews: &'a Crews<'a>) -> Forward {
     let n = p.tasks.len();
     let mut at = vec![0usize; 2 * n];
     for (k, &node) in order.iter().enumerate() {
@@ -432,7 +474,7 @@ impl Pass<'_> {
         let d = self.dur.get(i).copied().unwrap_or(0);
         let crews = self.crews;
         let back = |f: i64| crews.back(i, f).unwrap_or(f - d);
-        let (mut start, mut why) = link_start(t, &self.index, &self.f.es, &self.f.ef, &back);
+        let (mut start, mut why) = link_start(t, o, &self.index, &self.f.es, &self.f.ef, &back);
         if let Some((h, src)) = self.held_by(i, start) {
             start = h;
             why = src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(self.id(u)));
@@ -470,13 +512,13 @@ impl Pass<'_> {
             let lag = l.lag.clamp(-MAX_MINUTES, MAX_MINUTES);
             match l.kind {
                 LinkKind::FS | LinkKind::SS => {
-                    let x = if l.kind == LinkKind::FS { pef } else { pes } + lag;
+                    let x = if l.kind == LinkKind::FS { o.lags.after(pef, lag, true) } else { o.lags.after(pes, lag, false) };
                     if x > start || (x == start && why == Driver::ProjectStart) {
                         (start, why) = (x, Driver::Link(l.pred));
                     }
                 }
                 LinkKind::FF | LinkKind::SF => {
-                    let x = if l.kind == LinkKind::FF { pef } else { pes } + lag;
+                    let x = if l.kind == LinkKind::FF { o.lags.after(pef, lag, true) } else { o.lags.after(pes, lag, false) };
                     if finish.is_none_or(|(f, _)| x > f) {
                         finish = Some((x, Driver::Link(l.pred)));
                     }
@@ -610,8 +652,8 @@ fn moments(p: &Project, o: &Days, tree: &Tree, order: &[usize], es: &[i64], ef: 
                 let (Some(&ps), Some(&pf)) = (start.get(j), finish.get(j)) else { continue };
                 let lag = l.lag.clamp(-MAX_MINUTES, MAX_MINUTES);
                 ask = ask.max(match l.kind {
-                    LinkKind::FF => (pf.0 + lag, pf.1),
-                    LinkKind::SF => (ps.0 + lag, ps.1 && d(j) == 0),
+                    LinkKind::FF => (o.lags.after(pf.0, lag, !pf.1), pf.1),
+                    LinkKind::SF => (o.lags.after(ps.0, lag, !ps.1), ps.1 && d(j) == 0),
                     LinkKind::FS | LinkKind::SS => continue,
                 });
             }
@@ -649,11 +691,12 @@ fn moments(p: &Project, o: &Days, tree: &Tree, order: &[usize], es: &[i64], ef: 
             let Some(&j) = index.get(&l.pred) else { continue };
             let (Some(&ps), Some(&pf)) = (start.get(j), finish.get(j)) else { continue };
             let lag = l.lag.clamp(-MAX_MINUTES, MAX_MINUTES);
+            let (pf_lag, ps_lag) = (o.lags.after(pf.0, lag, !pf.1), o.lags.after(ps.0, lag, !ps.1));
             m = m.max(match l.kind {
-                LinkKind::FS => (pf.0 + lag, pf.1),
-                LinkKind::SS => (ps.0 + lag, ps.1),
-                LinkKind::FF => back(pf.0 + lag - dur, pf.1, dur),
-                LinkKind::SF => back(ps.0 + lag - dur, ps.1, dur),
+                LinkKind::FS => (pf_lag, pf.1),
+                LinkKind::SS => (ps_lag, ps.1),
+                LinkKind::FF => back(pf_lag - dur, pf.1, dur),
+                LinkKind::SF => back(ps_lag - dur, ps.1, dur),
             });
         }
         if let Some(&h) = tree.parent(i).and_then(|up| hold.get(up)) {
@@ -695,9 +738,12 @@ fn moments(p: &Project, o: &Days, tree: &Tree, order: &[usize], es: &[i64], ef: 
 /// earliest assignment's start to its latest's finish, as Microsoft Project schedules tasks
 /// without a task calendar (its Ignore Resource Calendar field is No by default:
 /// <https://support.microsoft.com/en-us/project/ignore-resource-calendar-task-field>). A resource
-/// works only within the project calendar's working time, so the forward and backward passes see
-/// the span as the project-calendar working time it covers, never less than its work's. Other
-/// tasks, those without resources included, are worked on the project calendar.
+/// may work outside the project calendar's working time, so the forward and backward passes count
+/// offsets on the plan's working time ([`plan_time`]), which holds every minute any of these
+/// calendars works, and see the span as the working time it covers there. Other tasks, those
+/// without resources included, are worked on the project calendar: when that is the plan's
+/// working time (no resource works outside it, as in most plans) as plain offsets, else walked on
+/// it like an assignment, so a Saturday only a resource works never counts for them.
 ///
 /// No calendar is copied: the project calendar is indexed once ([`Counted`]) and each resource
 /// on such a task adds only its own days ([`ResView`]). A resource left with no working weekday
@@ -706,12 +752,16 @@ fn moments(p: &Project, o: &Days, tree: &Tree, order: &[usize], es: &[i64], ef: 
 struct Crews<'a> {
     /// The project start: counts of working minutes run from it.
     r: Date,
+    /// The project calendar.
     base: &'a Counted<'a>,
+    /// The plan's working time, which the offsets count: `base` unless a resource works outside it.
+    line: &'a Counted<'a>,
     /// The resource calendars in use.
     views: Vec<ResView<'a>>,
-    /// By row: each work assignment's calendar (an index into `views`, `None` for the project
-    /// calendar), its duration and its resource; `None` for a task on the project calendar.
-    rows: Vec<Option<Vec<(Option<usize>, i64, ResourceId)>>>,
+    /// By row: each walk's calendar (an index into `views`, `None` for the project calendar), its
+    /// duration and its resource (`None` for the task itself, on the project calendar); `None`
+    /// for a task counted as plain offsets.
+    rows: Vec<Option<Vec<Crew>>>,
     /// What `fwd` and `back` worked out, by row and offset: the finish-type hold searches ask
     /// the same again and again. Only looked up, never iterated, so the dates stay the same.
     fwd_memo: RefCell<HashMap<(usize, i64), Option<(i64, i64)>>>,
@@ -732,32 +782,69 @@ struct Walk {
     each: Vec<(ResourceId, Moment, Moment)>,
 }
 
+/// One walk of a task on its resources' calendars: its calendar, its duration, its resource.
+type Crew = (Option<usize>, i64, Option<ResourceId>);
+
+/// The work resources with a calendar of their own that works some weekday, by Unique ID.
+fn own_calendars(p: &Project) -> HashMap<ResourceId, &crate::ResourceCalendar> {
+    p.resources
+        .iter()
+        .filter(|r| r.kind == crate::ResourceType::Work && !r.calendar.is_empty() && r.calendar.works_a_weekday(&p.calendar))
+        .map(|r| (r.id, &r.calendar))
+        .collect()
+}
+
+/// Whether an assignment is worked on its resource's calendar when it has one: it does work (one
+/// at 0% holds nothing, as for the task's duration).
+fn works(a: &crate::Assignment) -> bool {
+    matches!(a.units, Units::Work(_)) && a.work > 0 && a.duration > 0
+}
+
+/// The calendars of their own that reach outside the project calendar's working time and that the
+/// schedule walks assignments on: each resource's once, in Unique ID order. Most plans have none,
+/// found without looking at the assignments.
+fn reaching_outside<'p>(p: &'p Project, tree: &Tree) -> Vec<&'p crate::ResourceCalendar> {
+    let mut own = own_calendars(p);
+    own.retain(|_, c| !c.within(&p.calendar));
+    if own.is_empty() {
+        return Vec::new();
+    }
+    let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+    let mut used: Vec<ResourceId> = p
+        .assignments
+        .iter()
+        .filter(|a| works(a) && own.contains_key(&a.resource) && index.get(&a.task).is_some_and(|&i| tree.summary(i).is_none()))
+        .map(|a| a.resource)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    used.sort();
+    used.iter().filter_map(|r| own.get(r).copied()).collect()
+}
+
 impl<'a> Crews<'a> {
-    fn of(p: &'a Project, tree: &Tree, base: &'a Counted<'a>) -> Crews<'a> {
+    /// `line` is the plan's working time; when it isn't `base` (`walk_all`), every task with
+    /// duration is walked.
+    fn of(p: &'a Project, tree: &Tree, base: &'a Counted<'a>, line: &'a Counted<'a>, walk_all: bool) -> Crews<'a> {
         let n = p.tasks.len();
-        let mut rows: Vec<Option<Vec<(Option<usize>, i64, ResourceId)>>> = vec![None; n];
+        let mut rows: Vec<Option<Vec<Crew>>> = vec![None; n];
         let mut views = Vec::new();
-        let own: HashMap<ResourceId, &crate::ResourceCalendar> =
-            p.resources.iter().filter(|r| r.kind == crate::ResourceType::Work && !r.calendar.is_empty()).map(|r| (r.id, &r.calendar)).collect();
+        let own = own_calendars(p);
         if !own.is_empty() {
             let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
             // Each resource's view, made the first time one of its assignments needs it.
             let mut made: HashMap<ResourceId, Option<usize>> = HashMap::new();
-            // One doing no work (at 0%) holds nothing, as for the task's duration.
-            for a in p.assignments.iter().filter(|a| matches!(a.units, Units::Work(_)) && a.work > 0 && a.duration > 0) {
+            for a in p.assignments.iter().filter(|a| works(a)) {
                 let Some(&i) = index.get(&a.task) else { continue };
                 if tree.summary(i).is_some() {
                     continue;
                 }
                 let cal = *made.entry(a.resource).or_insert_with(|| {
-                    let view = ResView::new(base, own.get(&a.resource)?);
-                    (view.per_week() > 0).then(|| {
-                        views.push(view);
-                        views.len() - 1
-                    })
+                    views.push(ResView::new(base, own.get(&a.resource)?));
+                    Some(views.len() - 1)
                 });
                 if let Some(row) = rows.get_mut(i) {
-                    row.get_or_insert_with(Vec::new).push((cal, a.duration.clamp(0, MAX_MINUTES), a.resource));
+                    row.get_or_insert_with(Vec::new).push((cal, a.duration.clamp(0, MAX_MINUTES), Some(a.resource)));
                 }
             }
             for row in &mut rows {
@@ -766,15 +853,22 @@ impl<'a> Crews<'a> {
                 }
             }
         }
+        if walk_all {
+            for (i, t) in p.tasks.iter().enumerate() {
+                if let Some(row) = rows.get_mut(i).filter(|r| r.is_none() && tree.summary(i).is_none() && t.duration > 0) {
+                    *row = Some(vec![(None, t.duration.clamp(0, MAX_MINUTES), None)]);
+                }
+            }
+        }
         let last = RefCell::new(rows.iter().map(|_| None).collect());
-        Crews { r: p.start, base, views, rows, fwd_memo: RefCell::default(), back_memo: RefCell::default(), last }
+        Crews { r: p.start, base, line, views, rows, fwd_memo: RefCell::default(), back_memo: RefCell::default(), last }
     }
 
     fn has(&self, i: usize) -> bool {
         self.rows.get(i).is_some_and(Option::is_some)
     }
 
-    fn crew(&self, i: usize) -> Option<&[(Option<usize>, i64, ResourceId)]> {
+    fn crew(&self, i: usize) -> Option<&[Crew]> {
         self.rows.get(i)?.as_deref()
     }
 
@@ -786,12 +880,12 @@ impl<'a> Crews<'a> {
         }
     }
 
-    /// Row `i` from offset `s` on its resources' calendars: `None` for a task on the project
-    /// calendar; an error naming the resource whose calendar has no working time left (`None`:
+    /// Row `i` from offset `s` on its resources' calendars: `None` for a task counted as plain
+    /// offsets; an error naming the resource whose calendar has no working time left (`None`:
     /// the project calendar's).
     fn walk(&self, i: usize, s: i64) -> Option<Result<Walk, Option<ResourceId>>> {
         let crew = self.crew(i)?;
-        let Some(from) = moment_at(self.base, self.r, s, true) else { return Some(Err(None)) };
+        let Some(from) = moment_at(self.line, self.r, s, true) else { return Some(Err(None)) };
         let mut w = Walk { start: from, finish: from, each: Vec::with_capacity(crew.len()) };
         for (k, &(c, dur, r)) in crew.iter().enumerate() {
             let span = self.on(c, |cal| {
@@ -800,13 +894,15 @@ impl<'a> Crews<'a> {
                 let a = moment_from(cal, self.r, from.date, day, at, true)?;
                 Some((a, moment_from(cal, self.r, from.date, day, at.saturating_add(dur), false)?))
             });
-            let Some((a, b)) = span else { return Some(Err(Some(r))) };
+            let Some((a, b)) = span else { return Some(Err(r)) };
             if k == 0 {
                 (w.start, w.finish) = (a, b);
             }
             w.start = w.start.min(a);
             w.finish = w.finish.max(b);
-            w.each.push((r, a, b));
+            if let Some(r) = r {
+                w.each.push((r, a, b));
+            }
         }
         Some(Ok(w))
     }
@@ -827,8 +923,8 @@ impl<'a> Crews<'a> {
 
     fn fwd_walk(&self, i: usize, s: i64) -> Option<(i64, i64)> {
         let w = self.walk(i, s)?.ok()?;
-        let es = count_to(self.base, self.r, w.start).max(s);
-        let ef = count_to(self.base, self.r, w.finish).max(es);
+        let es = count_to(self.line, self.r, w.start).max(s);
+        let ef = count_to(self.line, self.r, w.finish).max(es);
         if let Some(slot) = self.last.borrow_mut().get_mut(i) {
             *slot = Some((s, w));
         }
@@ -863,7 +959,7 @@ impl<'a> Crews<'a> {
 
     fn back_walk(&self, i: usize, f: i64) -> Option<i64> {
         let crew = self.crew(i)?;
-        let to = moment_at(self.base, self.r, f, false)?;
+        let to = moment_at(self.line, self.r, f, false)?;
         let mut start: Option<Moment> = None;
         for &(c, dur, _) in crew {
             let a = self.on(c, |cal| {
@@ -872,7 +968,7 @@ impl<'a> Crews<'a> {
             })?;
             start = Some(start.map_or(a, |s| s.min(a)));
         }
-        Some(count_to(self.base, self.r, start?))
+        Some(count_to(self.line, self.r, start?))
     }
 }
 
@@ -886,13 +982,18 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     let tree = Tree::of(p);
     let order = order_with(p, &tree)?;
     let base = Counted::new(&p.calendar);
-    let o = Days::of(p, &base);
+    // The plan's working time: the project calendar, unless a resource works outside it.
+    let plan = plan_time(&p.calendar, &reaching_outside(p, &tree));
+    let plan = plan.as_ref().map(Counted::new);
+    let line = plan.as_ref().unwrap_or(&base);
+    let lags = Lags { r: p.start, line, project: plan.as_ref().map(|_| &base) };
+    let o = Days::of(p, lags);
     let o = &o;
     let n = p.tasks.len();
     let index: HashMap<TaskId, usize> = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
     let summary = |i: usize| tree.summary(i);
     let dur: Vec<i64> = p.tasks.iter().map(|t| t.duration.clamp(0, MAX_MINUTES)).collect();
-    let crews = Crews::of(p, &tree, &base);
+    let crews = Crews::of(p, &tree, &base, line, plan.is_some());
 
     // Forward pass.
     let Forward { es, ef, early, conflict, driver, held } = forward(p, o, &tree, &order, &dur, &crews);
@@ -929,7 +1030,7 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
             }
             let my_lf = tree.leaves(s).filter_map(|r| lf.get(r).copied()).max().unwrap_or(end);
             let my_ls = tree.leaves(s).filter_map(|r| lf.get(r).map(|x| late_start(r, *x))).min().unwrap_or(my_lf);
-            bound_preds(t, &index, &mut lf, my_ls, my_lf, &d);
+            bound_preds(t, o, &index, &mut lf, my_ls, my_lf, &d);
             continue;
         }
         let i = node;
@@ -957,7 +1058,7 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
         if let Some(x) = lf.get_mut(i) {
             *x = my_lf;
         }
-        bound_preds(t, &index, &mut lf, late_start(i, my_lf), my_lf, &d);
+        bound_preds(t, o, &index, &mut lf, late_start(i, my_lf), my_lf, &d);
     }
 
     let mut ls: Vec<i64> = (0..n).map(|i| late_start(i, lf.get(i).copied().unwrap_or(end))).collect();
@@ -970,8 +1071,16 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
 
     let bad = || ModelError::Invalid("the schedule runs off the calendar (no working days, or past year 9999)".into());
     // Every offset used is in 0..=end; one walk of the calendar serves them all.
-    let clock = Clock { p, days: p.calendar.working_days(p.start, end, MAX_CALENDAR_DAYS).ok_or_else(bad)? };
+    let clock = Clock { cal: line.cal, days: line.cal.working_days(p.start, end, MAX_CALENDAR_DAYS).ok_or_else(bad)? };
     let day = |off: i64| clock.date(off).ok_or_else(bad);
+    // Slack and a summary's duration are working time on the project calendar: an offset on the
+    // plan's working time as a count there (the same when they are one; before the start, as is).
+    let on_project = |off: i64, start: bool| -> i64 {
+        match lags.project {
+            Some(pc) if off > 0 => clock.moment((off, start)).map_or(off, |m| count_to(pc, p.start, m)),
+            _ => off,
+        }
+    };
     // A task occupying [s, f) working minutes ends in minute f-1. A milestone at offset s is the
     // end of minute s-1 (it sits on its predecessor's finish) or the start of minute s (a
     // start-type constraint's date), as in Microsoft Project: see `moments`.
@@ -984,7 +1093,11 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
         let (s, f, lfi) = (es.get(i).copied().unwrap_or(0), ef.get(i).copied().unwrap_or(0), lf.get(i).copied().unwrap_or(end));
         let ls = ls.get(i).copied().unwrap_or(lfi - d(i));
         // Roll-up: a summary takes the tighter of its start and finish slack.
-        let slack = if summary(i).is_some() { (ls - s).min(lfi - f) } else { ls - early.get(i).copied().unwrap_or(s) };
+        let slack = if summary(i).is_some() {
+            (on_project(ls, true) - on_project(s, true)).min(on_project(lfi, false) - on_project(f, false))
+        } else {
+            on_project(ls, true) - on_project(early.get(i).copied().unwrap_or(s), true)
+        };
         let first = |o: i64| if d(i) == 0 { day(o - 1) } else { day(o) };
         let (sm, fm) = (start_m.get(i).copied().unwrap_or((s, d(i) > 0)), finish_m.get(i).copied().unwrap_or((f, false)));
         let (start_at, finish_at) = match crews.final_walk(i, held.get(i).copied().unwrap_or(s)) {
@@ -1024,7 +1137,13 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
             },
         );
     }
-    let rolled_up = (0..n).filter(|&i| summary(i).is_some()).filter_map(|i| p.tasks.get(i).map(|t| (t.id, d(i)))).collect();
+    let rolled_up = (0..n)
+        .filter(|&i| summary(i).is_some())
+        .filter_map(|i| {
+            let (s, f) = (es.get(i).copied().unwrap_or(0), ef.get(i).copied().unwrap_or(0));
+            p.tasks.get(i).map(|t| (t.id, if lags.project.is_some() { on_project(f, false) - on_project(s, true) } else { d(i) }))
+        })
+        .collect();
     Ok(Schedule { tasks, finish: finish_all, rolled_up, assignments })
 }
 
@@ -1035,7 +1154,8 @@ const MAX_CALENDAR_DAYS: usize = 4_000_000;
 /// Working-minute offsets turned into dates and moments: the working days from the project start,
 /// each with the working minutes before it.
 struct Clock<'a> {
-    p: &'a Project,
+    /// The plan's working time, which the offsets count.
+    cal: &'a crate::Calendar,
     days: Vec<(Date, i64)>,
 }
 
@@ -1056,7 +1176,7 @@ impl Clock<'_> {
     fn moment(&self, at: Point) -> Option<Moment> {
         let end = !at.1 && at.0 > 0;
         let (date, mut into) = self.find(if end { at.0 - 1 } else { at.0 })?;
-        for t in self.p.calendar.times_on(date) {
+        for t in self.cal.times_on(date) {
             let len = i64::from(t.minutes());
             if into < len {
                 let minute = i64::from(t.from) + into + i64::from(end);
@@ -1069,15 +1189,15 @@ impl Clock<'_> {
 }
 
 /// The late finish each of a task's predecessors may have, given the task's late start and finish.
-fn bound_preds(t: &Task, index: &HashMap<TaskId, usize>, lf: &mut [i64], my_ls: i64, my_lf: i64, d: &impl Fn(usize) -> i64) {
+fn bound_preds(t: &Task, o: &Days, index: &HashMap<TaskId, usize>, lf: &mut [i64], my_ls: i64, my_lf: i64, d: &impl Fn(usize) -> i64) {
     for l in &t.preds {
         let Some(&j) = index.get(&l.pred) else { continue };
         let lag = l.lag.clamp(-MAX_MINUTES, MAX_MINUTES);
         let bound = match l.kind {
-            LinkKind::FS => my_ls - lag,
-            LinkKind::SS => my_ls - lag + d(j),
-            LinkKind::FF => my_lf - lag,
-            LinkKind::SF => my_lf - lag + d(j),
+            LinkKind::FS => o.lags.before(my_ls, lag, false),
+            LinkKind::SS => o.lags.before(my_ls, lag, false) + d(j),
+            LinkKind::FF => o.lags.before(my_lf, lag, true),
+            LinkKind::SF => o.lags.before(my_lf, lag, true) + d(j),
         };
         if let Some(x) = lf.get_mut(j) {
             *x = (*x).min(bound);
@@ -1342,8 +1462,8 @@ mod tests {
             durations in proptest::collection::vec(0i64..2000, 10),
             links in proptest::collection::vec((0usize..10, 0u32..12, 0u8..4, -2i64..3), 0..10),
             constraints in proptest::collection::vec((0usize..10, 0u8..7, 0i64..30), 0..4),
-            leave in proptest::collection::vec((0usize..3, 0i64..40, 0u8..3), 0..12),
-            weeks in proptest::collection::vec((0usize..3, 0usize..7, 0u8..3), 0..6),
+            leave in proptest::collection::vec((0usize..3, 0i64..40, 0u8..5), 0..12),
+            weeks in proptest::collection::vec((0usize..3, 0usize..7, 0u8..5), 0..6),
             assigned in proptest::collection::vec((0usize..10, 0usize..3, 1u32..30_000), 0..14),
         ) {
             let mut p = Project::new("t", date("2026-01-05"));
@@ -1368,13 +1488,17 @@ mod tests {
             }
             let people: Vec<crate::ResourceId> =
                 ["Ann", "Bob", "Cat"].iter().map(|n| p.add_resource(Some(n), crate::ResourceType::Work, None).unwrap()).collect();
-            let morning = vec![crate::parse_working_time("8:00-12:00").unwrap()];
+            // Leave, short days, and time outside the project's: worked weekends and holidays,
+            // early mornings and evenings.
+            let t = |s: &str| crate::parse_working_time(s).unwrap();
+            let morning = vec![t("8:00-12:00")];
+            let long_day = vec![t("6:00-10:00"), t("14:00-20:00")];
             for (r, day, kind) in leave {
-                let times = [vec![], morning.clone(), vec![crate::parse_working_time("9:00-13:00").unwrap()]][usize::from(kind)].clone();
+                let times = [vec![], morning.clone(), vec![t("9:00-13:00")], crate::DEFAULT_WORKING_TIMES.to_vec(), long_day.clone()][usize::from(kind)].clone();
                 let _ = p.set_resource_exception(people[r], date("2026-01-05").add_days(day).unwrap(), times);
             }
             for (r, weekday, kind) in weeks {
-                let times = [None, Some(vec![]), Some(morning.clone())][usize::from(kind)].clone();
+                let times = [None, Some(vec![]), Some(morning.clone()), Some(crate::DEFAULT_WORKING_TIMES.to_vec()), Some(long_day.clone())][usize::from(kind)].clone();
                 let _ = p.set_resource_weekday_times(people[r], weekday, times);
             }
             for (row, r, units) in assigned {
@@ -1397,6 +1521,12 @@ mod tests {
                         let s = sch.tasks[&sub.id];
                         proptest::prop_assert!(me.start_at <= s.start_at && s.finish_at <= me.finish_at, "{} doesn't span {}", t.name, sub.name);
                     }
+                } else if t.duration > 0 && !sch.assignments.keys().any(|(task, _)| *task == t.id) {
+                    // On the project calendar, whatever the resources work: its duration there,
+                    // from the start of a working minute of the project's.
+                    let cal = &p.calendar;
+                    proptest::prop_assert_eq!(cal.count_to(p.start, me.finish_at) - cal.count_to(p.start, me.start_at), t.duration, "{}", t.name);
+                    proptest::prop_assert!(cal.times_on(me.start_at.date).iter().any(|w| w.from <= me.start_at.minute && me.start_at.minute < w.to), "{} starts outside the project's time", t.name);
                 }
             }
             for ((task, r), (a, b)) in &sch.assignments {

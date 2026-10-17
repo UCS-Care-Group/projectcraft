@@ -8,15 +8,15 @@
 //! The scheduler works each assignment on its resource's calendar; see `schedule.rs`. Materials
 //! and costs have no calendar.
 //!
-//! A resource works only within the project calendar's working time: its own times count where
-//! the project works then (a part-time week, leave, a short day), and time of its own outside it
-//! (a Saturday the project doesn't work) is not worked. Microsoft Project lets a resource work
-//! when the project doesn't; ProjectCraft doesn't yet, so the scheduler's working-minute offsets
-//! stay the project calendar's.
+//! A resource's own times are worked as they are, inside or outside the project calendar's
+//! working time: a Saturday the project doesn't work, a working day on a project holiday, hours
+//! before or after the project's day. Microsoft Project schedules an assignment on its resource's
+//! calendar in those times too.
 //!
 //! Also here: walking a calendar by working minutes between [`Moment`]s, quickly however many
 //! exceptions it has ([`Counted`], [`ResView`]), which the scheduler uses to move between the
-//! project calendar and a resource's.
+//! project calendar and a resource's; and the plan's working time ([`plan_time`]): the project
+//! calendar with the resource calendars' time outside it added, the line the scheduler counts on.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -96,8 +96,7 @@ impl ResourceCalendar {
         follows_the_project(&self.week) && self.exceptions.is_empty()
     }
 
-    /// Weekday `i`'s working times as the resource has them set: its own, or the project
-    /// calendar's (`base`). Only those within the project's are worked ([`ResourceCalendar::on`]).
+    /// Weekday `i`'s working times: its own, or the project calendar's (`base`).
     pub fn weekday_times<'a>(&'a self, base: &'a Calendar, i: usize) -> &'a [WorkingTime] {
         match self.week.get(i) {
             Some(Some(t)) => t,
@@ -105,45 +104,44 @@ impl ResourceCalendar {
         }
     }
 
-    /// Weekday `i`'s working times as worked: its own within the project's, or the project's.
-    pub fn weekday_worked(&self, base: &Calendar, i: usize) -> Vec<WorkingTime> {
-        match self.week.get(i) {
-            Some(Some(t)) => intersect(t, base.weekday_times(i)),
-            _ => base.weekday_times(i).to_vec(),
-        }
-    }
-
-    /// The working times worked on `d`: its own exception that day (within the project's times
-    /// that day), else the project calendar's exception, else its weekday as worked.
-    pub fn times_on(&self, base: &Calendar, d: Date) -> Vec<WorkingTime> {
+    /// The working times on `d`: its own exception that day, else the project calendar's
+    /// exception, else its weekday's.
+    pub fn times_on<'a>(&'a self, base: &'a Calendar, d: Date) -> &'a [WorkingTime] {
         match self.exceptions.get(&d) {
-            Some(t) => intersect(t, base.times_on(d)),
-            None if base.exceptions.contains_key(&d) => base.times_on(d).to_vec(),
-            None => self.weekday_worked(base, usize::from(d.weekday())),
+            Some(t) => t,
+            None if base.exceptions.contains_key(&d) => base.times_on(d),
+            None => self.weekday_times(base, usize::from(d.weekday())),
         }
     }
 
-    /// Whether any weekday is worked within the project calendar's working time.
+    /// Whether any weekday is worked.
     pub fn works_a_weekday(&self, base: &Calendar) -> bool {
-        (0..7).any(|i| !self.weekday_worked(base, i).is_empty())
+        (0..7).any(|i| !self.weekday_times(base, i).is_empty())
+    }
+
+    /// Whether all its own time lies within the project calendar's working time: its weekdays
+    /// within the project's, each exception within the project's times that day.
+    pub fn within(&self, base: &Calendar) -> bool {
+        (0..7).all(|i| self.week.get(i).and_then(Option::as_ref).is_none_or(|t| inside(t, base.weekday_times(i))))
+            && self.exceptions.iter().all(|(d, t)| inside(t, base.times_on(*d)))
     }
 
     /// The calendar it makes on top of `base` (the project calendar): its own exceptions win, then
-    /// the project's exceptions, then its own weekdays; and only time the project works is worked.
-    /// A copy of the project calendar: for one resource at a time (the scheduler never makes one).
+    /// the project's exceptions, then its own weekdays. A copy of the project calendar: for one
+    /// resource at a time (the scheduler never makes one).
     pub fn on(&self, base: &Calendar) -> Calendar {
         let mut c = base.clone();
         for i in 0..7 {
-            if self.week.get(i).is_some_and(Option::is_some) {
-                let t = self.weekday_worked(base, i);
+            if let Some(Some(t)) = self.week.get(i) {
+                let t = t.clone();
                 if let (Some(w), Some(wt)) = (c.working.get_mut(i), c.week_times.get_mut(i)) {
                     *w = !t.is_empty();
                     *wt = own_times(t);
                 }
             }
         }
-        for d in self.exceptions.keys() {
-            let t = self.times_on(base, *d);
+        for (d, t) in &self.exceptions {
+            let t = t.clone();
             c.exceptions.insert(*d, !t.is_empty());
             c.exception_times.remove(d);
             let t = own_times(t);
@@ -155,22 +153,60 @@ impl ResourceCalendar {
     }
 }
 
-/// The working times both lists share, in order: where a resource's own times meet the project
-/// calendar's. Each list in order and not overlapping, as calendars hold them.
-pub fn intersect(a: &[WorkingTime], b: &[WorkingTime]) -> Vec<WorkingTime> {
-    let (mut i, mut j, mut out) = (0, 0, Vec::new());
-    while let (Some(x), Some(y)) = (a.get(i), b.get(j)) {
-        let (from, to) = (x.from.max(y.from), x.to.min(y.to));
-        if from < to {
-            out.push(WorkingTime { from, to });
-        }
-        if x.to <= y.to {
-            i += 1;
-        } else {
-            j += 1;
+/// Whether every working time in `a` lies within one of `b`'s.
+fn inside(a: &[WorkingTime], b: &[WorkingTime]) -> bool {
+    a.iter().all(|x| b.iter().any(|y| y.from <= x.from && x.to <= y.to))
+}
+
+/// The working times of both lists together, in order, overlapping or touching ones merged.
+fn union(a: &[WorkingTime], b: &[WorkingTime]) -> Vec<WorkingTime> {
+    let mut all: Vec<WorkingTime> = a.iter().chain(b).copied().collect();
+    all.sort_by_key(|t| (t.from, t.to));
+    let mut out: Vec<WorkingTime> = Vec::with_capacity(all.len());
+    for t in all {
+        match out.last_mut() {
+            Some(last) if t.from <= last.to => last.to = last.to.max(t.to),
+            _ => out.push(t),
         }
     }
     out
+}
+
+/// The plan's working time: the project calendar with the time of `own` (resource calendars on
+/// top of it) that lies outside it added, weekday by weekday and on each exception day of their
+/// own. `None` when each works only within the project calendar's working time, as most do: then
+/// the project calendar is the plan's working time. The scheduler counts its offsets on it, so
+/// every minute any of these calendars works has an offset. Built in time proportional to their
+/// own weekdays and exceptions.
+pub(crate) fn plan_time(base: &Calendar, own: &[&ResourceCalendar]) -> Option<Calendar> {
+    if own.iter().all(|o| o.within(base)) {
+        return None;
+    }
+    let mut c = base.clone();
+    for i in 0..7 {
+        let t = own.iter().filter_map(|o| o.week.get(i).and_then(Option::as_ref)).fold(base.weekday_times(i).to_vec(), |t, o| union(&t, o));
+        if let (Some(w), Some(wt)) = (c.working.get_mut(i), c.week_times.get_mut(i)) {
+            *w = !t.is_empty();
+            *wt = own_times(t);
+        }
+    }
+    // An exception day of its own: what the plan works that day already (the project's exception,
+    // or the weekday with every resource's own times), with the exception's times added.
+    for o in own {
+        for (d, t) in &o.exceptions {
+            let now = c.times_on(*d);
+            let both = union(now, t);
+            if both != now {
+                c.exceptions.insert(*d, !both.is_empty());
+                c.exception_times.remove(d);
+                let both = own_times(both);
+                if !both.is_empty() {
+                    c.exception_times.insert(*d, both);
+                }
+            }
+        }
+    }
+    Some(c)
 }
 
 impl Project {
@@ -212,7 +248,7 @@ impl Project {
     pub fn check_resource_weeks(&self) -> Result<(), ModelError> {
         match self.resources.iter().find(|r| r.kind == ResourceType::Work && !r.calendar.is_empty() && !r.calendar.works_a_weekday(&self.calendar)) {
             Some(r) => Err(ModelError::Invalid(format!(
-                "{} would have no working weekday: their calendar works only within the project calendar's working time",
+                "{} would have no working weekday: none of their own, and none left on the project calendar",
                 r.name
             ))),
             None => Ok(()),
@@ -231,8 +267,7 @@ impl Project {
 
     /// Sets which weekdays a work resource works (Monday first). A weekday made to match the
     /// project calendar follows it again; one it stops working has none; one it starts working
-    /// that the project doesn't work gets the default times, worked only if the project works
-    /// then. The others are left as they are.
+    /// that the project doesn't work gets the default times. The others are left as they are.
     pub fn set_resource_working(&mut self, id: ResourceId, working: [bool; 7]) -> Result<(), ModelError> {
         let base = self.calendar.working;
         let now: Vec<bool> = {
@@ -288,7 +323,7 @@ impl Project {
 }
 
 /// Why a resource calendar edit is refused when it would leave no working weekday.
-const NO_WORKING_WEEKDAY: &str = "a calendar needs at least one working weekday (a resource works only within the project calendar's working time)";
+const NO_WORKING_WEEKDAY: &str = "a calendar needs at least one working weekday";
 
 /// The last date a calendar walk reaches.
 fn last_date() -> Date {
@@ -394,11 +429,11 @@ impl Work for Counted<'_> {
 
 /// A work resource's calendar as the scheduler walks it ([`ResourceCalendar::on`]), without a
 /// copy of the project calendar: only what the resource's own weekdays and exceptions take away
-/// from the project's working time, counted the same quick way. Built from its own calendar
-/// alone, in time proportional to that.
+/// from (or add to) the project's working time, counted the same quick way. Built from its own
+/// calendar alone, in time proportional to that.
 pub(crate) struct ResView<'a> {
     own: &'a ResourceCalendar,
-    /// Each weekday's working times as worked, and the minutes fewer than the project's.
+    /// Each weekday's working times, and the minutes fewer than the project's (negative: more).
     week: [Vec<WorkingTime>; 7],
     cut: [i64; 7],
     per_week: i64,
@@ -409,14 +444,14 @@ pub(crate) struct ResView<'a> {
 
 impl<'a> ResView<'a> {
     pub fn new(base: &Counted<'_>, own: &'a ResourceCalendar) -> ResView<'a> {
-        let week: [Vec<WorkingTime>; 7] = std::array::from_fn(|i| own.weekday_worked(base.cal, i));
+        let week: [Vec<WorkingTime>; 7] = std::array::from_fn(|i| own.weekday_times(base.cal, i).to_vec());
         let cut: [i64; 7] =
             std::array::from_fn(|i| base.week.get(i).copied().unwrap_or(0) - week.get(i).map_or(0, |t| i64::from(crate::minutes_of(t))));
         let per_week = week.iter().map(|t| i64::from(crate::minutes_of(t))).sum();
         let (mut dates, mut before, mut sum) = (Vec::with_capacity(own.exceptions.len()), vec![0], 0i64);
         for (d, t) in &own.exceptions {
             let project = base.cal.times_on(*d);
-            let taken = i64::from(crate::minutes_of(project)) - i64::from(crate::minutes_of(&intersect(t, project)));
+            let taken = i64::from(crate::minutes_of(project)) - i64::from(crate::minutes_of(t));
             // A plain day of its weekday already has the weekday's cut counted.
             let counted = if base.has_exception(*d) { 0 } else { cut.get(usize::from(d.weekday())).copied().unwrap_or(0) };
             sum = sum.saturating_add(taken - counted);
@@ -426,6 +461,7 @@ impl<'a> ResView<'a> {
         ResView { own, week, cut, per_week, dates, before }
     }
 
+    #[cfg(test)]
     pub fn per_week(&self) -> i64 {
         self.per_week
     }
@@ -461,7 +497,7 @@ impl Work for OnProject<'_, '_> {
 
     fn times_on(&self, d: Date) -> Cow<'_, [WorkingTime]> {
         match self.view.own.exceptions.get(&d) {
-            Some(t) => Cow::Owned(intersect(t, self.base.cal.times_on(d))),
+            Some(t) => Cow::Borrowed(t),
             None if self.base.has_exception(d) => Cow::Borrowed(self.base.cal.times_on(d)),
             None => Cow::Borrowed(self.view.week.get(usize::from(d.weekday())).map_or(&[][..], Vec::as_slice)),
         }
@@ -637,13 +673,14 @@ mod tests {
         let before = p.clone();
         assert!(p.set_resource_working(ann, [false; 7]).is_err());
         assert_eq!(p, before);
-        // Saturday ticked: set as her own, but the project doesn't work Saturdays, so neither does she.
+        // Saturday ticked: her own, with the default times, worked though the project doesn't.
         p.set_resource_working(ann, [true, true, true, true, false, true, false]).unwrap();
         let r = &p.resource(ann).unwrap().calendar;
         assert_eq!(r.weekday_times(&p.calendar, 5), &DEFAULT_WORKING_TIMES);
-        assert!(r.weekday_worked(&p.calendar, 5).is_empty());
+        assert!(!r.within(&p.calendar));
         let c = p.resource_calendar(ann).unwrap();
-        assert_eq!(c.working, [true, true, true, true, false, false, false]);
+        assert_eq!(c.working, [true, true, true, true, false, true, false]);
+        assert_eq!(c.minutes_on(d("2026-01-10")), 480);
         assert_eq!(c.minutes_on(d("2026-01-07")), 240, "a weekday left working keeps its own times");
         // Ticking a day back to what the project does follows the project again, its hours included.
         p.calendar.set_weekday_times(0, vec![parse_working_time("7:00-15:00").unwrap()]).unwrap();
@@ -652,8 +689,15 @@ mod tests {
         let r = &p.resource(ann).unwrap().calendar;
         assert_eq!((r.week[0].clone(), r.week[4].clone(), r.week[5].clone()), (None, None, None));
         assert_eq!(p.resource_calendar(ann).unwrap().weekday_times(0), &[parse_working_time("7:00-15:00").unwrap()]);
-        // The project calendar can't leave her with no working weekday: refused, naming her.
+        // Her own Wednesday mornings are hers whatever the project works then.
         p.set_resource_working(ann, [false, true, true, true, true, false, false]).unwrap();
+        p.calendar.set_working([true, false, false, false, false, false, false]).unwrap();
+        p.check_resource_weeks().unwrap();
+        assert_eq!(p.resource_calendar(ann).unwrap().minutes_on(d("2026-01-07")), 240);
+        // The project calendar can't leave her with no working weekday: refused, naming her.
+        p.set_resource_weekday_times(ann, 2, None).unwrap_err();
+        p.calendar.set_working([true, true, true, true, true, false, false]).unwrap();
+        p.set_resource_weekday_times(ann, 2, None).unwrap();
         p.calendar.set_working([true, false, false, false, false, false, false]).unwrap();
         let e = p.check_resource_weeks().unwrap_err().to_string();
         assert!(e.contains("Ann would have no working weekday"), "{e}");
@@ -709,6 +753,13 @@ mod tests {
             }
         }
         assert_eq!(view.per_week(), Work::per_week(&merged));
+        // The plan's working time holds every minute either works; none needed when the
+        // resource works only within the project's.
+        let plan = plan_time(base, &[own]);
+        for a in &days {
+            let line = plan.as_ref().map_or(base.times_on(*a), |c| c.times_on(*a));
+            assert!(inside(base.times_on(*a), line) && inside(merged.times_on(*a), line), "{a}");
+        }
     }
 
     #[test]
@@ -734,11 +785,25 @@ mod tests {
             own.exceptions.insert(d(day), times);
         }
         agrees(&base, &own);
-        // Time of its own outside the project's isn't worked: Saturday, the holiday, before 8:00.
+        // Time of its own outside the project's is worked: Saturday, the holiday, before 8:00.
         let merged = own.on(&base);
-        assert!(merged.times_on(d("2026-01-17")).is_empty() && merged.times_on(d("2026-01-07")).is_empty());
-        assert_eq!(merged.times_on(d("2026-01-05")), &[t("8:00-10:00"), t("14:00-17:00")]);
-        assert_eq!(merged.times_on(d("2026-01-10")), &[t("10:00-13:00")], "within the project's worked Saturday");
+        assert_eq!(merged.times_on(d("2026-01-17")), &[t("8:00-17:00")]);
+        assert_eq!(merged.times_on(d("2026-01-07")), &[t("8:00-17:00")], "the project's holiday");
+        assert_eq!(merged.times_on(d("2026-01-05")), &[t("7:00-10:00"), t("14:00-18:00")]);
+        assert_eq!(merged.times_on(d("2026-01-10")), &[t("10:00-20:00")], "past the project's worked Saturday");
+        assert!(!own.within(&base));
+        // The plan's working time holds every minute of both.
+        let plan = plan_time(&base, &[&own]).unwrap();
+        for k in 0..70 {
+            let day = d("2025-12-29").add_days(k).unwrap();
+            assert!(inside(base.times_on(day), plan.times_on(day)) && inside(merged.times_on(day), plan.times_on(day)), "{day}");
+        }
+        assert_eq!(plan.times_on(d("2026-01-17")), &[t("8:00-17:00")]);
+        // Within the project's time, the project calendar is the plan's.
+        let part_time = ResourceCalendar { week: [Some(vec![t("8:00-12:00")]), None, Some(vec![]), None, None, None, None], ..Default::default() };
+        assert!(part_time.within(&base));
+        assert_eq!(plan_time(&base, &[&part_time]), None);
+        assert_eq!(union(&[t("8:00-12:00")], &[t("12:00-13:00"), t("7:00-9:00")]), vec![t("7:00-13:00")]);
     }
 
     proptest::proptest! {

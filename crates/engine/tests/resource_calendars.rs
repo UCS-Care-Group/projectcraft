@@ -142,12 +142,13 @@ fn worked_example_rc4_a_task_without_resources_stays_on_the_project_calendar() {
     assert_eq!(opened.schedule, s.schedule);
 }
 
-/// A resource calendar is based on the project calendar, and a resource works only within the
-/// project calendar's working time (Microsoft Project also lets a resource work when the project
-/// doesn't; ProjectCraft doesn't yet). Build, 5 days for Ann from Monday 5 January: Wednesday
-/// 7 is a project holiday, which reaches her; Thursday 8 she works the afternoon only; Saturday 10
-/// she would work 9:00–13:00, but the project doesn't work Saturdays, so she doesn't. Her 40 hours
-/// are Monday, Tuesday, Thursday's 4, Friday, Monday 12 and Tuesday 13 until 12:00.
+/// A resource calendar is based on the project calendar, and a resource works its own times
+/// even where the project doesn't work, as Microsoft Project schedules an assignment on its
+/// resource's calendar. Build, 5 days for Ann from Monday 5 January: Wednesday 7 is a project
+/// holiday, which reaches her; Thursday 8 she works the afternoon only; Saturday 10 she works
+/// 9:00–13:00, though the project doesn't work Saturdays. Her 40 hours are Monday, Tuesday,
+/// Thursday's 4, Friday, Saturday's 4 and Monday 12: Build spans the Saturday and finishes
+/// Monday 12 at 17:00.
 #[test]
 fn worked_example_rc5_the_project_calendar_is_the_base() {
     let mut s = plan(&[("Build", 5, "")]);
@@ -155,13 +156,14 @@ fn worked_example_rc5_the_project_calendar_is_the_base() {
     run(&mut s, "calendar.addException", json!({"date": "2026-01-07"}));
     run(&mut s, "calendar.addException", json!({"date": "2026-01-08", "times": ["13:00-17:00"], "resource": 1}));
     run(&mut s, "calendar.addException", json!({"date": "2026-01-10", "times": ["9:00-13:00"], "resource": 1}));
-    assert_eq!(span(&s, 1), (at("2026-01-05", 8, 0), at("2026-01-13", 12, 0)));
-    // A working day of her own on the project holiday isn't worked either...
+    assert_eq!(span(&s, 1), (at("2026-01-05", 8, 0), at("2026-01-12", 17, 0)));
+    // A working day of her own on the project holiday is worked: Monday, Tuesday, Wednesday,
+    // Thursday's 4, Friday and Saturday's 4 are her 40 hours, so Build finishes Saturday 13:00.
     run(&mut s, "calendar.addException", json!({"date": "2026-01-07", "working": true, "resource": 1}));
-    assert_eq!(span(&s, 1), (at("2026-01-05", 8, 0), at("2026-01-13", 12, 0)));
-    // ...until the project works it: then her 8 hours that day bring the finish to Monday 12:00.
+    assert_eq!(span(&s, 1), (at("2026-01-05", 8, 0), at("2026-01-10", 13, 0)));
+    // The project working it too changes nothing: her own exception comes first.
     run(&mut s, "calendar.removeException", json!({"date": "2026-01-07"}));
-    assert_eq!(span(&s, 1), (at("2026-01-05", 8, 0), at("2026-01-12", 12, 0)));
+    assert_eq!(span(&s, 1), (at("2026-01-05", 8, 0), at("2026-01-10", 13, 0)));
     // The same plan gives the same dates, and saves and opens with them.
     let again = Session::load_json(&s.save_json().unwrap()).unwrap();
     assert_eq!(again.project, s.project);
@@ -189,6 +191,77 @@ fn worked_example_rc6_slack_on_a_resource_calendar() {
     assert_eq!(short.slack, 2 * 480);
     assert!(!short.critical);
     assert!(sch.tasks[&TaskId(2)].critical);
+}
+
+/// Issue #95: a resource working a Saturday the project doesn't work is scheduled that Saturday.
+/// Ann works Monday to Saturday. Prep (3 days, no resources) takes Monday to Wednesday; Build
+/// (3 days, Ann) after it takes Thursday, Friday and Saturday 10, so it spans the Saturday and
+/// finishes there at 17:00. Paint (no resources) after Build starts Monday 12 at 8:00. Cure, a
+/// day after Build (`2FS+1d`), counts its lag on the project calendar: Monday 12 is the lag, so
+/// Cure is Tuesday 13. A project holiday on Friday 9 reaches Ann (she has no exception of her
+/// own then): Build works Thursday, Saturday and Monday 12.
+#[test]
+fn worked_example_rc8_a_resource_works_a_saturday_the_project_doesnt() {
+    let mut s = plan(&[("Prep", 3, ""), ("Build", 3, "1"), ("Paint", 1, "2"), ("Cure", 1, "2FS+1d")]);
+    run(&mut s, "calendar.setWorking", json!({"weekdays": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], "resource": 1}));
+    run(&mut s, "task.setResourceNames", json!({"id": 2, "text": "Ann"}));
+    assert_eq!(span(&s, 1), (at("2026-01-05", 8, 0), at("2026-01-07", 17, 0)));
+    assert_eq!(worked(&s, 2, ANN), (at("2026-01-08", 8, 0), at("2026-01-10", 17, 0)));
+    assert_eq!(span(&s, 2), (at("2026-01-08", 8, 0), at("2026-01-10", 17, 0)));
+    assert_eq!(span(&s, 3), (at("2026-01-12", 8, 0), at("2026-01-12", 17, 0)));
+    assert_eq!(span(&s, 4), (at("2026-01-13", 8, 0), at("2026-01-13", 17, 0)));
+    assert_eq!(s.project.task(TaskId(2)).unwrap().duration, 3 * 480, "the duration stays 3 days");
+    let sch = s.schedule.as_ref().unwrap();
+    for id in [1, 2, 4] {
+        assert_eq!(sch.tasks[&TaskId(id)].slack, 0, "{id}");
+    }
+    // Paint may finish as late as Cure: a project working day of slack.
+    assert_eq!(sch.tasks[&TaskId(3)].slack, 480);
+    run(&mut s, "calendar.addException", json!({"date": "2026-01-09"}));
+    assert_eq!(span(&s, 2), (at("2026-01-08", 8, 0), at("2026-01-12", 17, 0)));
+    assert_eq!(span(&s, 3), (at("2026-01-13", 8, 0), at("2026-01-13", 17, 0)));
+    // The same plan gives the same dates, and saves and opens with them.
+    let again = Session::load_json(&s.save_json().unwrap()).unwrap();
+    assert_eq!(again.schedule, s.schedule);
+}
+
+/// Hours outside the project's day: Bob works Mondays 6:00–10:00 and 14:00–18:00. Survey (1 day,
+/// Bob) takes his 8 hours on Monday 5, 6:00 to 18:00. Report (no resources) after it starts at
+/// the project's next working time, Tuesday 8:00. Order (no resources, no predecessors) starts at
+/// the project's 8:00, not Bob's 6:00.
+#[test]
+fn worked_example_rc9_hours_outside_the_projects_day_are_worked() {
+    let mut s = plan(&[("Survey", 1, ""), ("Report", 1, "1"), ("Order", 1, "")]);
+    run(&mut s, "calendar.setWorkingTimes", json!({"weekday": "Mon", "times": ["6:00-10:00", "14:00-18:00"], "resource": 2}));
+    run(&mut s, "task.setResourceNames", json!({"id": 1, "text": "Bob"}));
+    assert_eq!(span(&s, 1), (at("2026-01-05", 6, 0), at("2026-01-05", 18, 0)));
+    assert_eq!(span(&s, 2), (at("2026-01-06", 8, 0), at("2026-01-06", 17, 0)));
+    assert_eq!(span(&s, 3), (at("2026-01-05", 8, 0), at("2026-01-05", 17, 0)));
+    // Ann beside him on Survey works the project's day: the task spans both.
+    run(&mut s, "task.setResourceNames", json!({"id": 1, "text": "Ann, Bob"}));
+    assert_eq!(worked(&s, 1, ANN), (at("2026-01-05", 8, 0), at("2026-01-05", 17, 0)));
+    assert_eq!(span(&s, 1), (at("2026-01-05", 6, 0), at("2026-01-05", 18, 0)));
+}
+
+/// Late dates and slack on a resource's own Saturdays: Short (2 days, Ann, who works Monday to
+/// Saturday) beside Long (6 days, no resources), both before End. Long finishes Monday 12 at
+/// 17:00; Short may finish then too, and two of Ann's working days back from there are Monday 12
+/// and Saturday 10: its late start is Saturday 10. Its slack, Monday 5 8:00 to Saturday 10 8:00,
+/// is five days of the project calendar.
+#[test]
+fn worked_example_rc10_slack_counts_a_resources_saturday() {
+    let mut s = plan(&[("Short", 2, ""), ("Long", 6, ""), ("End", 0, "1, 2")]);
+    run(&mut s, "calendar.setWorking", json!({"weekdays": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], "resource": 1}));
+    run(&mut s, "task.setResourceNames", json!({"id": 1, "text": "Ann"}));
+    let sch = s.schedule.as_ref().unwrap();
+    let short = sch.tasks[&TaskId(1)];
+    assert_eq!((short.start_at, short.finish_at), (at("2026-01-05", 8, 0), at("2026-01-06", 17, 0)));
+    assert_eq!((short.late_start, short.late_finish), ("2026-01-10".parse().unwrap(), "2026-01-12".parse().unwrap()));
+    assert_eq!(short.slack, 5 * 480);
+    assert_eq!(span(&s, 2), (at("2026-01-05", 8, 0), at("2026-01-12", 17, 0)));
+    assert_eq!(span(&s, 3), (at("2026-01-12", 17, 0), at("2026-01-12", 17, 0)));
+    assert!(sch.tasks[&TaskId(2)].critical && sch.tasks[&TaskId(3)].critical && !short.critical);
+    assert_eq!(sch.tasks[&TaskId(2)].slack, 0);
 }
 
 /// An assignment at 0% does no work, so its resource's calendar doesn't hold the task: Ann on a
