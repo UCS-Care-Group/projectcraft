@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 91564edc0c07c831fbca006cbefbf0a830a6962887999d9967bb69423e59c4d6 # shrinks to levels = [0, 0, 2, 0, 0, 0, 0], links = [(1, 1, 2, 0)], constraints = [(0, 0, 9)], durations = [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+cc 75eb5dfb744d4daa2c8902234559efe7c28c73fb660a48e9fd0ded2b4ea93558 # shrinks to levels = [0, 0, 0, 0], durations = [0, 0, 0, 1, 0, 0, 0, 0, 0], links = [(3, 0, 2, 0)], constraints = [], deadlines = [], assigned = [(3, 0, 0)], holiday = None, leave = None, weekday = 0
