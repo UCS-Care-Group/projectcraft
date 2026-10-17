@@ -1,0 +1,302 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Parity fixture, hand-written for ProjectCraft's tests from Microsoft's published MSPDI schema
+     documentation (learn.microsoft.com/office-project/xml-data-interchange). An invented plan:
+     the tasks, people, rates and dates are made up. No Microsoft file was used.
+
+     What it exercises: a summary task, work, material and cost resources, a resource's own
+     calendar (a part-time week and a day of leave), assignments whose work and units set their
+     tasks' durations, one task with two people on different calendars, the Fixed Units, Fixed
+     Duration and Fixed Work task types, effort-driven tasks, fixed costs and a milestone after two
+     predecessors, in pounds.
+
+     Each task's Start and Finish are written as Microsoft Project would work them out by its
+     published scheduling rules, worked by hand. The project calendar: Monday to Friday 08:00 to
+     12:00 and 13:00 to 17:00, a day is 8 hours. Ellis Mensah's calendar is based on it with
+     Thursdays and Fridays off and leave on Wednesday 10 June 2026. Each assignment is scheduled
+     on its resource's calendar and a task runs from its first assignment's start to its last
+     assignment's finish:
+
+      2 Strip out, Dana 100%, 24h of work: Mon 1 to Wed 3 Jun.
+      3 First fix plumbing, FS from 2, Ellis 100%, 24h: Ellis doesn't work Thu 4 or Fri 5 Jun,
+        so Mon 8, Tue 9, (leave Wed 10, off Thu and Fri), Mon 15 Jun. 8 Jun to 15 Jun.
+      4 Fit the units, FS from 3, from Tue 16 Jun: Dana 100% 16h is Tue 16 and Wed 17; Ellis
+        50% 12h is 24 hours of his working time, Tue 16, Wed 17 and Mon 22. 16 Jun to 22 Jun.
+      5 Tile the walls, FS from 4, Dana 100% 16h and 12 square metres of tiles: Tue 23 and
+        Wed 24 Jun.
+      6 Gas safety check, Fixed Duration 1d, FS from 5, an inspection fee and a fixed cost:
+        Thu 25 Jun.
+      7 Paint, Fixed Work, FS from 5, Dana 100% 8h (Thu 25 Jun) and Ellis 100% 8h (Mon 29 Jun,
+        his first working day after 24 Jun): 25 Jun to 29 Jun.
+      1 Refit (summary): 1 Jun to 29 Jun.
+      8 Kitchen handed over, milestone, FS from 6 and 7: at 7's finish, Mon 29 Jun 17:00. -->
+<Project xmlns="http://schemas.microsoft.com/project">
+  <SaveVersion>14</SaveVersion>
+  <Name>Village hall kitchen.xml</Name>
+  <Title>Village hall kitchen</Title>
+  <ScheduleFromStart>1</ScheduleFromStart>
+  <StartDate>2026-06-01T08:00:00</StartDate>
+  <FinishDate>2026-06-29T17:00:00</FinishDate>
+  <CurrencySymbol>£</CurrencySymbol>
+  <CurrencyDigits>2</CurrencyDigits>
+  <CurrencyCode>GBP</CurrencyCode>
+  <CalendarUID>1</CalendarUID>
+  <DefaultStartTime>08:00:00</DefaultStartTime>
+  <DefaultFinishTime>17:00:00</DefaultFinishTime>
+  <MinutesPerDay>480</MinutesPerDay>
+  <MinutesPerWeek>2400</MinutesPerWeek>
+  <DaysPerMonth>20</DaysPerMonth>
+  <DefaultTaskType>0</DefaultTaskType>
+  <NewTasksEffortDriven>1</NewTasksEffortDriven>
+  <Calendars>
+    <Calendar>
+      <UID>1</UID>
+      <Name>Standard</Name>
+      <IsBaseCalendar>1</IsBaseCalendar>
+      <BaseCalendarUID>-1</BaseCalendarUID>
+      <WeekDays>
+        <WeekDay><DayType>1</DayType><DayWorking>0</DayWorking></WeekDay>
+        <WeekDay><DayType>2</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>3</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>4</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>5</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>6</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>7</DayType><DayWorking>0</DayWorking></WeekDay>
+      </WeekDays>
+    </Calendar>
+    <Calendar>
+      <UID>2</UID>
+      <Name>Dana Kowalski</Name>
+      <IsBaseCalendar>0</IsBaseCalendar>
+      <BaseCalendarUID>1</BaseCalendarUID>
+    </Calendar>
+    <Calendar>
+      <UID>3</UID>
+      <Name>Ellis Mensah</Name>
+      <IsBaseCalendar>0</IsBaseCalendar>
+      <BaseCalendarUID>1</BaseCalendarUID>
+      <WeekDays>
+        <WeekDay><DayType>5</DayType><DayWorking>0</DayWorking></WeekDay>
+        <WeekDay><DayType>6</DayType><DayWorking>0</DayWorking></WeekDay>
+      </WeekDays>
+      <Exceptions>
+        <Exception>
+          <EnteredByOccurrences>0</EnteredByOccurrences>
+          <TimePeriod><FromDate>2026-06-10T00:00:00</FromDate><ToDate>2026-06-10T23:59:00</ToDate></TimePeriod>
+          <Occurrences>1</Occurrences>
+          <Name>Leave</Name>
+          <Type>1</Type>
+          <DayWorking>0</DayWorking>
+        </Exception>
+      </Exceptions>
+    </Calendar>
+  </Calendars>
+  <Tasks>
+    <Task>
+      <UID>0</UID>
+      <ID>0</ID>
+      <Name>Village hall kitchen</Name>
+      <OutlineLevel>0</OutlineLevel>
+      <Start>2026-06-01T08:00:00</Start>
+      <Finish>2026-06-29T17:00:00</Finish>
+      <Summary>1</Summary>
+    </Task>
+    <Task>
+      <UID>1</UID>
+      <ID>1</ID>
+      <Name>Refit</Name>
+      <OutlineNumber>1</OutlineNumber>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-06-01T08:00:00</Start>
+      <Finish>2026-06-29T17:00:00</Finish>
+      <Duration>PT168H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Summary>1</Summary>
+    </Task>
+    <Task>
+      <UID>2</UID>
+      <ID>2</ID>
+      <Name>Strip out</Name>
+      <OutlineNumber>1.1</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-06-01T08:00:00</Start>
+      <Finish>2026-06-03T17:00:00</Finish>
+      <Duration>PT24H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Type>0</Type>
+      <EffortDriven>1</EffortDriven>
+    </Task>
+    <Task>
+      <UID>3</UID>
+      <ID>3</ID>
+      <Name>First fix plumbing</Name>
+      <OutlineNumber>1.2</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-06-08T08:00:00</Start>
+      <Finish>2026-06-15T17:00:00</Finish>
+      <Duration>PT24H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Type>0</Type>
+      <EffortDriven>1</EffortDriven>
+      <PredecessorLink><PredecessorUID>2</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>4</UID>
+      <ID>4</ID>
+      <Name>Fit the units</Name>
+      <OutlineNumber>1.3</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-06-16T08:00:00</Start>
+      <Finish>2026-06-22T17:00:00</Finish>
+      <Duration>PT24H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Type>0</Type>
+      <EffortDriven>1</EffortDriven>
+      <PredecessorLink><PredecessorUID>3</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>5</UID>
+      <ID>5</ID>
+      <Name>Tile the walls</Name>
+      <OutlineNumber>1.4</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-06-23T08:00:00</Start>
+      <Finish>2026-06-24T17:00:00</Finish>
+      <Duration>PT16H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Type>0</Type>
+      <EffortDriven>1</EffortDriven>
+      <PredecessorLink><PredecessorUID>4</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>6</UID>
+      <ID>6</ID>
+      <Name>Gas safety check</Name>
+      <OutlineNumber>1.5</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-06-25T08:00:00</Start>
+      <Finish>2026-06-25T17:00:00</Finish>
+      <Duration>PT8H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Type>1</Type>
+      <EffortDriven>0</EffortDriven>
+      <FixedCost>60</FixedCost>
+      <PredecessorLink><PredecessorUID>5</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>7</UID>
+      <ID>7</ID>
+      <Name>Paint</Name>
+      <OutlineNumber>1.6</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-06-25T08:00:00</Start>
+      <Finish>2026-06-29T17:00:00</Finish>
+      <Duration>PT8H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Type>2</Type>
+      <EffortDriven>1</EffortDriven>
+      <PredecessorLink><PredecessorUID>5</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>8</UID>
+      <ID>8</ID>
+      <Name>Kitchen handed over</Name>
+      <OutlineNumber>2</OutlineNumber>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-06-29T17:00:00</Start>
+      <Finish>2026-06-29T17:00:00</Finish>
+      <Duration>PT0H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Milestone>1</Milestone>
+      <PredecessorLink><PredecessorUID>6</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+      <PredecessorLink><PredecessorUID>7</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+  </Tasks>
+  <Resources>
+    <Resource>
+      <UID>0</UID>
+      <ID>0</ID>
+      <Type>1</Type>
+      <IsNull>0</IsNull>
+    </Resource>
+    <Resource>
+      <UID>1</UID>
+      <ID>1</ID>
+      <Name>Dana Kowalski</Name>
+      <Type>1</Type>
+      <Initials>DK</Initials>
+      <Group>Joinery</Group>
+      <MaxUnits>1.00</MaxUnits>
+      <StandardRate>40</StandardRate>
+      <StandardRateFormat>2</StandardRateFormat>
+      <OvertimeRate>60</OvertimeRate>
+      <OvertimeRateFormat>2</OvertimeRateFormat>
+      <CostPerUse>0</CostPerUse>
+      <AccrueAt>3</AccrueAt>
+      <CalendarUID>2</CalendarUID>
+    </Resource>
+    <Resource>
+      <UID>2</UID>
+      <ID>2</ID>
+      <Name>Ellis Mensah</Name>
+      <Type>1</Type>
+      <Initials>EM</Initials>
+      <Group>Plumbing</Group>
+      <MaxUnits>1.00</MaxUnits>
+      <StandardRate>32</StandardRate>
+      <StandardRateFormat>2</StandardRateFormat>
+      <CostPerUse>25</CostPerUse>
+      <AccrueAt>3</AccrueAt>
+      <CalendarUID>3</CalendarUID>
+    </Resource>
+    <Resource>
+      <UID>3</UID>
+      <ID>3</ID>
+      <Name>Wall tiles</Name>
+      <Type>0</Type>
+      <MaterialLabel>m²</MaterialLabel>
+      <StandardRate>18</StandardRate>
+      <StandardRateFormat>8</StandardRateFormat>
+    </Resource>
+    <Resource>
+      <UID>4</UID>
+      <ID>4</ID>
+      <Name>Skip hire</Name>
+      <Type>2</Type>
+      <IsCostResource>1</IsCostResource>
+    </Resource>
+    <Resource>
+      <UID>5</UID>
+      <ID>5</ID>
+      <Name>Inspection fee</Name>
+      <Type>2</Type>
+      <IsCostResource>1</IsCostResource>
+    </Resource>
+  </Resources>
+  <Assignments>
+    <Assignment><UID>1</UID><TaskUID>2</TaskUID><ResourceUID>1</ResourceUID><Units>1</Units><Work>PT24H0M0S</Work></Assignment>
+    <Assignment><UID>2</UID><TaskUID>2</TaskUID><ResourceUID>4</ResourceUID><Cost>250</Cost></Assignment>
+    <Assignment><UID>3</UID><TaskUID>3</TaskUID><ResourceUID>2</ResourceUID><Units>1</Units><Work>PT24H0M0S</Work></Assignment>
+    <Assignment><UID>4</UID><TaskUID>4</TaskUID><ResourceUID>1</ResourceUID><Units>1</Units><Work>PT16H0M0S</Work></Assignment>
+    <Assignment><UID>5</UID><TaskUID>4</TaskUID><ResourceUID>2</ResourceUID><Units>0.5</Units><Work>PT12H0M0S</Work></Assignment>
+    <Assignment><UID>6</UID><TaskUID>5</TaskUID><ResourceUID>1</ResourceUID><Units>1</Units><Work>PT16H0M0S</Work></Assignment>
+    <Assignment><UID>7</UID><TaskUID>5</TaskUID><ResourceUID>3</ResourceUID><Units>12</Units><Work>PT12H0M0S</Work></Assignment>
+    <Assignment><UID>8</UID><TaskUID>6</TaskUID><ResourceUID>5</ResourceUID><Cost>95</Cost></Assignment>
+    <Assignment><UID>9</UID><TaskUID>7</TaskUID><ResourceUID>1</ResourceUID><Units>1</Units><Work>PT8H0M0S</Work></Assignment>
+    <Assignment><UID>10</UID><TaskUID>7</TaskUID><ResourceUID>2</ResourceUID><Units>1</Units><Work>PT8H0M0S</Work></Assignment>
+  </Assignments>
+</Project>

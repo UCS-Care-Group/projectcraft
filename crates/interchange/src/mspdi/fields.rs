@@ -12,11 +12,14 @@
 //! 1 Fixed Duration, 2 Fixed Work. Dates are `xs:dateTime`; ProjectCraft holds constraints and
 //! deadlines to the day, so the day is kept and the time of day left (the scheduler starts a
 //! start constraint at the day's first working minute and ends a finish constraint at its last).
+//! A constraint whose time of day would move the task (a start constraint after the day's first
+//! working minute, a finish constraint before its last, on the project calendar) is a report line;
+//! midnight is read as the day alone.
 //!
 //! Every file is hostile: an unknown code, a missing or unreadable date, and a date further than
 //! [`MAX_DAYS`] days from the project start are each a report line, never an error.
 
-use crate::model::{Constraint, Date, MAX_DAYS, MAX_MONEY, Options, Task, TaskType};
+use crate::model::{Calendar, Constraint, Date, MAX_DAYS, MAX_MONEY, Options, Task, TaskType};
 use crate::{Outcome, ReportLine};
 
 use super::number::{self, Read};
@@ -72,6 +75,7 @@ enum Note {
     UnknownConstraint,
     NoConstraintDate,
     FarConstraintDate,
+    ConstraintTime,
     BadDeadline,
     FarDeadline,
     UnknownTaskType,
@@ -83,11 +87,12 @@ enum Note {
 }
 
 impl Note {
-    const ALL: [Note; 12] = [
+    const ALL: [Note; 13] = [
         Note::Alap,
         Note::UnknownConstraint,
         Note::NoConstraintDate,
         Note::FarConstraintDate,
+        Note::ConstraintTime,
         Note::BadDeadline,
         Note::FarDeadline,
         Note::UnknownTaskType,
@@ -114,6 +119,11 @@ impl Note {
                 (Converted, "Constraint date", "the constraint needs a date and the file gives none that can be read; As Soon As Possible used")
             }
             Note::FarConstraintDate => (Converted, "Constraint date", "more than 100,000 days from the project start; moved to 100,000 days from it"),
+            Note::ConstraintTime => (
+                Converted,
+                "Constraint time of day",
+                "ProjectCraft holds a constraint to the day: a start constraint starts at the day's first working minute and a finish constraint ends at its last, so the file's time of day is left and the task's dates may differ from the file's",
+            ),
             Note::BadDeadline => (Dropped, "Deadline", "unreadable; the task has no deadline"),
             Note::FarDeadline => (Converted, "Deadline", "more than 100,000 days from the project start; moved to 100,000 days from it"),
             Note::UnknownTaskType => (Converted, "Task type", "the task type code isn't one of Project's (0 to 2); Fixed Units used"),
@@ -145,10 +155,36 @@ fn near(d: Date, start: Date) -> (Date, bool) {
     (start.add_days(MAX_DAYS * away.signum()).unwrap_or(d), true)
 }
 
+/// The time of day of an `xs:dateTime` (`2026-11-02T13:30:00`), in minutes from midnight.
+fn time_of(text: &str) -> Option<u16> {
+    let t = text.trim().get(10..)?.strip_prefix('T')?;
+    let hours: u16 = t.get(..2)?.parse().ok()?;
+    let minutes: u16 = t.get(3..5)?.parse().ok()?;
+    (t.get(2..3) == Some(":") && hours <= 24 && minutes < 60).then_some(hours * 60 + minutes)
+}
+
+/// Whether a constraint's time of day in the file would put the task elsewhere than ProjectCraft
+/// does: a start constraint (`start` true) after the day's first working minute, a finish
+/// constraint before its last. Midnight, a date without a time, and a day off are the day alone.
+fn time_moves(text: &str, d: Date, start: bool, calendar: &Calendar) -> bool {
+    let times = calendar.times_on(d);
+    match (time_of(text), times.first(), times.last()) {
+        (Some(t), Some(first), Some(last)) if t != 0 => {
+            if start {
+                t > first.from
+            } else {
+                t < last.to
+            }
+        }
+        _ => false,
+    }
+}
+
 /// Sets the task's constraint, deadline, type, effort-driven flag and fixed cost (in minor units
 /// of a currency with `digits` decimal places) from the file's fields; the report notes about
-/// them, as bits.
-pub(super) fn apply(f: &TaskFields, t: &mut Task, start: Date, digits: u32) -> u32 {
+/// them, as bits. `calendar` is the project calendar, to tell whether a constraint's time of day
+/// matters.
+pub(super) fn apply(f: &TaskFields, t: &mut Task, start: Date, digits: u32, calendar: &Calendar) -> u32 {
     let mut notes = 0u32;
     let mut note = |n: Note| notes |= n.bit();
     t.constraint = match f.constraint_type.as_deref().map(int) {
@@ -166,6 +202,8 @@ pub(super) fn apply(f: &TaskFields, t: &mut Task, start: Date, digits: u32) -> u
                 let (d, moved) = near(d, start);
                 if moved {
                     note(Note::FarConstraintDate);
+                } else if f.constraint_date.as_deref().is_some_and(|text| time_moves(text, d, matches!(code, 2 | 4 | 5), calendar)) {
+                    note(Note::ConstraintTime);
                 }
                 match code {
                     2 => Constraint::MustStartOn(d),
@@ -307,6 +345,28 @@ mod tests {
         // A start near the end of time can't move a date further out than year 9999.
         let late = d(9999, 1, 1);
         assert_eq!(near(d(1, 1, 1), late), (late.add_days(-MAX_DAYS).unwrap(), true));
+    }
+
+    #[test]
+    fn a_constraint_s_time_of_day_is_noted_only_when_it_would_move_the_task() {
+        let c = Calendar::default();
+        let monday = d(2026, 10, 12);
+        assert_eq!(time_of("2026-10-12T13:30:00"), Some(13 * 60 + 30));
+        assert_eq!((time_of("2026-10-12"), time_of("2026-10-12T1"), time_of("2026-10-12T99:00:00")), (None, None, None));
+        // Start constraints: after 08:00 moves the task; at or before it, or midnight, doesn't.
+        assert!(time_moves("2026-10-12T13:00:00", monday, true, &c));
+        assert!(time_moves("2026-10-12T17:00:00", monday, true, &c), "at the day's end Project starts the next day");
+        assert!(!time_moves("2026-10-12T08:00:00", monday, true, &c));
+        assert!(!time_moves("2026-10-12T07:00:00", monday, true, &c));
+        assert!(!time_moves("2026-10-12T00:00:00", monday, true, &c));
+        assert!(!time_moves("2026-10-12", monday, true, &c));
+        // Finish constraints: before 17:00 moves the task; at or after it, or midnight, doesn't.
+        assert!(time_moves("2026-10-12T12:00:00", monday, false, &c));
+        assert!(!time_moves("2026-10-12T17:00:00", monday, false, &c));
+        assert!(!time_moves("2026-10-12T23:59:00", monday, false, &c));
+        assert!(!time_moves("2026-10-12T00:00:00", monday, false, &c));
+        // A day off has no working minutes to be after.
+        assert!(!time_moves("2026-10-11T13:00:00", d(2026, 10, 11), true, &c));
     }
 
     #[test]

@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Parity fixture, hand-written for ProjectCraft's tests from Microsoft's published MSPDI schema
+     documentation (learn.microsoft.com/office-project/xml-data-interchange). An invented plan:
+     the tasks and dates are made up. No Microsoft file was used.
+
+     What it exercises: the things ProjectCraft converts on import, each on a branch of its own so
+     that one conversion's date difference doesn't run on into the next task: an elapsed duration,
+     an elapsed lag, a percent lag, As Late As Possible, a task calendar, a constraint at a time of
+     day other than the day's start, and an elapsed leveling delay.
+
+     Each task's Start and Finish are written as Microsoft Project would work them out by its
+     published scheduling rules, worked by hand. The project calendar: Monday to Friday 08:00 to
+     12:00 and 13:00 to 17:00, a day is 8 hours; the Weekends base calendar works Saturdays and
+     Sundays at the same times and no weekdays. Elapsed time runs round the clock, every day.
+
+      1 Lift the old trees, 3d: Mon 5 to Wed 7 Oct 2026, 17:00.
+      2 Soak the rootstock, 2ed (48 hours round the clock) from Mon 5 Oct 08:00: to Wed 7 Oct
+        08:00. 5 Oct to 7 Oct.
+      3 Dig planting pits, 2d, FS from 1 with a 3ed lag: 7 Oct 17:00 plus 72 hours is Sat 10 Oct
+        17:00, so it starts Mon 12 Oct 08:00: 12 to 13 Oct.
+      4 Stake the trees, 1d, FS from 1 with a 50% lag (half of 1's 3d, 12 working hours): Thu 8
+        and Fri 9 Oct morning, so it starts Fri 9 Oct 13:00 and finishes Mon 12 Oct 12:00.
+      6 Label the rows, 1d, FS from 4 and 5: Mon 12 Oct 13:00 to Tue 13 Oct 12:00.
+      8 Mulch the rows, 1d, Start No Earlier Than Wed 14 Oct 13:00: to Thu 15 Oct 12:00, the
+        project's finish.
+      5 Order the labels, 1d, As Late As Possible, FS to 6: 6 may finish as late as the project's
+        finish, 15 Oct 12:00, so start as late as Wed 14 Oct 13:00; 5 then finishes Wed 14 Oct
+        12:00 and starts Tue 13 Oct 13:00.
+      7 Weekend watering, 2d on the Weekends task calendar, FS from 1: Sat 10 and Sun 11 Oct.
+      9 Prune the hedges, 1d, Start No Earlier Than Fri 9 Oct 08:00 and a leveling delay of 2ed:
+        Fri 9 Oct 08:00 plus 48 hours is Sun 11 Oct 08:00, so it starts Mon 12 Oct 08:00, and
+        finishes 12 Oct 17:00. -->
+<Project xmlns="http://schemas.microsoft.com/project">
+  <SaveVersion>14</SaveVersion>
+  <Name>Orchard replant.xml</Name>
+  <Title>Orchard replant</Title>
+  <ScheduleFromStart>1</ScheduleFromStart>
+  <StartDate>2026-10-05T08:00:00</StartDate>
+  <FinishDate>2026-10-15T12:00:00</FinishDate>
+  <CalendarUID>1</CalendarUID>
+  <DefaultStartTime>08:00:00</DefaultStartTime>
+  <DefaultFinishTime>17:00:00</DefaultFinishTime>
+  <MinutesPerDay>480</MinutesPerDay>
+  <MinutesPerWeek>2400</MinutesPerWeek>
+  <DaysPerMonth>20</DaysPerMonth>
+  <Calendars>
+    <Calendar>
+      <UID>1</UID>
+      <Name>Standard</Name>
+      <IsBaseCalendar>1</IsBaseCalendar>
+      <BaseCalendarUID>-1</BaseCalendarUID>
+      <WeekDays>
+        <WeekDay><DayType>1</DayType><DayWorking>0</DayWorking></WeekDay>
+        <WeekDay><DayType>2</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>3</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>4</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>5</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>6</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>7</DayType><DayWorking>0</DayWorking></WeekDay>
+      </WeekDays>
+    </Calendar>
+    <Calendar>
+      <UID>2</UID>
+      <Name>Weekends</Name>
+      <IsBaseCalendar>1</IsBaseCalendar>
+      <BaseCalendarUID>-1</BaseCalendarUID>
+      <WeekDays>
+        <WeekDay><DayType>1</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>2</DayType><DayWorking>0</DayWorking></WeekDay>
+        <WeekDay><DayType>3</DayType><DayWorking>0</DayWorking></WeekDay>
+        <WeekDay><DayType>4</DayType><DayWorking>0</DayWorking></WeekDay>
+        <WeekDay><DayType>5</DayType><DayWorking>0</DayWorking></WeekDay>
+        <WeekDay><DayType>6</DayType><DayWorking>0</DayWorking></WeekDay>
+        <WeekDay><DayType>7</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+      </WeekDays>
+    </Calendar>
+  </Calendars>
+  <Tasks>
+    <Task>
+      <UID>0</UID>
+      <ID>0</ID>
+      <Name>Orchard replant</Name>
+      <OutlineLevel>0</OutlineLevel>
+      <Start>2026-10-05T08:00:00</Start>
+      <Finish>2026-10-15T12:00:00</Finish>
+      <Summary>1</Summary>
+    </Task>
+    <Task>
+      <UID>1</UID>
+      <ID>1</ID>
+      <Name>Lift the old trees</Name>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-10-05T08:00:00</Start>
+      <Finish>2026-10-07T17:00:00</Finish>
+      <Duration>PT24H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+    </Task>
+    <Task>
+      <UID>2</UID>
+      <ID>2</ID>
+      <Name>Soak the rootstock</Name>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-10-05T08:00:00</Start>
+      <Finish>2026-10-07T08:00:00</Finish>
+      <Duration>PT48H0M0S</Duration>
+      <DurationFormat>8</DurationFormat>
+    </Task>
+    <Task>
+      <UID>3</UID>
+      <ID>3</ID>
+      <Name>Dig planting pits</Name>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-10-12T08:00:00</Start>
+      <Finish>2026-10-13T17:00:00</Finish>
+      <Duration>PT16H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <PredecessorLink><PredecessorUID>1</PredecessorUID><Type>1</Type><LinkLag>43200</LinkLag><LagFormat>8</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>4</UID>
+      <ID>4</ID>
+      <Name>Stake the trees</Name>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-10-09T13:00:00</Start>
+      <Finish>2026-10-12T12:00:00</Finish>
+      <Duration>PT8H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <PredecessorLink><PredecessorUID>1</PredecessorUID><Type>1</Type><LinkLag>500</LinkLag><LagFormat>19</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>5</UID>
+      <ID>5</ID>
+      <Name>Order the labels</Name>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-10-13T13:00:00</Start>
+      <Finish>2026-10-14T12:00:00</Finish>
+      <Duration>PT8H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <ConstraintType>1</ConstraintType>
+    </Task>
+    <Task>
+      <UID>6</UID>
+      <ID>6</ID>
+      <Name>Label the rows</Name>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-10-12T13:00:00</Start>
+      <Finish>2026-10-13T12:00:00</Finish>
+      <Duration>PT8H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <PredecessorLink><PredecessorUID>4</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+      <PredecessorLink><PredecessorUID>5</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>7</UID>
+      <ID>7</ID>
+      <Name>Weekend watering</Name>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-10-10T08:00:00</Start>
+      <Finish>2026-10-11T17:00:00</Finish>
+      <Duration>PT16H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <CalendarUID>2</CalendarUID>
+      <PredecessorLink><PredecessorUID>1</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>8</UID>
+      <ID>8</ID>
+      <Name>Mulch the rows</Name>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-10-14T13:00:00</Start>
+      <Finish>2026-10-15T12:00:00</Finish>
+      <Duration>PT8H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <ConstraintType>4</ConstraintType>
+      <ConstraintDate>2026-10-14T13:00:00</ConstraintDate>
+    </Task>
+    <Task>
+      <UID>9</UID>
+      <ID>9</ID>
+      <Name>Prune the hedges</Name>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-10-12T08:00:00</Start>
+      <Finish>2026-10-12T17:00:00</Finish>
+      <Duration>PT8H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <ConstraintType>4</ConstraintType>
+      <ConstraintDate>2026-10-09T08:00:00</ConstraintDate>
+      <LevelingDelay>28800</LevelingDelay>
+      <LevelingDelayFormat>8</LevelingDelayFormat>
+    </Task>
+  </Tasks>
+</Project>

@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Parity fixture, hand-written for ProjectCraft's tests from Microsoft's published MSPDI schema
+     documentation (learn.microsoft.com/office-project/xml-data-interchange). An invented plan:
+     the tasks and dates are made up. No Microsoft file was used.
+
+     What it exercises: summary tasks, all four link types (finish-to-start, start-to-start,
+     finish-to-finish, start-to-finish) with lags and a lead in working days, Start No Earlier
+     Than, Start No Later Than, Must Start On, Must Finish On and Finish No Later Than constraints,
+     a deadline, milestones, a link from a summary task, and a project calendar with lunch breaks,
+     two non-working holidays and a working Saturday morning.
+
+     Each task's Start and Finish are written as Microsoft Project would work them out by its
+     published scheduling rules, worked by hand (the calendar: Monday to Friday 08:00 to 12:00 and
+     13:00 to 17:00; Monday 4 May and Monday 25 May 2026 off; Saturday 16 May 2026 worked 08:00 to
+     12:00; a day is 8 hours):
+
+      2 Inspect the slipway, 2d, from the project start Fri 1 May 08:00: Fri 1 May, then
+        Tue 5 May (the weekend and the 4 May holiday skipped). 1 May to 5 May 17:00.
+      3 Write the survey report, 3d, FS from 2: Wed 6 to Fri 8 May 17:00. Start No Later Than
+        11 May only limits its late dates.
+      4 Survey signed off, milestone, FS from 3: at 3's finish, Fri 8 May 17:00.
+      1 Survey (summary): 1 May to 8 May.
+      6 Strip the old decking, 4d, SS from 3 with a 1d lag: 3 starts Wed 6 May 08:00, so 6
+        starts Thu 7 May 08:00; Thu 7, Fri 8, Mon 11, Tue 12 May 17:00.
+      7 Replace the joists, 3d (24h), FS from 6 with a 2d lag: 12 May 17:00 plus 16 working hours
+        is Thu 14 May 17:00, so it starts Fri 15 May 08:00: Fri 15 (8h), Sat 16 (4h), Mon 18
+        (8h), Tue 19 08:00 to 12:00 (4h). 15 May to 19 May 12:00.
+      8 Lay the new decking, 3d, FF from 7 with a 1d lag: finishes 8 working hours after 19 May
+        12:00, Wed 20 May 12:00; 24 working hours back from there is Sat 16 May 08:00 (Wed 20
+        4h, Tue 19 8h, Mon 18 8h, Sat 16 4h). 16 May to 20 May 12:00.
+      9 Fit the handrails, 2d, SF from 8, no lag: finishes no earlier than 8 starts (Sat 16 May
+        08:00, which is Fri 15 May 17:00 as a finish); 16 working hours back is Thu 14 May 08:00.
+        14 May to 15 May.
+     10 Paint the boathouse, 5d, FS from 8, Start No Earlier Than Thu 21 May 08:00 (8 would let it
+        start Wed 20 May 13:00): Thu 21, Fri 22, Tue 26 (25 May off), Wed 27, Thu 28 May 17:00.
+     11 Rehang the doors, 1d, Must Start On Wed 27 May 08:00: 27 May.
+     12 Final coat, 2d, FS from 10, Must Finish On Fri 5 Jun 17:00: Thu 4 Jun 08:00 to 5 Jun.
+     13 Snagging, 2d, FS from 12, Finish No Later Than 12 Jun and a deadline of 10 Jun (neither
+        moves it): Mon 8 to Tue 9 Jun.
+      5 Repairs (summary): from 6's start, 7 May, to 13's finish, 9 Jun.
+     14 Handed back, milestone, FS from the Repairs summary: at 9 Jun 17:00. -->
+<Project xmlns="http://schemas.microsoft.com/project">
+  <SaveVersion>14</SaveVersion>
+  <Name>Boathouse repair.xml</Name>
+  <Title>Boathouse repair</Title>
+  <ScheduleFromStart>1</ScheduleFromStart>
+  <StartDate>2026-05-01T08:00:00</StartDate>
+  <FinishDate>2026-06-09T17:00:00</FinishDate>
+  <CalendarUID>1</CalendarUID>
+  <DefaultStartTime>08:00:00</DefaultStartTime>
+  <DefaultFinishTime>17:00:00</DefaultFinishTime>
+  <MinutesPerDay>480</MinutesPerDay>
+  <MinutesPerWeek>2400</MinutesPerWeek>
+  <DaysPerMonth>20</DaysPerMonth>
+  <Calendars>
+    <Calendar>
+      <UID>1</UID>
+      <Name>Standard</Name>
+      <IsBaseCalendar>1</IsBaseCalendar>
+      <BaseCalendarUID>-1</BaseCalendarUID>
+      <WeekDays>
+        <WeekDay><DayType>1</DayType><DayWorking>0</DayWorking></WeekDay>
+        <WeekDay><DayType>2</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>3</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>4</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>5</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>6</DayType><DayWorking>1</DayWorking><WorkingTimes>
+          <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+        </WorkingTimes></WeekDay>
+        <WeekDay><DayType>7</DayType><DayWorking>0</DayWorking></WeekDay>
+      </WeekDays>
+      <Exceptions>
+        <Exception>
+          <EnteredByOccurrences>0</EnteredByOccurrences>
+          <TimePeriod><FromDate>2026-05-04T00:00:00</FromDate><ToDate>2026-05-04T23:59:00</ToDate></TimePeriod>
+          <Occurrences>1</Occurrences>
+          <Name>Early May holiday</Name>
+          <Type>1</Type>
+          <DayWorking>0</DayWorking>
+        </Exception>
+        <Exception>
+          <EnteredByOccurrences>0</EnteredByOccurrences>
+          <TimePeriod><FromDate>2026-05-16T00:00:00</FromDate><ToDate>2026-05-16T23:59:00</ToDate></TimePeriod>
+          <Occurrences>1</Occurrences>
+          <Name>Catch-up Saturday</Name>
+          <Type>1</Type>
+          <DayWorking>1</DayWorking>
+          <WorkingTimes>
+            <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+          </WorkingTimes>
+        </Exception>
+        <Exception>
+          <EnteredByOccurrences>0</EnteredByOccurrences>
+          <TimePeriod><FromDate>2026-05-25T00:00:00</FromDate><ToDate>2026-05-25T23:59:00</ToDate></TimePeriod>
+          <Occurrences>1</Occurrences>
+          <Name>Spring holiday</Name>
+          <Type>1</Type>
+          <DayWorking>0</DayWorking>
+        </Exception>
+      </Exceptions>
+    </Calendar>
+  </Calendars>
+  <Tasks>
+    <Task>
+      <UID>0</UID>
+      <ID>0</ID>
+      <Name>Boathouse repair</Name>
+      <OutlineLevel>0</OutlineLevel>
+      <Start>2026-05-01T08:00:00</Start>
+      <Finish>2026-06-09T17:00:00</Finish>
+      <Summary>1</Summary>
+    </Task>
+    <Task>
+      <UID>1</UID>
+      <ID>1</ID>
+      <Name>Survey</Name>
+      <OutlineNumber>1</OutlineNumber>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-05-01T08:00:00</Start>
+      <Finish>2026-05-08T17:00:00</Finish>
+      <Duration>PT40H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Summary>1</Summary>
+    </Task>
+    <Task>
+      <UID>2</UID>
+      <ID>2</ID>
+      <Name>Inspect the slipway</Name>
+      <OutlineNumber>1.1</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-05-01T08:00:00</Start>
+      <Finish>2026-05-05T17:00:00</Finish>
+      <Duration>PT16H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <ConstraintType>0</ConstraintType>
+    </Task>
+    <Task>
+      <UID>3</UID>
+      <ID>3</ID>
+      <Name>Write the survey report</Name>
+      <OutlineNumber>1.2</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-05-06T08:00:00</Start>
+      <Finish>2026-05-08T17:00:00</Finish>
+      <Duration>PT24H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <ConstraintType>5</ConstraintType>
+      <ConstraintDate>2026-05-11T08:00:00</ConstraintDate>
+      <PredecessorLink><PredecessorUID>2</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>4</UID>
+      <ID>4</ID>
+      <Name>Survey signed off</Name>
+      <OutlineNumber>1.3</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-05-08T17:00:00</Start>
+      <Finish>2026-05-08T17:00:00</Finish>
+      <Duration>PT0H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Milestone>1</Milestone>
+      <PredecessorLink><PredecessorUID>3</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>5</UID>
+      <ID>5</ID>
+      <Name>Repairs</Name>
+      <OutlineNumber>2</OutlineNumber>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-05-07T08:00:00</Start>
+      <Finish>2026-06-09T17:00:00</Finish>
+      <Duration>PT188H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Summary>1</Summary>
+    </Task>
+    <Task>
+      <UID>6</UID>
+      <ID>6</ID>
+      <Name>Strip the old decking</Name>
+      <OutlineNumber>2.1</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-05-07T08:00:00</Start>
+      <Finish>2026-05-12T17:00:00</Finish>
+      <Duration>PT32H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <PredecessorLink><PredecessorUID>3</PredecessorUID><Type>3</Type><LinkLag>4800</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>7</UID>
+      <ID>7</ID>
+      <Name>Replace the joists</Name>
+      <OutlineNumber>2.2</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-05-15T08:00:00</Start>
+      <Finish>2026-05-19T12:00:00</Finish>
+      <Duration>PT24H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <PredecessorLink><PredecessorUID>6</PredecessorUID><Type>1</Type><LinkLag>9600</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>8</UID>
+      <ID>8</ID>
+      <Name>Lay the new decking</Name>
+      <OutlineNumber>2.3</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-05-16T08:00:00</Start>
+      <Finish>2026-05-20T12:00:00</Finish>
+      <Duration>PT24H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <PredecessorLink><PredecessorUID>7</PredecessorUID><Type>0</Type><LinkLag>4800</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>9</UID>
+      <ID>9</ID>
+      <Name>Fit the handrails</Name>
+      <OutlineNumber>2.4</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-05-14T08:00:00</Start>
+      <Finish>2026-05-15T17:00:00</Finish>
+      <Duration>PT16H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <PredecessorLink><PredecessorUID>8</PredecessorUID><Type>2</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>10</UID>
+      <ID>10</ID>
+      <Name>Paint the boathouse</Name>
+      <OutlineNumber>2.5</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-05-21T08:00:00</Start>
+      <Finish>2026-05-28T17:00:00</Finish>
+      <Duration>PT40H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <ConstraintType>4</ConstraintType>
+      <ConstraintDate>2026-05-21T08:00:00</ConstraintDate>
+      <PredecessorLink><PredecessorUID>8</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>11</UID>
+      <ID>11</ID>
+      <Name>Rehang the doors</Name>
+      <OutlineNumber>2.6</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-05-27T08:00:00</Start>
+      <Finish>2026-05-27T17:00:00</Finish>
+      <Duration>PT8H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <ConstraintType>2</ConstraintType>
+      <ConstraintDate>2026-05-27T08:00:00</ConstraintDate>
+    </Task>
+    <Task>
+      <UID>12</UID>
+      <ID>12</ID>
+      <Name>Final coat</Name>
+      <OutlineNumber>2.7</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-06-04T08:00:00</Start>
+      <Finish>2026-06-05T17:00:00</Finish>
+      <Duration>PT16H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <ConstraintType>3</ConstraintType>
+      <ConstraintDate>2026-06-05T17:00:00</ConstraintDate>
+      <PredecessorLink><PredecessorUID>10</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>13</UID>
+      <ID>13</ID>
+      <Name>Snagging</Name>
+      <OutlineNumber>2.8</OutlineNumber>
+      <OutlineLevel>2</OutlineLevel>
+      <Start>2026-06-08T08:00:00</Start>
+      <Finish>2026-06-09T17:00:00</Finish>
+      <Duration>PT16H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <ConstraintType>7</ConstraintType>
+      <ConstraintDate>2026-06-12T17:00:00</ConstraintDate>
+      <Deadline>2026-06-10T17:00:00</Deadline>
+      <PredecessorLink><PredecessorUID>12</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+    <Task>
+      <UID>14</UID>
+      <ID>14</ID>
+      <Name>Handed back</Name>
+      <OutlineNumber>3</OutlineNumber>
+      <OutlineLevel>1</OutlineLevel>
+      <Start>2026-06-09T17:00:00</Start>
+      <Finish>2026-06-09T17:00:00</Finish>
+      <Duration>PT0H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Milestone>1</Milestone>
+      <PredecessorLink><PredecessorUID>5</PredecessorUID><Type>1</Type><LinkLag>0</LinkLag><LagFormat>7</LagFormat></PredecessorLink>
+    </Task>
+  </Tasks>
+</Project>

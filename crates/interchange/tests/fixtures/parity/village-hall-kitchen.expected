@@ -1,0 +1,4 @@
+# Accepted "Dates differ" lines for village-hall-kitchen.xml, one a line as the import report
+# writes them, each with a comment saying why (a gap listed in ROADMAP.md). None: every task's
+# Start and Finish match the file's (assignments setting durations, a part-time resource calendar
+# with leave, two people on different calendars, each task type, a milestone after two tasks).

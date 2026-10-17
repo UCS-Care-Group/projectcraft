@@ -405,3 +405,22 @@ proptest::proptest! {
         let _ = model::schedule(&i.project);
     }
 }
+
+/// Regression: a constraint's time of day was left without a word, so a task held to Start No
+/// Earlier Than 13:00 finished a day sooner than in the file with nothing in the report to say
+/// why. The day is still what ProjectCraft holds; now the report says the time was left.
+#[test]
+fn a_constraint_time_of_day_that_moves_the_task_is_reported() {
+    let i = mspdi(&plan(&[
+        (1, "Mulch the rows", 8, &constraint(4, "2026-03-04T13:00:00")),
+        (2, "Water the rows", 8, &constraint(7, "2026-03-06T12:00:00")),
+        (3, "Rake the paths", 8, &constraint(2, "2026-03-04T08:00:00")),
+        (4, "Sweep the yard", 8, &constraint(3, "2026-03-05T17:00:00")),
+        (5, "Fill the trough", 8, &constraint(6, "2026-03-05T00:00:00")),
+    ]));
+    let l = find(&i, "Constraint time of day");
+    assert_eq!((l.outcome, l.place.as_str()), (Outcome::Converted, "ID 1 Mulch the rows, ID 2 Water the rows"));
+    assert_eq!(i.project.tasks[0].constraint, Constraint::StartNoEarlierThan(d(2026, 3, 4)), "the day is kept");
+    let s = model::schedule(&i.project).unwrap();
+    assert_eq!((s.tasks[&TaskId(1)].start, s.tasks[&TaskId(1)].finish), (d(2026, 3, 4), d(2026, 3, 4)));
+}
