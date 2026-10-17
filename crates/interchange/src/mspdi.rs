@@ -132,7 +132,7 @@ impl Note {
             Note::Elapsed => (
                 Converted,
                 "Elapsed duration",
-                "ProjectCraft counts durations in working time, so the elapsed span is the same number of working units (3ed is 3d)",
+                "ProjectCraft counts durations in working time, so the elapsed span is the same number of working units (3ed becomes 3d, for example)",
             ),
             Note::Estimated => (Dropped, "Estimated duration (?)", "ProjectCraft has no estimate mark; the duration is kept"),
             Note::Outline => (Converted, "Outline level", "deeper than the row above allows; moved up to fit the outline"),
@@ -651,7 +651,7 @@ impl FileProject {
         }
         p.currency = currency(f, &mut lines);
         p.calendar = self.calendar(&mut lines);
-        let (tasks, task_lines, on, rows) = tasks(std::mem::take(&mut self.tasks), &p.options, p.start, p.currency.digits)?;
+        let (tasks, task_lines, on, rows) = tasks(std::mem::take(&mut self.tasks), &p.options, p.start, p.currency.digits, &p.calendar)?;
         lines.extend(task_lines);
         let resource_calendars = self.res.calendar_uids();
         lines.extend(self.other_calendars(&tasks, &on, &resource_calendars));
@@ -1058,7 +1058,7 @@ type Tasks = (Vec<Task>, Vec<ReportLine>, Vec<Option<i64>>, Vec<FileRow>);
 
 /// The file's tasks as the project's, in the file's ID order. An elapsed duration is read as the
 /// same number of working units.
-fn tasks(file: Vec<FileTask>, options: &Options, start: Date, digits: u32) -> Result<Tasks, ImportError> {
+fn tasks(file: Vec<FileTask>, options: &Options, start: Date, digits: u32, calendar: &Calendar) -> Result<Tasks, ImportError> {
     let mut lines = Vec::new();
     let (mut summary, mut blank) = (false, 0usize);
     let mut kept: Vec<FileTask> = Vec::with_capacity(file.len());
@@ -1163,7 +1163,7 @@ fn tasks(file: Vec<FileTask>, options: &Options, start: Date, digits: u32) -> Re
                 t.note(Note::LevelingDelay);
             }
         }
-        field_notes.push(fields::apply(&t.fields, &mut task, start, digits));
+        field_notes.push(fields::apply(&t.fields, &mut task, start, digits, calendar));
         out.push(task);
         notes.push(t.notes);
         on.push(t.calendar);

@@ -128,7 +128,8 @@ fn a_resource_weekday_like_the_project_s() {
 fn the_import_fixtures_round_trip() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../interchange/tests/fixtures");
     let mut seen = 0;
-    for entry in std::fs::read_dir(&dir).unwrap() {
+    let entries = std::fs::read_dir(&dir).unwrap().chain(std::fs::read_dir(dir.join("parity")).unwrap());
+    for entry in entries {
         let path = entry.unwrap().path();
         if path.extension().is_none_or(|e| e != "xml") {
             continue;
@@ -141,7 +142,7 @@ fn the_import_fixtures_round_trip() {
         assert!(s2.import_report().unwrap().lines.is_empty(), "{}: {}", path.display(), s2.import_report().unwrap().text());
         assert_eq!(s2.export(Format::Mspdi).unwrap(), x1, "{}: export → import → export", path.display());
     }
-    assert!(seen >= 2, "the fixtures were found");
+    assert!(seen >= 5, "the fixtures, and the parity fixtures, were found");
 }
 
 #[test]

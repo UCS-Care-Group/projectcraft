@@ -1,0 +1,4 @@
+# Accepted "Dates differ" lines for boathouse-repair.xml, one a line as the import report writes
+# them, each with a comment saying why (a gap listed in ROADMAP.md). None: every task's Start and
+# Finish match the file's (summaries, all four link types with lags and a lead, every constraint
+# type but As Late As Possible, a deadline, holidays and a working Saturday morning).

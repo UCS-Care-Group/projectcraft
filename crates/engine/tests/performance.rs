@@ -10,6 +10,8 @@
 //! (`resource_names_on_a_large_plan_stay_fast`), and so is the resource usage of a plan at the
 //! assignment cap. Level All is gated too (`levelling_a_staffed_plan_stays_bounded`): the staffed
 //! plan under 2 s, and plans of 20,000 and 1,000,000 assignments within their round caps.
+//! Importing a 2,000-task Microsoft Project XML file is gated under 1 s
+//! (`importing_a_large_mspdi_file_is_gated`), and exporting it as Microsoft Project XML or CSV.
 
 use std::time::{Duration, Instant};
 
@@ -287,9 +289,15 @@ fn reschedule_200_tasks_under_10_ms() {
 /// a generous ceiling over what is reported (a few milliseconds), to catch a quadratic export.
 const EXPORT_GATE: Duration = Duration::from_secs(1);
 
+/// The most importing a 2,000-task Microsoft Project XML file may take, in release, as Open does
+/// it: read, checked, scheduled and compared with the file's dates for the report, then scheduled
+/// again for the new session.
+const IMPORT_GATE: Duration = Duration::from_secs(1);
+
 /// Exporting a 2,000-task plan with 30 resources and 300 assignments as Microsoft Project XML,
 /// and importing that file again, are timed and reported; the export is gated by
-/// [`EXPORT_GATE`]. The round trip is checked too: the file imports as the same plan.
+/// [`EXPORT_GATE`] (the import has its own gate, `importing_a_large_mspdi_file_is_gated`). The
+/// round trip is checked too: the file imports as the same plan.
 #[test]
 #[ignore = "timing; run in release by `cargo xtask perf`"]
 fn exporting_a_large_plan_is_reported() {
@@ -315,6 +323,45 @@ fn exporting_a_large_plan_is_reported() {
     );
     if !cfg!(debug_assertions) {
         assert!(t_export < EXPORT_GATE, "exporting 2,000 tasks took {t_export:.2?}, over the {EXPORT_GATE:?} gate");
+    }
+}
+
+/// Importing a 2,000-task Microsoft Project XML file (the staffed plan: summaries three levels
+/// deep, all four link types with lags and leads, every constraint type, deadlines, a calendar
+/// with holidays and working Saturdays, 30 resources on their own calendars and 300 assignments)
+/// into a new session, as Open does: the median of 9 runs is gated by [`IMPORT_GATE`].
+#[test]
+#[ignore = "timing; run in release by `cargo xtask perf`"]
+fn importing_a_large_mspdi_file_is_gated() {
+    use projectcraft_engine::interchange::Format;
+    let plan = staffed(2_000, 19);
+    let xml = Session::new(plan.clone()).export(Format::Mspdi).unwrap();
+    let mut times = Vec::new();
+    let mut last = None;
+    for _ in 0..9 {
+        let t0 = Instant::now();
+        let s = Session::import(Format::Mspdi, xml.as_bytes()).unwrap();
+        times.push(t0.elapsed());
+        last = Some(s);
+    }
+    times.sort();
+    let t_import = times[times.len() / 2];
+    let s = last.unwrap();
+    assert_eq!(s.project.tasks.len(), 2_000);
+    assert_eq!((s.project.resources.len(), s.project.assignments.len()), (plan.resources.len(), plan.assignments.len()));
+    assert!(s.schedule.is_ok());
+    assert!(
+        s.import_report().unwrap().lines.iter().all(|l| l.outcome != projectcraft_engine::interchange::Outcome::DatesDiffer),
+        "the file's own dates are ProjectCraft's: {}",
+        s.import_report().unwrap().text()
+    );
+    let build = if cfg!(debug_assertions) { "debug" } else { "release" };
+    println!(
+        "perf ({build}): import a 2,000-task Microsoft Project XML file ({} KB, {STAFF} resources, {STAFFED_ASSIGNMENTS} assignments) {t_import:.2?} (median of 9; gate: under {IMPORT_GATE:?})",
+        xml.len() / 1024
+    );
+    if !cfg!(debug_assertions) {
+        assert!(t_import < IMPORT_GATE, "importing 2,000 tasks took {t_import:.2?}, over the {IMPORT_GATE:?} gate");
     }
 }
 
