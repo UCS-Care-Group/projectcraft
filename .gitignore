@@ -6,3 +6,4 @@ plan/
 /.claude/
 /target-*/
 *.projectcraft
+!crates/engine/tests/fixtures/**/*.projectcraft

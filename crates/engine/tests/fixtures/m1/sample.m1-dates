@@ -1,0 +1,9 @@
+finish	2026-11-20
+task	1	2026-11-02	2026-11-03	2026-11-02	2026-11-03	0	true	false	false	ProjectStart
+task	2	2026-11-04	2026-11-06	2026-11-06	2026-11-10	2	false	false	false	Link(TaskId(1))
+task	3	2026-11-04	2026-11-04	2026-11-04	2026-11-04	0	true	false	false	Link(TaskId(1))
+task	4	2026-11-05	2026-11-18	2026-11-05	2026-11-18	0	true	false	false	Link(TaskId(3))
+task	5	2026-11-09	2026-11-13	2026-11-11	2026-11-17	2	false	false	false	Link(TaskId(2))
+task	6	2026-11-18	2026-11-19	2026-11-18	2026-11-19	0	true	false	false	Link(TaskId(4))
+task	7	2026-11-20	2026-11-20	2026-11-20	2026-11-20	0	true	false	false	Link(TaskId(6))
+task	8	2026-11-20	2026-11-20	2026-11-20	2026-11-20	0	true	false	false	Link(TaskId(7))

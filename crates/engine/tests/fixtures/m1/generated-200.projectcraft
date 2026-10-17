@@ -1,0 +1,2940 @@
+{
+  "calendar": {
+    "exceptions": [
+      {
+        "date": "2026-01-18",
+        "working": false
+      },
+      {
+        "date": "2026-02-14",
+        "working": true
+      },
+      {
+        "date": "2026-02-20",
+        "working": false
+      },
+      {
+        "date": "2026-03-31",
+        "working": false
+      },
+      {
+        "date": "2026-04-18",
+        "working": true
+      },
+      {
+        "date": "2026-05-04",
+        "working": false
+      },
+      {
+        "date": "2026-06-01",
+        "working": false
+      },
+      {
+        "date": "2026-06-17",
+        "working": false
+      },
+      {
+        "date": "2026-06-20",
+        "working": true
+      },
+      {
+        "date": "2026-07-18",
+        "working": false
+      },
+      {
+        "date": "2026-08-17",
+        "working": false
+      },
+      {
+        "date": "2026-08-22",
+        "working": true
+      },
+      {
+        "date": "2026-09-16",
+        "working": false
+      },
+      {
+        "date": "2026-10-24",
+        "working": true
+      },
+      {
+        "date": "2026-10-25",
+        "working": false
+      },
+      {
+        "date": "2026-12-08",
+        "working": false
+      },
+      {
+        "date": "2026-12-26",
+        "working": true
+      },
+      {
+        "date": "2026-12-28",
+        "working": false
+      },
+      {
+        "date": "2027-01-12",
+        "working": false
+      },
+      {
+        "date": "2027-03-10",
+        "working": false
+      },
+      {
+        "date": "2027-03-23",
+        "working": false
+      },
+      {
+        "date": "2027-04-20",
+        "working": false
+      },
+      {
+        "date": "2027-06-05",
+        "working": false
+      },
+      {
+        "date": "2027-07-08",
+        "working": false
+      },
+      {
+        "date": "2027-08-06",
+        "working": false
+      },
+      {
+        "date": "2027-09-08",
+        "working": false
+      },
+      {
+        "date": "2027-10-13",
+        "working": false
+      },
+      {
+        "date": "2027-10-25",
+        "working": false
+      },
+      {
+        "date": "2027-11-27",
+        "working": false
+      },
+      {
+        "date": "2027-12-24",
+        "working": false
+      },
+      {
+        "date": "2028-01-21",
+        "working": false
+      }
+    ],
+    "working": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "format_version": 1,
+  "name": "Generated 200",
+  "next_id": 201,
+  "start": "2026-01-05",
+  "tasks": [
+    {
+      "duration": 112,
+      "id": 1,
+      "name": "Phase 1",
+      "preds": []
+    },
+    {
+      "duration": 38,
+      "id": 2,
+      "name": "Package 1.1",
+      "outline_level": 2,
+      "preds": []
+    },
+    {
+      "duration": 20,
+      "id": 3,
+      "name": "Group 1.1.1",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 6,
+      "id": 4,
+      "name": "Task 1.1.1.1",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 1,
+      "id": 5,
+      "name": "Task 1.1.1.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 4
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 6,
+      "name": "Task 1.1.1.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 2,
+          "pred": 4
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 7,
+      "name": "Task 1.1.1.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 2,
+          "pred": 4
+        },
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 6
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNLT": "2026-01-23"
+      },
+      "duration": 1,
+      "id": 8,
+      "name": "Task 1.1.1.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 6
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 9,
+      "name": "Task 1.1.1.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 4
+        },
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 5
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 10,
+      "name": "Task 1.1.1.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 2,
+          "pred": 7
+        }
+      ]
+    },
+    {
+      "deadline": "2026-03-19",
+      "duration": 4,
+      "id": 11,
+      "name": "Task 1.1.1.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 7
+        },
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 9
+        }
+      ]
+    },
+    {
+      "duration": 38,
+      "id": 12,
+      "name": "Group 1.1.2",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 9,
+      "id": 13,
+      "name": "Task 1.1.2.1",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 1,
+      "id": 14,
+      "name": "Task 1.1.2.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 5
+        },
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 9
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 15,
+      "name": "Task 1.1.2.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 6
+        }
+      ]
+    },
+    {
+      "duration": 9,
+      "id": 16,
+      "name": "Task 1.1.2.4",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 0,
+      "id": 17,
+      "name": "Task 1.1.2.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 3,
+          "pred": 8
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MFO": "2026-02-25"
+      },
+      "duration": 3,
+      "id": 18,
+      "name": "Task 1.1.2.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 6
+        },
+        {
+          "kind": "FF",
+          "lag": -2,
+          "pred": 11
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 19,
+      "name": "Task 1.1.2.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 10
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 20,
+      "name": "Task 1.1.2.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 4
+        },
+        {
+          "kind": "SS",
+          "lag": -2,
+          "pred": 5
+        }
+      ]
+    },
+    {
+      "duration": 23,
+      "id": 21,
+      "name": "Group 1.1.3",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 6,
+      "id": 22,
+      "name": "Task 1.1.3.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -2,
+          "pred": 11
+        },
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 20
+        }
+      ]
+    },
+    {
+      "duration": 9,
+      "id": 23,
+      "name": "Task 1.1.3.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 2,
+          "pred": 13
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 19
+        }
+      ]
+    },
+    {
+      "deadline": "2026-03-30",
+      "duration": 0,
+      "id": 24,
+      "name": "Task 1.1.3.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 14
+        }
+      ]
+    },
+    {
+      "duration": 4,
+      "id": 25,
+      "name": "Task 1.1.3.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 23
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 26,
+      "name": "Task 1.1.3.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 11
+        }
+      ]
+    },
+    {
+      "duration": 9,
+      "id": 27,
+      "name": "Task 1.1.3.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 11
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "SNET": "2026-02-23"
+      },
+      "duration": 0,
+      "id": 28,
+      "name": "Task 1.1.3.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 15
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 29,
+      "name": "Task 1.1.3.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 23
+        },
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 13
+        }
+      ]
+    },
+    {
+      "duration": 33,
+      "id": 30,
+      "name": "Package 1.2",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 13,
+      "id": 31,
+      "name": "Group 1.2.1",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 0,
+      "id": 32,
+      "name": "Task 1.2.1.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 3,
+          "pred": 27
+        }
+      ]
+    },
+    {
+      "duration": 8,
+      "id": 33,
+      "name": "Task 1.2.1.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 16
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 34,
+      "name": "Task 1.2.1.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 18
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 35,
+      "name": "Task 1.2.1.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 3,
+          "pred": 34
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 36,
+      "name": "Task 1.2.1.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 20
+        },
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 26
+        }
+      ]
+    },
+    {
+      "deadline": "2026-05-02",
+      "duration": 9,
+      "id": 37,
+      "name": "Task 1.2.1.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 35
+        },
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 29
+        }
+      ]
+    },
+    {
+      "duration": 8,
+      "id": 38,
+      "name": "Task 1.2.1.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 22
+        },
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 25
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MSO": "2026-03-13"
+      },
+      "duration": 2,
+      "id": 39,
+      "name": "Task 1.2.1.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 27
+        }
+      ]
+    },
+    {
+      "duration": 16,
+      "id": 40,
+      "name": "Group 1.2.2",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 4,
+      "id": 41,
+      "name": "Task 1.2.2.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -1,
+          "pred": 39
+        },
+        {
+          "kind": "SF",
+          "lag": -2,
+          "pred": 36
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 42,
+      "name": "Task 1.2.2.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 38
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 43,
+      "name": "Task 1.2.2.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 39
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 44,
+      "name": "Task 1.2.2.4",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 8,
+      "id": 45,
+      "name": "Task 1.2.2.5",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 10,
+      "id": 46,
+      "name": "Task 1.2.2.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 28
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 35
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 47,
+      "name": "Task 1.2.2.7",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 9,
+      "id": 48,
+      "name": "Task 1.2.2.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 44
+        },
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 33
+        }
+      ]
+    },
+    {
+      "duration": 33,
+      "id": 49,
+      "name": "Group 1.2.3",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "constraint": {
+        "MSO": "2026-04-14"
+      },
+      "deadline": "2026-04-16",
+      "duration": 1,
+      "id": 50,
+      "name": "Task 1.2.3.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": -1,
+          "pred": 46
+        },
+        {
+          "kind": "SS",
+          "lag": 3,
+          "pred": 47
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 51,
+      "name": "Task 1.2.3.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 41
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 44
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 52,
+      "name": "Task 1.2.3.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -2,
+          "pred": 47
+        },
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 44
+        }
+      ]
+    },
+    {
+      "duration": 4,
+      "id": 53,
+      "name": "Task 1.2.3.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -2,
+          "pred": 38
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 54,
+      "name": "Task 1.2.3.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 41
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 55,
+      "name": "Task 1.2.3.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 52
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 56,
+      "name": "Task 1.2.3.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 43
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 57,
+      "name": "Task 1.2.3.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 54
+        },
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 53
+        }
+      ]
+    },
+    {
+      "duration": 40,
+      "id": 58,
+      "name": "Package 1.3",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 30
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNET": "2026-05-09"
+      },
+      "duration": 17,
+      "id": 59,
+      "name": "Group 1.3.1",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 2,
+      "id": 60,
+      "name": "Task 1.3.1.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 2,
+          "pred": 43
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNLT": "2026-04-27"
+      },
+      "duration": 9,
+      "id": 61,
+      "name": "Task 1.3.1.2",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 9,
+      "id": 62,
+      "name": "Task 1.3.1.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 55
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 54
+        }
+      ]
+    },
+    {
+      "deadline": "2026-06-09",
+      "duration": 9,
+      "id": 63,
+      "name": "Task 1.3.1.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 54
+        },
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 47
+        }
+      ]
+    },
+    {
+      "duration": 9,
+      "id": 64,
+      "name": "Task 1.3.1.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 60
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 65,
+      "name": "Task 1.3.1.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 2,
+          "pred": 51
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 66,
+      "name": "Task 1.3.1.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 56
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 67,
+      "name": "Task 1.3.1.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 54
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNET": "2026-05-30"
+      },
+      "duration": 7,
+      "id": 68,
+      "name": "Group 1.3.2",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 6,
+      "id": 69,
+      "name": "Task 1.3.2.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 66
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 70,
+      "name": "Task 1.3.2.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -2,
+          "pred": 57
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNET": "2026-05-09"
+      },
+      "duration": 4,
+      "id": 71,
+      "name": "Task 1.3.2.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": -1,
+          "pred": 61
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 53
+        }
+      ]
+    },
+    {
+      "duration": 4,
+      "id": 72,
+      "name": "Task 1.3.2.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 60
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 73,
+      "name": "Task 1.3.2.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 69
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 74,
+      "name": "Task 1.3.2.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 61
+        },
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 71
+        }
+      ]
+    },
+    {
+      "deadline": "2026-06-24",
+      "duration": 2,
+      "id": 75,
+      "name": "Task 1.3.2.7",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 1,
+      "id": 76,
+      "name": "Task 1.3.2.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 71
+        }
+      ]
+    },
+    {
+      "duration": 29,
+      "id": 77,
+      "name": "Group 1.3.3",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 4,
+      "id": 78,
+      "name": "Task 1.3.3.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 2,
+          "pred": 74
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 79,
+      "name": "Task 1.3.3.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 64
+        }
+      ]
+    },
+    {
+      "duration": 8,
+      "id": 80,
+      "name": "Task 1.3.3.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 71
+        },
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 73
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNLT": "2026-05-25"
+      },
+      "duration": 7,
+      "id": 81,
+      "name": "Task 1.3.3.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 80
+        }
+      ]
+    },
+    {
+      "duration": 6,
+      "id": 82,
+      "name": "Task 1.3.3.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 2,
+          "pred": 75
+        },
+        {
+          "kind": "FF",
+          "lag": -2,
+          "pred": 65
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 83,
+      "name": "Task 1.3.3.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 80
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 84,
+      "name": "Task 1.3.3.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 3,
+          "pred": 67
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 85,
+      "name": "Task 1.3.3.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 79
+        },
+        {
+          "kind": "SF",
+          "lag": 0,
+          "pred": 70
+        }
+      ]
+    },
+    {
+      "duration": 114,
+      "id": 86,
+      "name": "Phase 2",
+      "preds": []
+    },
+    {
+      "duration": 41,
+      "id": 87,
+      "name": "Package 2.1",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 58
+        }
+      ]
+    },
+    {
+      "duration": 8,
+      "id": 88,
+      "name": "Group 2.1.1",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 6,
+      "id": 89,
+      "name": "Task 2.1.1.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 82
+        }
+      ]
+    },
+    {
+      "deadline": "2026-07-16",
+      "duration": 1,
+      "id": 90,
+      "name": "Task 2.1.1.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 73
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 91,
+      "name": "Task 2.1.1.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 82
+        },
+        {
+          "kind": "FF",
+          "lag": -2,
+          "pred": 85
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 92,
+      "name": "Task 2.1.1.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -2,
+          "pred": 76
+        },
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 79
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MSO": "2026-06-18"
+      },
+      "duration": 4,
+      "id": 93,
+      "name": "Task 2.1.1.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 91
+        },
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 80
+        }
+      ]
+    },
+    {
+      "duration": 6,
+      "id": 94,
+      "name": "Task 2.1.1.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 75
+        },
+        {
+          "kind": "SS",
+          "lag": 2,
+          "pred": 89
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 95,
+      "name": "Task 2.1.1.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 3,
+          "pred": 91
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 80
+        }
+      ]
+    },
+    {
+      "duration": 4,
+      "id": 96,
+      "name": "Task 2.1.1.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 95
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNET": "2026-07-17"
+      },
+      "duration": 21,
+      "id": 97,
+      "name": "Group 2.1.2",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 6,
+      "id": 98,
+      "name": "Task 2.1.2.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -2,
+          "pred": 80
+        },
+        {
+          "kind": "SS",
+          "lag": 3,
+          "pred": 85
+        }
+      ]
+    },
+    {
+      "duration": 8,
+      "id": 99,
+      "name": "Task 2.1.2.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 89
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 100,
+      "name": "Task 2.1.2.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 94
+        },
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 85
+        }
+      ]
+    },
+    {
+      "duration": 9,
+      "id": 101,
+      "name": "Task 2.1.2.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 100
+        }
+      ]
+    },
+    {
+      "deadline": "2026-07-25",
+      "duration": 4,
+      "id": 102,
+      "name": "Task 2.1.2.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -2,
+          "pred": 83
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MFO": "2026-06-24"
+      },
+      "duration": 4,
+      "id": 103,
+      "name": "Task 2.1.2.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 93
+        },
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 99
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 104,
+      "name": "Task 2.1.2.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 85
+        },
+        {
+          "kind": "FF",
+          "lag": 2,
+          "pred": 89
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 105,
+      "name": "Task 2.1.2.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 100
+        }
+      ]
+    },
+    {
+      "duration": 35,
+      "id": 106,
+      "name": "Group 2.1.3",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 0,
+      "id": 107,
+      "name": "Task 2.1.3.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 94
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 108,
+      "name": "Task 2.1.3.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 93
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 109,
+      "name": "Task 2.1.3.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 104
+        }
+      ]
+    },
+    {
+      "duration": 4,
+      "id": 110,
+      "name": "Task 2.1.3.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 107
+        },
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 101
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 111,
+      "name": "Task 2.1.3.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 104
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 112,
+      "name": "Task 2.1.3.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 107
+        },
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 102
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MSO": "2026-08-07"
+      },
+      "duration": 1,
+      "id": 113,
+      "name": "Task 2.1.3.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 99
+        }
+      ]
+    },
+    {
+      "deadline": "2026-08-17",
+      "duration": 7,
+      "id": 114,
+      "name": "Task 2.1.3.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 104
+        },
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 108
+        }
+      ]
+    },
+    {
+      "duration": 26,
+      "id": 115,
+      "name": "Package 2.2",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 87
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 116,
+      "name": "Group 2.2.1",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 6,
+      "id": 117,
+      "name": "Task 2.2.1.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 105
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 118,
+      "name": "Task 2.2.1.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 110
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 119,
+      "name": "Task 2.2.1.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 107
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 120,
+      "name": "Task 2.2.1.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 2,
+          "pred": 104
+        },
+        {
+          "kind": "SS",
+          "lag": 3,
+          "pred": 112
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 121,
+      "name": "Task 2.2.1.5",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 4,
+      "id": 122,
+      "name": "Task 2.2.1.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 112
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 123,
+      "name": "Task 2.2.1.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 121
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MSO": "2026-08-11"
+      },
+      "duration": 7,
+      "id": 124,
+      "name": "Task 2.2.1.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 119
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNET": "2026-08-24"
+      },
+      "duration": 15,
+      "id": 125,
+      "name": "Group 2.2.2",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 3,
+      "id": 126,
+      "name": "Task 2.2.2.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 112
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 118
+        }
+      ]
+    },
+    {
+      "duration": 9,
+      "id": 127,
+      "name": "Task 2.2.2.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 109
+        }
+      ]
+    },
+    {
+      "deadline": "2026-09-08",
+      "duration": 4,
+      "id": 128,
+      "name": "Task 2.2.2.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 118
+        },
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 126
+        }
+      ]
+    },
+    {
+      "duration": 6,
+      "id": 129,
+      "name": "Task 2.2.2.4",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 1,
+      "id": 130,
+      "name": "Task 2.2.2.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 2,
+          "pred": 121
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 131,
+      "name": "Task 2.2.2.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 130
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 132,
+      "name": "Task 2.2.2.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 118
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 133,
+      "name": "Task 2.2.2.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 132
+        }
+      ]
+    },
+    {
+      "duration": 26,
+      "id": 134,
+      "name": "Group 2.2.3",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "constraint": {
+        "FNET": "2026-09-04"
+      },
+      "duration": 8,
+      "id": 135,
+      "name": "Task 2.2.3.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 129
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 136,
+      "name": "Task 2.2.3.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 123
+        },
+        {
+          "kind": "SS",
+          "lag": 2,
+          "pred": 128
+        }
+      ]
+    },
+    {
+      "duration": 4,
+      "id": 137,
+      "name": "Task 2.2.3.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 135
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 138,
+      "name": "Task 2.2.3.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 135
+        },
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 129
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 139,
+      "name": "Task 2.2.3.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 122
+        }
+      ]
+    },
+    {
+      "deadline": "2026-10-24",
+      "duration": 4,
+      "id": 140,
+      "name": "Task 2.2.3.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 138
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 141,
+      "name": "Task 2.2.3.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 3,
+          "pred": 135
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 142,
+      "name": "Task 2.2.3.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 127
+        }
+      ]
+    },
+    {
+      "duration": 47,
+      "id": 143,
+      "name": "Package 2.3",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 115
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNET": "2026-09-14"
+      },
+      "duration": 8,
+      "id": 144,
+      "name": "Group 2.3.1",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 3,
+      "id": 145,
+      "name": "Task 2.3.1.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 129
+        },
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 130
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "SNET": "2026-09-06"
+      },
+      "duration": 6,
+      "id": 146,
+      "name": "Task 2.3.1.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 136
+        },
+        {
+          "kind": "SS",
+          "lag": 2,
+          "pred": 145
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 147,
+      "name": "Task 2.3.1.3",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 2,
+      "id": 148,
+      "name": "Task 2.3.1.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 2,
+          "pred": 136
+        },
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 133
+        }
+      ]
+    },
+    {
+      "duration": 4,
+      "id": 149,
+      "name": "Task 2.3.1.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 138
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 150,
+      "name": "Task 2.3.1.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 136
+        }
+      ]
+    },
+    {
+      "duration": 4,
+      "id": 151,
+      "name": "Task 2.3.1.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 139
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 152,
+      "name": "Task 2.3.1.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 147
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 150
+        }
+      ]
+    },
+    {
+      "duration": 16,
+      "id": 153,
+      "name": "Group 2.3.2",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "deadline": "2026-11-16",
+      "duration": 4,
+      "id": 154,
+      "name": "Task 2.3.2.1",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "duration": 8,
+      "id": 155,
+      "name": "Task 2.3.2.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 140
+        },
+        {
+          "kind": "SF",
+          "lag": 3,
+          "pred": 150
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MFO": "2026-10-07"
+      },
+      "duration": 8,
+      "id": 156,
+      "name": "Task 2.3.2.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 142
+        },
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 148
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 157,
+      "name": "Task 2.3.2.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 152
+        },
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 147
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 158,
+      "name": "Task 2.3.2.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 142
+        },
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 148
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 159,
+      "name": "Task 2.3.2.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 147
+        },
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 158
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 160,
+      "name": "Task 2.3.2.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 149
+        },
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 147
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 161,
+      "name": "Task 2.3.2.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 159
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNET": "2026-10-21"
+      },
+      "duration": 47,
+      "id": 162,
+      "name": "Group 2.3.3",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 10,
+      "id": 163,
+      "name": "Task 2.3.3.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 154
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 164,
+      "name": "Task 2.3.3.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 157
+        },
+        {
+          "kind": "SS",
+          "lag": -1,
+          "pred": 149
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 165,
+      "name": "Task 2.3.3.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 2,
+          "pred": 149
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 157
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MFO": "2026-11-18"
+      },
+      "deadline": "2026-11-06",
+      "duration": 10,
+      "id": 166,
+      "name": "Task 2.3.3.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 157
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 167,
+      "name": "Task 2.3.3.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 159
+        }
+      ]
+    },
+    {
+      "duration": 9,
+      "id": 168,
+      "name": "Task 2.3.3.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 3,
+          "pred": 161
+        }
+      ]
+    },
+    {
+      "duration": 9,
+      "id": 169,
+      "name": "Task 2.3.3.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 3,
+          "pred": 159
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 170,
+      "name": "Task 2.3.3.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 156
+        }
+      ]
+    },
+    {
+      "duration": 31,
+      "id": 171,
+      "name": "Phase 3",
+      "preds": []
+    },
+    {
+      "duration": 30,
+      "id": 172,
+      "name": "Package 3.1",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 143
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNET": "2026-11-10"
+      },
+      "duration": 11,
+      "id": 173,
+      "name": "Group 3.1.1",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 0,
+      "id": 174,
+      "name": "Task 3.1.1.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 2,
+          "pred": 157
+        },
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 161
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 175,
+      "name": "Task 3.1.1.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 169
+        },
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 161
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 176,
+      "name": "Task 3.1.1.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 168
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 177,
+      "name": "Task 3.1.1.4",
+      "outline_level": 4,
+      "preds": []
+    },
+    {
+      "constraint": {
+        "MFO": "2026-12-03"
+      },
+      "duration": 5,
+      "id": 178,
+      "name": "Task 3.1.1.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": -1,
+          "pred": 170
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 179,
+      "name": "Task 3.1.1.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 169
+        }
+      ]
+    },
+    {
+      "deadline": "2026-11-23",
+      "duration": 9,
+      "id": 180,
+      "name": "Task 3.1.1.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 3,
+          "pred": 174
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 181,
+      "name": "Task 3.1.1.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 164
+        },
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 168
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "FNET": "2026-11-27"
+      },
+      "duration": 21,
+      "id": 182,
+      "name": "Group 3.1.2",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 2,
+      "id": 183,
+      "name": "Task 3.1.2.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 174
+        },
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 167
+        }
+      ]
+    },
+    {
+      "duration": 2,
+      "id": 184,
+      "name": "Task 3.1.2.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 169
+        }
+      ]
+    },
+    {
+      "duration": 10,
+      "id": 185,
+      "name": "Task 3.1.2.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 168
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 186,
+      "name": "Task 3.1.2.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 177
+        },
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 181
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 187,
+      "name": "Task 3.1.2.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 175
+        },
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 169
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MFO": "2026-12-19"
+      },
+      "duration": 6,
+      "id": 188,
+      "name": "Task 3.1.2.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 179
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 189,
+      "name": "Task 3.1.2.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 3,
+          "pred": 174
+        },
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 178
+        }
+      ]
+    },
+    {
+      "duration": 5,
+      "id": 190,
+      "name": "Task 3.1.2.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 187
+        },
+        {
+          "kind": "FF",
+          "lag": 3,
+          "pred": 181
+        }
+      ]
+    },
+    {
+      "duration": 28,
+      "id": 191,
+      "name": "Group 3.1.3",
+      "outline_level": 3,
+      "preds": []
+    },
+    {
+      "duration": 10,
+      "id": 192,
+      "name": "Task 3.1.3.1",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 184
+        },
+        {
+          "kind": "FS",
+          "lag": -2,
+          "pred": 187
+        }
+      ]
+    },
+    {
+      "deadline": "2027-01-17",
+      "duration": 3,
+      "id": 193,
+      "name": "Task 3.1.3.2",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 192
+        },
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 188
+        }
+      ]
+    },
+    {
+      "duration": 4,
+      "id": 194,
+      "name": "Task 3.1.3.3",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -2,
+          "pred": 192
+        }
+      ]
+    },
+    {
+      "duration": 7,
+      "id": 195,
+      "name": "Task 3.1.3.4",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 2,
+          "pred": 188
+        }
+      ]
+    },
+    {
+      "duration": 6,
+      "id": 196,
+      "name": "Task 3.1.3.5",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 193
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 197,
+      "name": "Task 3.1.3.6",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 188
+        }
+      ]
+    },
+    {
+      "constraint": {
+        "MFO": "2026-12-28"
+      },
+      "duration": 5,
+      "id": 198,
+      "name": "Task 3.1.3.7",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 197
+        },
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 189
+        }
+      ]
+    },
+    {
+      "duration": 3,
+      "id": 199,
+      "name": "Task 3.1.3.8",
+      "outline_level": 4,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 3,
+          "pred": 194
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 200,
+      "name": "Package 3.2",
+      "outline_level": 2,
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 172
+        }
+      ]
+    }
+  ]
+}

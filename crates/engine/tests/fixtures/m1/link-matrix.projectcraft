@@ -1,0 +1,911 @@
+{
+  "calendar": {
+    "exceptions": [],
+    "working": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "format_version": 1,
+  "name": "Link matrix",
+  "next_id": 76,
+  "start": "2026-01-05",
+  "tasks": [
+    {
+      "duration": 3,
+      "id": 1,
+      "name": "Work",
+      "preds": []
+    },
+    {
+      "constraint": {
+        "SNET": "2026-01-14"
+      },
+      "duration": 0,
+      "id": 2,
+      "name": "Start of day",
+      "preds": []
+    },
+    {
+      "duration": 0,
+      "id": 3,
+      "name": "End of day",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 4,
+      "name": "task 1FS-1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 5,
+      "name": "milestone 1FS-1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 6,
+      "name": "task 1FS",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 7,
+      "name": "milestone 1FS",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 8,
+      "name": "task 1FS+1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 9,
+      "name": "milestone 1FS+1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 10,
+      "name": "task 1SS-1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 11,
+      "name": "milestone 1SS-1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 12,
+      "name": "task 1SS",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 13,
+      "name": "milestone 1SS",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 14,
+      "name": "task 1SS+1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 15,
+      "name": "milestone 1SS+1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 16,
+      "name": "task 1FF-1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 17,
+      "name": "milestone 1FF-1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 18,
+      "name": "task 1FF",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 19,
+      "name": "milestone 1FF",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 20,
+      "name": "task 1FF+1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 21,
+      "name": "milestone 1FF+1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 22,
+      "name": "task 1SF-1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": -1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 23,
+      "name": "milestone 1SF-1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": -1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 24,
+      "name": "task 1SF",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 0,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 25,
+      "name": "milestone 1SF",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 0,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 26,
+      "name": "task 1SF+1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 27,
+      "name": "milestone 1SF+1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 1
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 28,
+      "name": "task 2FS-1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 29,
+      "name": "milestone 2FS-1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 30,
+      "name": "task 2FS",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 31,
+      "name": "milestone 2FS",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 32,
+      "name": "task 2FS+1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 33,
+      "name": "milestone 2FS+1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 34,
+      "name": "task 2SS-1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 35,
+      "name": "milestone 2SS-1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 36,
+      "name": "task 2SS",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 37,
+      "name": "milestone 2SS",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 38,
+      "name": "task 2SS+1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 39,
+      "name": "milestone 2SS+1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 40,
+      "name": "task 2FF-1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 41,
+      "name": "milestone 2FF-1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 42,
+      "name": "task 2FF",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 43,
+      "name": "milestone 2FF",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 44,
+      "name": "task 2FF+1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 45,
+      "name": "milestone 2FF+1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 46,
+      "name": "task 2SF-1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": -1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 47,
+      "name": "milestone 2SF-1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": -1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 48,
+      "name": "task 2SF",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 0,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 49,
+      "name": "milestone 2SF",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 0,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 50,
+      "name": "task 2SF+1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 51,
+      "name": "milestone 2SF+1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 2
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 52,
+      "name": "task 3FS-1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 53,
+      "name": "milestone 3FS-1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": -1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 54,
+      "name": "task 3FS",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 55,
+      "name": "milestone 3FS",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 0,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 56,
+      "name": "task 3FS+1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 57,
+      "name": "milestone 3FS+1",
+      "preds": [
+        {
+          "kind": "FS",
+          "lag": 1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 58,
+      "name": "task 3SS-1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 59,
+      "name": "milestone 3SS-1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": -1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 60,
+      "name": "task 3SS",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 61,
+      "name": "milestone 3SS",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 0,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 62,
+      "name": "task 3SS+1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 63,
+      "name": "milestone 3SS+1",
+      "preds": [
+        {
+          "kind": "SS",
+          "lag": 1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 64,
+      "name": "task 3FF-1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 65,
+      "name": "milestone 3FF-1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": -1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 66,
+      "name": "task 3FF",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 67,
+      "name": "milestone 3FF",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 0,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 68,
+      "name": "task 3FF+1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 69,
+      "name": "milestone 3FF+1",
+      "preds": [
+        {
+          "kind": "FF",
+          "lag": 1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 70,
+      "name": "task 3SF-1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": -1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 71,
+      "name": "milestone 3SF-1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": -1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 72,
+      "name": "task 3SF",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 0,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 73,
+      "name": "milestone 3SF",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 0,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 1,
+      "id": 74,
+      "name": "task 3SF+1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 3
+        }
+      ]
+    },
+    {
+      "duration": 0,
+      "id": 75,
+      "name": "milestone 3SF+1",
+      "preds": [
+        {
+          "kind": "SF",
+          "lag": 1,
+          "pred": 3
+        }
+      ]
+    }
+  ]
+}

@@ -642,18 +642,21 @@ fn moments(p: &Project, o: &Days, tree: &Tree, order: &[usize], es: &[i64], ef: 
         let Some(t) = p.tasks.get(i) else { continue };
         let kids = tree.summary(i);
         if is_hold == kids.is_some() {
-            // A finish-to-finish link from a moment at the start of a day (a milestone there, or a
-            // finish already held to one) asks for that moment, as does a start-to-finish link from
-            // a milestone there; the end of the working minute before is earlier on the clock. A
-            // summary's ask reaches its subtasks.
+            // A finish-to-finish link with no lag from a moment at the start of a day (a milestone
+            // there, or a finish already held to one) asks for that moment, as does a
+            // start-to-finish link with no lag from a milestone there; the end of the working
+            // minute before is earlier on the clock. A summary's ask reaches its subtasks.
             let mut ask = tree.parent(i).and_then(|up| due.get(up).copied()).unwrap_or((0, false));
             for l in &t.preds {
                 let Some(&j) = index.get(&l.pred) else { continue };
                 let (Some(&ps), Some(&pf)) = (start.get(j), finish.get(j)) else { continue };
                 let lag = l.lag.clamp(-MAX_MINUTES, MAX_MINUTES);
+                // Only with no lag: a lag or lead is working time counted from the moment, so the
+                // finish it gives is the end of a working minute, as a file from M1 schedules
+                // (issue #60).
                 ask = ask.max(match l.kind {
-                    LinkKind::FF => (o.lags.after(pf.0, lag, !pf.1), pf.1),
-                    LinkKind::SF => (o.lags.after(ps.0, lag, !ps.1), ps.1 && d(j) == 0),
+                    LinkKind::FF => (o.lags.after(pf.0, lag, !pf.1), pf.1 && lag == 0),
+                    LinkKind::SF => (o.lags.after(ps.0, lag, !ps.1), ps.1 && d(j) == 0 && lag == 0),
                     LinkKind::FS | LinkKind::SS => continue,
                 });
             }
@@ -1406,6 +1409,40 @@ mod tests {
         }
         assert_eq!(t(a).slack, 0);
         assert_eq!(sch.finish, date("2026-01-12"));
+    }
+
+    /// Issue #60: with a lag or lead, a finish-to-finish or start-to-finish successor of a
+    /// milestone at the start of a day finishes at the end of working time, as files from M1 did:
+    /// a day after Wednesday 8:00 is the end of Wednesday, not Thursday 8:00, and a day before it
+    /// the end of Monday. With no lag it finishes at the milestone's moment (#74).
+    #[test]
+    fn a_lag_after_a_milestone_at_the_start_of_a_day_ends_at_the_end_of_working_time() {
+        let mut p = Project::new("t", date("2026-01-05"));
+        let m = p.add_task("M", 0).unwrap();
+        p.task_mut(m).unwrap().constraint = Constraint::StartNoEarlierThan(date("2026-01-07"));
+        let cases = [
+            ("1FF+1d", "2026-01-07", 8, "2026-01-07", 17),
+            ("1SF+1d", "2026-01-07", 8, "2026-01-07", 17),
+            ("1FF-1d", "2026-01-05", 8, "2026-01-05", 17),
+        ];
+        let ids: Vec<TaskId> = cases
+            .iter()
+            .map(|(preds, ..)| {
+                let id = p.add_task("T", D).unwrap();
+                p.set_preds(id, parse_preds(preds, &crate::Options::default()).unwrap()).unwrap();
+                id
+            })
+            .collect();
+        let none = p.add_task("T", D).unwrap();
+        p.set_preds(none, parse_preds("1FF", &crate::Options::default()).unwrap()).unwrap();
+        let sch = schedule(&p).unwrap();
+        assert_eq!(sch.tasks[&m].start_at, at("2026-01-07", 8, 0));
+        for (id, (preds, sd, sh, fd, fh)) in ids.iter().zip(cases) {
+            let t = sch.tasks[id];
+            assert_eq!((t.start_at, t.finish_at), (at(sd, sh, 0), at(fd, fh, 0)), "{preds}");
+            assert_eq!((t.start, t.finish), (date(sd), date(fd)), "{preds}: a one-day task on one day");
+        }
+        assert_eq!(sch.tasks[&none].finish_at, at("2026-01-07", 8, 0), "no lag: the milestone's moment");
     }
 
     #[test]

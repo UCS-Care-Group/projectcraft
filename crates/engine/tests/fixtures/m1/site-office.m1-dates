@@ -1,0 +1,15 @@
+finish	2026-04-16
+task	1	2026-03-02	2026-03-10	2026-03-02	2026-03-20	-2	true	false	false	ProjectStart
+task	2	2026-03-02	2026-03-04	2026-03-02	2026-03-02	-2	true	false	false	ProjectStart
+task	3	2026-03-04	2026-03-10	2026-03-04	2026-03-10	0	true	true	false	Constraint
+task	4	2026-03-10	2026-03-10	2026-03-20	2026-03-20	9	false	false	false	Link(TaskId(3))
+task	5	2026-03-25	2026-04-14	2026-03-25	2026-04-14	0	true	false	false	Link(TaskId(1))
+task	6	2026-03-25	2026-03-30	2026-03-25	2026-03-30	0	true	false	false	Constraint
+task	7	2026-03-27	2026-04-07	2026-03-27	2026-04-07	0	true	false	false	Link(TaskId(6))
+task	8	2026-04-02	2026-04-08	2026-04-02	2026-04-08	0	true	false	false	Link(TaskId(7))
+task	9	2026-04-08	2026-04-14	2026-04-08	2026-04-14	0	true	false	false	Link(TaskId(8))
+task	10	2026-04-14	2026-04-14	2026-04-14	2026-04-14	0	true	false	false	Link(TaskId(5))
+task	11	2026-04-08	2026-04-08	2026-04-15	2026-04-15	6	false	false	false	Constraint
+task	12	2026-04-15	2026-04-16	2026-04-15	2026-04-16	0	true	false	false	Link(TaskId(10))
+rolled_up	1	7
+rolled_up	5	13

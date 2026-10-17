@@ -1,0 +1,232 @@
+finish	2027-01-01
+task	1	2026-01-05	2026-06-11	2026-01-21	2026-05-27	-10	true	false	false	ProjectStart
+task	2	2026-01-05	2026-02-25	2026-01-21	2026-03-12	11	false	false	false	ProjectStart
+task	3	2026-01-05	2026-01-30	2026-01-21	2026-02-26	12	false	false	false	ProjectStart
+task	4	2026-01-05	2026-01-12	2026-01-21	2026-01-28	12	false	false	false	ProjectStart
+task	5	2026-01-14	2026-01-14	2026-02-10	2026-02-10	19	false	false	false	Link(TaskId(4))
+task	6	2026-01-07	2026-01-07	2026-01-22	2026-01-22	12	false	false	false	Link(TaskId(4))
+task	7	2026-01-14	2026-01-14	2026-02-09	2026-02-09	18	false	false	false	Link(TaskId(4))
+task	8	2026-01-07	2026-01-07	2026-01-23	2026-01-23	12	false	false	false	Link(TaskId(6))
+task	9	2026-01-20	2026-01-26	2026-02-14	2026-02-19	19	false	false	false	Link(TaskId(5))
+task	10	2026-01-16	2026-01-20	2026-02-11	2026-02-13	18	false	false	false	Link(TaskId(7))
+task	11	2026-01-27	2026-01-30	2026-02-23	2026-02-26	19	false	false	false	Link(TaskId(9))
+task	12	2026-01-05	2026-02-25	2026-02-14	2026-03-12	11	false	false	false	ProjectStart
+task	13	2026-01-05	2026-01-15	2026-02-18	2026-03-03	33	false	false	false	ProjectStart
+task	14	2026-01-30	2026-01-30	2026-03-12	2026-03-12	29	false	false	false	Link(TaskId(9))
+task	15	2026-01-07	2026-01-20	2026-02-26	2026-03-11	36	false	false	false	Link(TaskId(6))
+task	16	2026-01-05	2026-01-15	2026-03-02	2026-03-12	40	false	false	false	ProjectStart
+task	17	2026-01-12	2026-01-12	2026-03-12	2026-03-12	44	false	false	false	Link(TaskId(8))
+task	18	2026-02-23	2026-02-25	2026-02-23	2026-02-25	0	true	false	false	Constraint
+task	19	2026-01-21	2026-01-29	2026-02-14	2026-02-24	18	false	false	false	Link(TaskId(10))
+task	20	2026-01-16	2026-01-22	2026-03-03	2026-03-09	32	false	false	false	Link(TaskId(4))
+task	21	2026-01-21	2026-02-23	2026-02-23	2026-03-12	14	false	false	false	ProjectStart
+task	22	2026-01-21	2026-01-28	2026-03-05	2026-03-12	31	false	false	false	Link(TaskId(11))
+task	23	2026-01-28	2026-02-09	2026-02-23	2026-03-05	18	false	false	false	Link(TaskId(19))
+task	24	2026-01-29	2026-01-29	2026-03-12	2026-03-12	30	false	false	false	Link(TaskId(14))
+task	25	2026-02-09	2026-02-12	2026-03-09	2026-03-12	20	false	false	false	Link(TaskId(23))
+task	26	2026-01-29	2026-01-30	2026-03-11	2026-03-12	29	false	false	false	Link(TaskId(11))
+task	27	2026-02-03	2026-02-13	2026-03-02	2026-03-12	19	false	false	false	Link(TaskId(11))
+task	28	2026-02-23	2026-02-23	2026-03-12	2026-03-12	14	false	false	false	Constraint
+task	29	2026-02-10	2026-02-14	2026-03-06	2026-03-12	18	false	false	false	Link(TaskId(23))
+task	30	2026-02-25	2026-04-14	2026-03-13	2026-04-15	1	false	false	false	Link(TaskId(2))
+task	31	2026-02-25	2026-03-16	2026-03-13	2026-04-15	11	false	false	false	ParentSummary(TaskId(30))
+task	32	2026-02-25	2026-02-25	2026-04-15	2026-04-15	34	false	false	false	ParentSummary(TaskId(30))
+task	33	2026-02-26	2026-03-09	2026-04-06	2026-04-15	26	false	false	false	ParentSummary(TaskId(30))
+task	34	2026-02-27	2026-02-27	2026-03-30	2026-03-30	21	false	false	false	Link(TaskId(18))
+task	35	2026-03-03	2026-03-03	2026-04-02	2026-04-02	21	false	false	false	Link(TaskId(34))
+task	36	2026-02-26	2026-03-06	2026-04-07	2026-04-15	27	false	false	false	ParentSummary(TaskId(30))
+task	37	2026-03-04	2026-03-16	2026-04-03	2026-04-15	21	false	false	false	Link(TaskId(35))
+task	38	2026-02-26	2026-03-09	2026-04-03	2026-04-14	25	false	false	false	ParentSummary(TaskId(30))
+task	39	2026-03-13	2026-03-16	2026-03-13	2026-03-16	0	true	false	false	Constraint
+task	40	2026-02-26	2026-03-19	2026-03-27	2026-04-15	18	false	false	false	ParentSummary(TaskId(30))
+task	41	2026-03-12	2026-03-17	2026-03-27	2026-04-02	11	false	false	false	Link(TaskId(39))
+task	42	2026-03-04	2026-03-10	2026-04-09	2026-04-15	25	false	false	false	Link(TaskId(38))
+task	43	2026-03-18	2026-03-19	2026-04-13	2026-04-14	17	false	false	false	Link(TaskId(39))
+task	44	2026-02-26	2026-02-27	2026-04-02	2026-04-03	24	false	false	false	ParentSummary(TaskId(30))
+task	45	2026-02-26	2026-03-09	2026-04-06	2026-04-15	26	false	false	false	ParentSummary(TaskId(30))
+task	46	2026-03-02	2026-03-13	2026-04-02	2026-04-15	22	false	false	false	Link(TaskId(35))
+task	47	2026-02-26	2026-03-11	2026-04-02	2026-04-15	24	false	false	false	ParentSummary(TaskId(30))
+task	48	2026-02-27	2026-03-11	2026-04-03	2026-04-15	24	false	false	false	Link(TaskId(44))
+task	49	2026-02-26	2026-04-14	2026-04-06	2026-04-15	1	false	false	false	ParentSummary(TaskId(30))
+task	50	2026-04-14	2026-04-14	2026-04-14	2026-04-14	0	true	false	false	Constraint
+task	51	2026-03-20	2026-03-30	2026-04-07	2026-04-15	11	false	false	false	Link(TaskId(41))
+task	52	2026-03-03	2026-03-03	2026-04-15	2026-04-15	30	false	false	false	Link(TaskId(44))
+task	53	2026-02-26	2026-03-03	2026-04-10	2026-04-15	30	false	false	false	ParentSummary(TaskId(30))
+task	54	2026-03-13	2026-03-19	2026-04-06	2026-04-10	15	false	false	false	Link(TaskId(41))
+task	55	2026-02-27	2026-03-02	2026-04-14	2026-04-15	31	false	false	false	Link(TaskId(52))
+task	56	2026-03-18	2026-03-20	2026-04-13	2026-04-15	17	false	false	false	Link(TaskId(43))
+task	57	2026-03-23	2026-03-24	2026-04-14	2026-04-15	15	false	false	false	Link(TaskId(54))
+task	58	2026-04-16	2026-06-11	2026-04-16	2026-05-27	-10	true	false	false	Link(TaskId(30))
+task	59	2026-04-16	2026-05-08	2026-04-16	2026-05-27	0	true	false	false	Constraint
+task	60	2026-04-27	2026-04-28	2026-04-30	2026-05-01	3	false	false	false	ParentSummary(TaskId(59))
+task	61	2026-04-16	2026-04-27	2026-04-16	2026-04-27	-8	true	true	false	Constraint
+task	62	2026-04-27	2026-05-08	2026-05-15	2026-05-27	13	false	false	false	ParentSummary(TaskId(59))
+task	63	2026-04-27	2026-05-08	2026-05-15	2026-05-27	13	false	false	false	ParentSummary(TaskId(59))
+task	64	2026-04-27	2026-05-08	2026-04-30	2026-05-13	3	false	false	false	Link(TaskId(60))
+task	65	2026-04-27	2026-05-01	2026-05-20	2026-05-26	16	false	false	false	ParentSummary(TaskId(59))
+task	66	2026-04-27	2026-05-06	2026-04-28	2026-05-07	1	false	false	false	ParentSummary(TaskId(59))
+task	67	2026-04-27	2026-04-28	2026-05-18	2026-05-19	14	false	false	false	ParentSummary(TaskId(59))
+task	68	2026-05-21	2026-05-29	2026-05-07	2026-05-27	-10	true	false	false	Constraint
+task	69	2026-05-21	2026-05-28	2026-05-13	2026-05-20	-6	true	false	false	ParentSummary(TaskId(68))
+task	70	2026-05-21	2026-05-29	2026-05-19	2026-05-27	-2	true	false	false	ParentSummary(TaskId(68))
+task	71	2026-05-21	2026-05-26	2026-05-07	2026-05-12	-10	true	false	false	ParentSummary(TaskId(68))
+task	72	2026-05-21	2026-05-26	2026-05-22	2026-05-27	1	false	false	false	ParentSummary(TaskId(68))
+task	73	2026-05-26	2026-05-27	2026-05-18	2026-05-19	-6	true	false	false	Link(TaskId(69))
+task	74	2026-05-26	2026-05-28	2026-05-21	2026-05-25	-3	true	false	false	Link(TaskId(71))
+task	75	2026-05-21	2026-05-22	2026-05-19	2026-05-20	-2	true	false	false	ParentSummary(TaskId(68))
+task	76	2026-05-25	2026-05-25	2026-05-27	2026-05-27	2	false	false	false	Link(TaskId(71))
+task	77	2026-04-30	2026-06-11	2026-05-13	2026-05-27	-10	true	false	false	ParentSummary(TaskId(58))
+task	78	2026-05-27	2026-06-02	2026-05-22	2026-05-27	-3	true	false	false	Link(TaskId(74))
+task	79	2026-05-14	2026-05-22	2026-05-19	2026-05-27	3	false	false	false	Link(TaskId(64))
+task	80	2026-05-27	2026-06-08	2026-05-13	2026-05-22	-10	true	false	false	Link(TaskId(71))
+task	81	2026-05-15	2026-05-25	2026-05-15	2026-05-25	-10	true	true	false	Constraint
+task	82	2026-05-19	2026-05-26	2026-05-15	2026-05-22	-2	true	false	false	Link(TaskId(75))
+task	83	2026-06-11	2026-06-11	2026-05-27	2026-05-27	-10	true	false	false	Link(TaskId(80))
+task	84	2026-04-30	2026-05-07	2026-05-21	2026-05-27	14	false	false	false	Link(TaskId(67))
+task	85	2026-05-12	2026-05-20	2026-05-19	2026-05-27	5	false	false	false	Link(TaskId(70))
+task	86	2026-06-12	2026-11-18	2026-05-28	2026-11-10	-10	true	false	false	ProjectStart
+task	87	2026-06-12	2026-08-07	2026-05-28	2026-08-04	-10	true	false	false	Link(TaskId(58))
+task	88	2026-06-12	2026-06-23	2026-05-28	2026-08-04	-10	true	false	false	ParentSummary(TaskId(87))
+task	89	2026-06-12	2026-06-20	2026-05-28	2026-06-05	-10	true	false	false	ParentSummary(TaskId(87))
+task	90	2026-06-12	2026-06-12	2026-07-16	2026-07-16	24	false	false	false	ParentSummary(TaskId(87))
+task	91	2026-06-12	2026-06-12	2026-06-16	2026-06-16	2	false	false	false	ParentSummary(TaskId(87))
+task	92	2026-06-12	2026-06-15	2026-08-03	2026-08-04	36	false	false	false	ParentSummary(TaskId(87))
+task	93	2026-06-18	2026-06-22	2026-06-15	2026-06-19	-2	true	false	false	Constraint
+task	94	2026-06-16	2026-06-23	2026-07-16	2026-07-23	22	false	false	false	Link(TaskId(89))
+task	95	2026-06-16	2026-06-16	2026-08-03	2026-08-03	34	false	false	false	Link(TaskId(91))
+task	96	2026-06-12	2026-06-18	2026-07-30	2026-08-04	34	false	false	false	Link(TaskId(95))
+task	97	2026-06-20	2026-07-17	2026-06-10	2026-08-04	-7	true	false	false	Constraint
+task	98	2026-07-07	2026-07-14	2026-07-28	2026-08-04	15	false	false	false	ParentSummary(TaskId(97))
+task	99	2026-07-07	2026-07-16	2026-06-10	2026-06-20	-19	true	false	false	ParentSummary(TaskId(97))
+task	100	2026-07-07	2026-07-15	2026-07-20	2026-07-28	9	false	false	false	ParentSummary(TaskId(97))
+task	101	2026-07-07	2026-07-17	2026-07-20	2026-07-30	9	false	false	false	Link(TaskId(100))
+task	102	2026-07-07	2026-07-10	2026-07-21	2026-07-24	10	false	false	false	ParentSummary(TaskId(97))
+task	103	2026-06-20	2026-06-24	2026-06-20	2026-06-24	0	true	true	false	Constraint
+task	104	2026-07-07	2026-07-07	2026-07-22	2026-07-22	11	false	false	false	ParentSummary(TaskId(97))
+task	105	2026-07-14	2026-07-15	2026-08-03	2026-08-04	14	false	false	false	Link(TaskId(100))
+task	106	2026-06-20	2026-08-07	2026-07-10	2026-08-04	-3	true	false	false	ParentSummary(TaskId(87))
+task	107	2026-06-20	2026-06-20	2026-07-27	2026-07-27	26	false	false	false	Link(TaskId(94))
+task	108	2026-06-22	2026-07-03	2026-07-10	2026-07-23	14	false	false	false	Link(TaskId(93))
+task	109	2026-07-07	2026-07-07	2026-08-04	2026-08-04	20	false	false	false	Link(TaskId(104))
+task	110	2026-07-17	2026-07-22	2026-07-30	2026-08-04	9	false	false	false	Link(TaskId(101))
+task	111	2026-07-07	2026-07-20	2026-07-22	2026-08-04	11	false	false	false	Link(TaskId(104))
+task	112	2026-07-10	2026-07-16	2026-07-29	2026-08-04	13	false	false	false	Link(TaskId(102))
+task	113	2026-08-07	2026-08-07	2026-08-04	2026-08-04	-3	true	false	false	Constraint
+task	114	2026-07-10	2026-07-20	2026-07-27	2026-08-04	11	false	false	false	Link(TaskId(104))
+task	115	2026-08-07	2026-09-14	2026-08-05	2026-09-25	-3	true	false	false	Link(TaskId(87))
+task	116	2026-08-07	2026-08-22	2026-08-05	2026-09-25	-3	true	false	false	ParentSummary(TaskId(115))
+task	117	2026-08-10	2026-08-18	2026-09-18	2026-09-25	28	false	false	false	ParentSummary(TaskId(115))
+task	118	2026-08-10	2026-08-22	2026-08-20	2026-09-01	7	false	false	false	ParentSummary(TaskId(115))
+task	119	2026-08-10	2026-08-22	2026-08-05	2026-08-19	-3	true	false	false	ParentSummary(TaskId(115))
+task	120	2026-08-10	2026-08-22	2026-09-11	2026-09-25	24	false	false	false	ParentSummary(TaskId(115))
+task	121	2026-08-07	2026-08-07	2026-09-09	2026-09-09	23	false	false	false	ParentSummary(TaskId(115))
+task	122	2026-08-10	2026-08-13	2026-09-17	2026-09-22	27	false	false	false	ParentSummary(TaskId(115))
+task	123	2026-08-13	2026-08-14	2026-09-15	2026-09-17	23	false	false	false	Link(TaskId(121))
+task	124	2026-08-11	2026-08-20	2026-08-11	2026-08-20	0	true	true	false	Constraint
+task	125	2026-08-10	2026-08-28	2026-09-01	2026-09-25	16	false	false	false	ParentSummary(TaskId(115))
+task	126	2026-08-21	2026-08-24	2026-09-01	2026-09-03	8	false	false	false	Link(TaskId(118))
+task	127	2026-08-10	2026-08-21	2026-09-10	2026-09-23	23	false	false	false	ParentSummary(TaskId(115))
+task	128	2026-08-25	2026-08-28	2026-09-03	2026-09-08	7	false	false	false	Link(TaskId(118))
+task	129	2026-08-10	2026-08-18	2026-09-03	2026-09-10	18	false	false	false	ParentSummary(TaskId(115))
+task	130	2026-08-12	2026-08-12	2026-09-23	2026-09-23	29	false	false	false	Link(TaskId(121))
+task	131	2026-08-13	2026-08-14	2026-09-24	2026-09-25	29	false	false	false	Link(TaskId(130))
+task	132	2026-08-10	2026-08-22	2026-09-11	2026-09-25	24	false	false	false	ParentSummary(TaskId(115))
+task	133	2026-08-11	2026-08-11	2026-09-25	2026-09-25	32	false	false	false	Link(TaskId(132))
+task	134	2026-08-10	2026-09-14	2026-09-07	2026-09-25	8	false	false	false	ParentSummary(TaskId(115))
+task	135	2026-08-26	2026-09-04	2026-09-07	2026-09-17	8	false	false	false	Constraint
+task	136	2026-08-27	2026-08-31	2026-09-23	2026-09-25	18	false	false	false	Link(TaskId(128))
+task	137	2026-09-07	2026-09-10	2026-09-22	2026-09-25	10	false	false	false	Link(TaskId(135))
+task	138	2026-09-03	2026-09-04	2026-09-15	2026-09-17	8	false	false	false	Link(TaskId(135))
+task	139	2026-08-10	2026-08-22	2026-09-11	2026-09-25	24	false	false	false	ParentSummary(TaskId(115))
+task	140	2026-09-09	2026-09-14	2026-09-22	2026-09-25	8	false	false	false	Link(TaskId(138))
+task	141	2026-08-31	2026-09-02	2026-09-23	2026-09-25	16	false	false	false	Link(TaskId(135))
+task	142	2026-08-24	2026-08-24	2026-09-25	2026-09-25	23	false	false	false	Link(TaskId(127))
+task	143	2026-09-15	2026-11-18	2026-09-28	2026-11-10	-6	true	false	false	Link(TaskId(115))
+task	144	2026-09-15	2026-09-25	2026-10-06	2026-11-10	14	false	false	false	ParentSummary(TaskId(143))
+task	145	2026-09-15	2026-09-18	2026-10-30	2026-11-03	33	false	false	false	ParentSummary(TaskId(143))
+task	146	2026-09-18	2026-09-25	2026-11-03	2026-11-10	33	false	false	false	Link(TaskId(145))
+task	147	2026-09-15	2026-09-22	2026-10-07	2026-10-13	15	false	false	false	ParentSummary(TaskId(143))
+task	148	2026-09-15	2026-09-17	2026-10-06	2026-10-07	14	false	false	false	ParentSummary(TaskId(143))
+task	149	2026-09-15	2026-09-21	2026-10-26	2026-10-29	29	false	false	false	ParentSummary(TaskId(143))
+task	150	2026-09-15	2026-09-17	2026-10-14	2026-10-15	20	false	false	false	ParentSummary(TaskId(143))
+task	151	2026-09-15	2026-09-21	2026-11-05	2026-11-10	37	false	false	false	ParentSummary(TaskId(143))
+task	152	2026-09-23	2026-09-23	2026-10-14	2026-10-14	15	false	false	false	Link(TaskId(147))
+task	153	2026-09-15	2026-10-07	2026-09-28	2026-11-10	8	false	false	false	ParentSummary(TaskId(143))
+task	154	2026-09-15	2026-09-21	2026-11-05	2026-11-10	37	false	false	false	ParentSummary(TaskId(143))
+task	155	2026-09-15	2026-09-25	2026-10-30	2026-11-10	33	false	false	false	Link(TaskId(140))
+task	156	2026-09-28	2026-10-07	2026-09-28	2026-10-07	0	true	false	false	Constraint
+task	157	2026-09-28	2026-10-02	2026-10-19	2026-10-23	15	false	false	false	Link(TaskId(152))
+task	158	2026-09-15	2026-09-17	2026-10-23	2026-10-24	27	false	false	false	ParentSummary(TaskId(143))
+task	159	2026-09-22	2026-10-05	2026-10-26	2026-11-06	25	false	false	false	Link(TaskId(147))
+task	160	2026-09-23	2026-10-01	2026-11-02	2026-11-10	29	false	false	false	Link(TaskId(149))
+task	161	2026-10-02	2026-10-02	2026-11-05	2026-11-05	25	false	false	false	Link(TaskId(159))
+task	162	2026-09-15	2026-11-18	2026-10-26	2026-11-10	-6	true	false	false	ParentSummary(TaskId(143))
+task	163	2026-09-15	2026-09-29	2026-10-28	2026-11-10	31	false	false	false	ParentSummary(TaskId(143))
+task	164	2026-10-07	2026-10-08	2026-11-09	2026-11-10	24	false	false	false	Link(TaskId(157))
+task	165	2026-10-01	2026-10-09	2026-11-02	2026-11-10	23	false	false	false	Link(TaskId(157))
+task	166	2026-11-05	2026-11-18	2026-10-26	2026-11-06	-8	true	false	true	Constraint
+task	167	2026-10-05	2026-10-05	2026-11-10	2026-11-10	27	false	false	false	Link(TaskId(159))
+task	168	2026-09-25	2026-10-07	2026-10-29	2026-11-10	25	false	false	false	Link(TaskId(161))
+task	169	2026-09-25	2026-10-07	2026-10-29	2026-11-10	25	false	false	false	Link(TaskId(159))
+task	170	2026-10-06	2026-10-12	2026-11-04	2026-11-10	22	false	false	false	Link(TaskId(156))
+task	171	2026-11-18	2027-01-01	2026-11-11	2027-01-01	-6	true	false	false	ProjectStart
+task	172	2026-11-18	2026-12-31	2026-11-11	2026-12-31	-6	true	false	false	Link(TaskId(143))
+task	173	2026-11-18	2026-12-03	2026-11-11	2026-12-31	-6	true	false	false	ParentSummary(TaskId(172))
+task	174	2026-11-18	2026-11-18	2026-11-18	2026-11-18	0	true	false	false	ParentSummary(TaskId(172))
+task	175	2026-11-19	2026-11-19	2026-11-23	2026-11-23	2	false	false	false	ParentSummary(TaskId(172))
+task	176	2026-11-19	2026-12-02	2026-12-18	2026-12-31	20	false	false	false	ParentSummary(TaskId(172))
+task	177	2026-11-19	2026-12-02	2026-12-18	2026-12-31	20	false	false	false	ParentSummary(TaskId(172))
+task	178	2026-11-27	2026-12-03	2026-11-27	2026-12-03	0	true	false	false	Constraint
+task	179	2026-11-19	2026-11-23	2026-12-07	2026-12-10	12	false	false	false	ParentSummary(TaskId(172))
+task	180	2026-11-19	2026-12-01	2026-11-11	2026-11-23	-6	true	false	true	ParentSummary(TaskId(172))
+task	181	2026-11-19	2026-11-25	2026-12-17	2026-12-23	19	false	false	false	ParentSummary(TaskId(172))
+task	182	2026-11-19	2026-12-18	2026-11-24	2026-12-31	3	false	false	false	ParentSummary(TaskId(172))
+task	183	2026-11-24	2026-11-25	2026-12-30	2026-12-31	25	false	false	false	Link(TaskId(174))
+task	184	2026-11-19	2026-11-20	2026-11-24	2026-11-25	3	false	false	false	ParentSummary(TaskId(172))
+task	185	2026-11-19	2026-12-02	2026-12-18	2026-12-31	20	false	false	false	ParentSummary(TaskId(172))
+task	186	2026-12-01	2026-12-03	2026-12-29	2026-12-31	19	false	false	false	Link(TaskId(181))
+task	187	2026-11-24	2026-11-26	2026-11-26	2026-11-30	2	false	false	false	Link(TaskId(175))
+task	188	2026-12-11	2026-12-18	2026-12-11	2026-12-18	0	true	false	false	Constraint
+task	189	2026-11-30	2026-11-30	2026-12-25	2026-12-25	18	false	false	false	Link(TaskId(178))
+task	190	2026-12-02	2026-12-09	2026-12-25	2026-12-31	16	false	false	false	Link(TaskId(187))
+task	191	2026-11-23	2026-12-31	2026-11-27	2026-12-31	0	true	false	false	ParentSummary(TaskId(172))
+task	192	2026-11-25	2026-12-09	2026-11-27	2026-12-11	2	false	false	false	Link(TaskId(187))
+task	193	2026-12-14	2026-12-16	2026-12-16	2026-12-18	2	false	false	false	Link(TaskId(192))
+task	194	2026-11-23	2026-11-26	2026-12-18	2026-12-23	18	false	false	false	Link(TaskId(192))
+task	195	2026-12-23	2026-12-31	2026-12-23	2026-12-31	0	true	false	false	Link(TaskId(188))
+task	196	2026-12-22	2026-12-29	2026-12-24	2026-12-31	2	false	false	false	Link(TaskId(193))
+task	197	2026-12-18	2026-12-18	2026-12-18	2026-12-18	0	true	false	false	Link(TaskId(188))
+task	198	2026-12-22	2026-12-26	2026-12-22	2026-12-26	0	true	false	false	Constraint
+task	199	2026-12-02	2026-12-04	2026-12-29	2026-12-31	18	false	false	false	Link(TaskId(194))
+task	200	2027-01-01	2027-01-01	2027-01-01	2027-01-01	0	true	false	false	Link(TaskId(172))
+rolled_up	1	112
+rolled_up	2	38
+rolled_up	3	20
+rolled_up	12	38
+rolled_up	21	23
+rolled_up	30	33
+rolled_up	31	13
+rolled_up	40	16
+rolled_up	49	33
+rolled_up	58	40
+rolled_up	59	17
+rolled_up	68	7
+rolled_up	77	29
+rolled_up	86	114
+rolled_up	87	41
+rolled_up	88	8
+rolled_up	97	21
+rolled_up	106	35
+rolled_up	115	26
+rolled_up	116	10
+rolled_up	125	15
+rolled_up	134	26
+rolled_up	143	47
+rolled_up	144	8
+rolled_up	153	16
+rolled_up	162	47
+rolled_up	171	31
+rolled_up	172	30
+rolled_up	173	11
+rolled_up	182	21
+rolled_up	191	28

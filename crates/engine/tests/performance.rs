@@ -3,9 +3,10 @@
 //! calendar with holidays and working Saturdays.
 //!
 //! The gate (`reschedule_200_tasks_under_10_ms`) is `#[ignore]`d because timings mean nothing in
-//! a debug build; `cargo xtask ci` runs it in release (`cargo xtask perf`). A 2,000-task plan,
-//! and the 200-task plan staffed with 30 resources on calendars of their own, are timed and
-//! reported, not gated. Typing a long Resource Names text into a large plan is gated too
+//! a debug build; `cargo xtask ci` runs it in release (`cargo xtask perf`). It also gates the
+//! 200-task plan staffed with 30 resources on calendars of their own and 300 assignments under the
+//! same 10 ms. A 2,000-task plan, and the staffed plan's resource usage, are timed and reported,
+//! not gated. Typing a long Resource Names text into a large plan is gated too
 //! (`resource_names_on_a_large_plan_stay_fast`), and so is the resource usage of a plan at the
 //! assignment cap.
 
@@ -141,12 +142,17 @@ fn plan(n: usize, seed: u64) -> Project {
     p
 }
 
+/// Resources and assignments on the staffed plan.
+const STAFF: usize = 30;
+const STAFFED_ASSIGNMENTS: usize = 300;
+
 /// `plan` staffed: 30 work resources, each with about a week's leave a quarter and every third
-/// one part time (Fridays off), and one or two of them on each task with duration.
+/// one part time (Fridays off), and 300 assignments: one of them on each task with duration, then
+/// a second (and, on a plan short of tasks, a third) in turn until there are 300.
 fn staffed(n: usize, seed: u64) -> Project {
     let mut p = plan(n, seed);
     let mut rng = Lcg(seed ^ 0x5eed);
-    let people: Vec<ResourceId> = (0..30).map(|k| p.add_resource(Some(&format!("Person {k}")), ResourceType::Work, None).unwrap()).collect();
+    let people: Vec<ResourceId> = (0..STAFF).map(|k| p.add_resource(Some(&format!("Person {k}")), ResourceType::Work, None).unwrap()).collect();
     for (k, r) in people.iter().enumerate() {
         for q in 0..4 {
             let first = date("2026-01-05").add_days(q * 91 + rng.below(80) as i64).unwrap();
@@ -159,9 +165,17 @@ fn staffed(n: usize, seed: u64) -> Project {
         }
     }
     let tasks: Vec<TaskId> = p.tasks.iter().filter(|t| t.outline_level == 4 && t.duration > 0).map(|t| t.id).collect();
-    for t in tasks {
-        for _ in 0..1 + rng.below(2) {
-            let _ = p.assign(t, people[rng.below(30) as usize], None);
+    'all: for _round in 0..STAFF {
+        for &t in &tasks {
+            if p.assignments.len() >= STAFFED_ASSIGNMENTS {
+                break 'all;
+            }
+            // Someone not on the task yet: a resource can be on a task once.
+            let first = rng.below(STAFF as u64) as usize;
+            if let Some(r) = (0..STAFF).map(|k| people[(first + k) % STAFF]).find(|r| !p.assignments.iter().any(|a| a.task == t && a.resource == *r))
+            {
+                p.assign(t, r, None).unwrap();
+            }
         }
     }
     p
@@ -225,6 +239,8 @@ fn the_generated_plan_is_realistic_and_schedules_deterministically() {
     assert!(Session::new(plan(2_000, 19)).schedule.is_ok());
     // Staffed, on resource calendars: the same dates every time, and some tasks moved by them.
     let staffed_plan = staffed(200, 19);
+    assert_eq!((staffed_plan.tasks.len(), staffed_plan.resources.len(), staffed_plan.assignments.len()), (200, STAFF, STAFFED_ASSIGNMENTS));
+    assert_eq!(staffed_plan, staffed(200, 19), "same seed, same staffed plan");
     let (a, b) = (Session::new(staffed_plan.clone()), Session::new(staffed_plan.clone()));
     assert_eq!(a.schedule.as_ref().unwrap(), b.schedule.as_ref().unwrap());
     let mut bare = staffed_plan;
@@ -234,8 +250,10 @@ fn the_generated_plan_is_realistic_and_schedules_deterministically() {
     assert_ne!(a.schedule.as_ref().unwrap().tasks, Session::new(bare).schedule.unwrap().tasks, "leave moves tasks");
 }
 
-/// The gate: a 200-task plan reschedules in under 10 ms in release (median of 31 edits). Also
-/// times and prints a 2,000-task plan, not gated. In a debug build it only reports.
+/// The gate: a 200-task plan reschedules in under 10 ms in release (median of 31 edits), bare and
+/// staffed with 30 resources on their own calendars and 300 assignments. Also times and prints a
+/// 2,000-task plan and the staffed plan's resource usage, not gated. In a debug build it only
+/// reports.
 #[test]
 #[ignore = "timing; run in release by `cargo xtask perf`"]
 fn reschedule_200_tasks_under_10_ms() {
@@ -253,10 +271,14 @@ fn reschedule_200_tasks_under_10_ms() {
     assert!(u.is_ok());
     println!("perf ({build}, median of {RUNS}): reschedule 200 tasks {t200:.2?}, 2,000 tasks {t2000:.2?} (gate: 200 under {GATE:?})");
     println!(
-        "perf ({build}, median of {RUNS}): reschedule 200 tasks with 30 resources on their own calendars {t_crewed:.2?}, their usage {t_usage:.2?} (reported)"
+        "perf ({build}, median of {RUNS}): reschedule 200 tasks with {STAFF} resources on their own calendars and {STAFFED_ASSIGNMENTS} assignments {t_crewed:.2?} (gate: under {GATE:?}), their usage {t_usage:.2?} (reported)"
     );
     if !cfg!(debug_assertions) {
         assert!(t200 < GATE, "200-task reschedule took {t200:.2?}, over the {GATE:?} gate");
+        assert!(
+            t_crewed < GATE,
+            "200-task reschedule with {STAFF} resources and {STAFFED_ASSIGNMENTS} assignments took {t_crewed:.2?}, over the {GATE:?} gate"
+        );
     }
 }
 
