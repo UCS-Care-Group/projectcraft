@@ -57,6 +57,38 @@
 //! few tries land on the date exactly, even when a subtask's own link or constraint makes the span
 //! depend on the hold. The search is bounded (see `HOLD_STEPS`).
 //!
+//! As Late As Possible, per Microsoft's definition (ES = calculated LS): the task is scheduled as
+//! late as it can without delaying its successors or the project finish. The rule here:
+//! 1. One forward and one backward pass with every As Late As Possible task as soon as possible
+//!    give each one its late start, which doesn't depend on its own early dates (only on its
+//!    successors' late dates, its deadline and the project finish).
+//! 2. Another forward pass holds each such task at that late start (never before where its links
+//!    put it); its successors follow from there, so it uses up their slack too (as in Project, a
+//!    successor of an As Late As Possible task can become critical).
+//! 3. A summary starts with its earliest subtask, and the late dates take a summary's late start
+//!    as its late finish less its span, which doesn't hold a subtask that moves. So for these
+//!    holds a subtask may also start no later than its summaries' start-to-start and
+//!    start-to-finish successors let the summary start (its start cap, see `backward`), and its
+//!    predecessors are bound by that. Moving a subtask can change its summary's span, so the
+//!    holds are worked out again from the new dates until they settle, a few rounds at most
+//!    (`ALAP_ROUNDS`).
+//! 4. A last backward pass gives the late dates shown. The task's early start for slack is where
+//!    it is held, so its slack is 0 unless something holds it before its late start (its start
+//!    cap) or its links hold it after (negative, as for any task).
+//! 5. Last resort: if the holds would still make the project finish later (a finish-type link
+//!    into a summary holds all its subtasks, so one moved subtask can move the others), they give
+//!    way and the plan is scheduled as soon as possible, the same on every run.
+//!
+//! Plans with no As Late As Possible task make one pass each way, as before.
+//!
+//! Worked example (Monday 2026-01-05, 8-hour days): A (5d) alone sets the finish, Friday 9th. B
+//! (1d, As Late As Possible) is linked to C (2d), B → C. Backward: C's late start is Thursday, so
+//! B's late finish is Wednesday evening and its late start Wednesday. B is held there, Wednesday;
+//! C follows it, Thursday to Friday, with no slack left. A deadline caps the late finish, so an
+//! As Late As Possible task finishes on its deadline when that is earlier. A levelling delay puts
+//! it off from its late start. On a summary the constraint holds nothing (its subtasks keep their
+//! own constraints), and a summary over As Late As Possible subtasks rolls up where they end up.
+//!
 //! ponytail: schedules forward from the project start, with no actual progress and no resource
 //! levelling; each is its own step on the roadmap. A Must Start On before the project start is
 //! held at the project start.
@@ -343,12 +375,24 @@ fn link_start(t: &Task, o: &Days, index: &HashMap<TaskId, usize>, es: &[i64], ef
 ///
 /// A levelling delay (`delay`, working minutes of the project calendar) puts the start off from
 /// there, before a No Later Than date caps it; Must Start/Finish On ignore it.
-fn constrain(o: &Days, c: Constraint, start: i64, why: Driver, back: &impl Fn(i64) -> i64, delay: i64) -> (i64, i64, Driver, bool) {
-    // Where the links (and a No Earlier Than date) put it, and any levelling delay; then what a
-    // hard constraint makes of it.
+///
+/// `late` is an As Late As Possible task's late start, once the first passes have worked it out:
+/// it is held there, or where its links put it if that is later, and that is its early start too.
+fn constrain(
+    o: &Days,
+    c: Constraint,
+    start: i64,
+    why: Driver,
+    back: &impl Fn(i64) -> i64,
+    delay: i64,
+    late: Option<i64>,
+) -> (i64, i64, Driver, bool) {
+    // Where the links (and a No Earlier Than date, or an As Late As Possible task's late start)
+    // put it, and any levelling delay; then what a hard constraint makes of it.
     let natural = match c {
         Constraint::StartNoEarlierThan(cd) => start.max(start_offset(o, cd)),
         Constraint::FinishNoEarlierThan(cd) => start.max(back(finish_offset(o, cd))),
+        Constraint::AsLateAsPossible => late.map_or(start, |ls| start.max(ls)),
         _ => start,
     };
     let undelayed = natural;
@@ -403,6 +447,8 @@ struct Pass<'a> {
     index: HashMap<TaskId, usize>,
     dur: &'a [i64],
     crews: &'a Crews<'a>,
+    /// By row: an As Late As Possible task's late start, in the second forward pass.
+    alap: &'a [Option<i64>],
     f: Forward,
     /// Each summary's hold, and the summary whose own link or constraint set it (none: the
     /// project start).
@@ -412,8 +458,17 @@ struct Pass<'a> {
     steps: u64,
 }
 
-/// One forward pass.
-fn forward<'a>(p: &'a Project, o: &'a Days<'a>, tree: &'a Tree, order: &'a [usize], dur: &'a [i64], crews: &'a Crews<'a>) -> Forward {
+/// One forward pass. `alap` holds As Late As Possible tasks at their late starts (empty: as soon
+/// as possible).
+fn forward<'a>(
+    p: &'a Project,
+    o: &'a Days<'a>,
+    tree: &'a Tree,
+    order: &'a [usize],
+    dur: &'a [i64],
+    crews: &'a Crews<'a>,
+    alap: &'a [Option<i64>],
+) -> Forward {
     let n = p.tasks.len();
     let mut at = vec![0usize; 2 * n];
     for (k, &node) in order.iter().enumerate() {
@@ -431,7 +486,7 @@ fn forward<'a>(p: &'a Project, o: &'a Days<'a>, tree: &'a Tree, order: &'a [usiz
         held: vec![0; n],
     };
     let index = p.tasks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
-    let mut pass = Pass { p, o, tree, order, at, index, dur, crews, f, hold: vec![0; n], source: vec![None; n], steps: 0 };
+    let mut pass = Pass { p, o, tree, order, at, index, dur, crews, alap, f, hold: vec![0; n], source: vec![None; n], steps: 0 };
     pass.run(0, order.len(), 0);
     pass.f
 }
@@ -496,7 +551,8 @@ impl Pass<'_> {
             start = h;
             why = src.map_or(Driver::ProjectStart, |u| Driver::ParentSummary(self.id(u)));
         }
-        let (held, soft_early, why, conflict) = constrain(self.o, t.constraint, start, why, &back, t.leveling_delay);
+        let late = self.alap.get(i).copied().flatten();
+        let (held, soft_early, why, conflict) = constrain(self.o, t.constraint, start, why, &back, t.leveling_delay, late);
         // On its resources' calendars it may start later than it is held (one on leave).
         let (es, ef) = crews.fwd(i, held).unwrap_or((held, held + d));
         let f = &mut self.f;
@@ -1024,79 +1080,45 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
     let dur: Vec<i64> = p.tasks.iter().map(|t| t.duration.clamp(0, MAX_MINUTES)).collect();
     let crews = Crews::of(p, &tree, &base, line, plan.is_some());
 
-    // Forward pass.
-    let Forward { es, ef, early, conflict, driver, held } = forward(p, o, &tree, &order, &dur, &crews);
-    let end = ef.iter().copied().max().unwrap_or(0);
-    // Roll-up: from here on a summary's duration is its rolled-up one, and a task on its
-    // resources' calendars spans the working time it takes there.
-    let dur: Vec<i64> = (0..n)
-        .map(|i| {
-            if summary(i).is_some() || crews.has(i) {
-                ef.get(i).copied().unwrap_or(0) - es.get(i).copied().unwrap_or(0)
-            } else {
-                dur.get(i).copied().unwrap_or(0)
-            }
-        })
-        .collect();
-    let d = |i: usize| dur.get(i).copied().unwrap_or(0);
-    // Where a task starts to finish at `lf`: worked back on its resources' calendars, if it has any.
-    // A task on its resources' calendars that must finish when it does starts when it does: no
-    // walk back needed.
-    let late_start = |i: usize, lf: i64| match (es.get(i), ef.get(i)) {
-        (Some(&s), Some(&f)) if crews.has(i) && lf == f => s,
-        _ => crews.back(i, lf).unwrap_or(lf - d(i)),
+    // Forward and backward passes; again with each As Late As Possible task held at its late
+    // start, if there are any (see the module notes).
+    let mut fw = forward(p, o, &tree, &order, &dur, &crews, &[]);
+    let mut end = fw.ef.iter().copied().max().unwrap_or(0);
+    let mut late = backward(p, o, &tree, &order, &index, &crews, &dur, &fw, end, false);
+    let any_alap = p.tasks.iter().enumerate().any(|(i, t)| t.constraint == Constraint::AsLateAsPossible && summary(i).is_none());
+    // Where each As Late As Possible task is held: its late start, held by its summaries' start-type
+    // successors too.
+    let holds = |fw: &Forward, end: i64| -> Vec<Option<i64>> {
+        let late = backward(p, o, &tree, &order, &index, &crews, &dur, fw, end, true);
+        p.tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.constraint == Constraint::AsLateAsPossible && summary(i).is_none()).then(|| late.ls.get(i).copied().unwrap_or(0)))
+            .collect()
     };
-
-    // Backward pass.
-    let mut lf = vec![end; n];
-    for &node in order.iter().rev() {
-        if let Some(s) = node.checked_sub(n) {
-            // A summary's hold: every subtask is final here, so the summary's late start and
-            // finish (rolled up from them) bound its predecessors.
-            let Some(t) = p.tasks.get(s) else { continue };
-            if t.preds.is_empty() || summary(s).is_none() {
-                continue;
+    if any_alap {
+        let asap_end = end;
+        let mut alap = holds(&fw, end);
+        for _ in 0..ALAP_ROUNDS {
+            fw = forward(p, o, &tree, &order, &dur, &crews, &alap);
+            end = fw.ef.iter().copied().max().unwrap_or(0);
+            let next = holds(&fw, end);
+            if next == alap {
+                break;
             }
-            let my_lf = tree.leaves(s).filter_map(|r| lf.get(r).copied()).max().unwrap_or(end);
-            let my_ls = tree.leaves(s).filter_map(|r| lf.get(r).map(|x| late_start(r, *x))).min().unwrap_or(my_lf);
-            bound_preds(t, o, &index, &mut lf, my_ls, my_lf, &d);
-            continue;
+            alap = next;
         }
-        let i = node;
-        let Some(t) = p.tasks.get(i) else { continue };
-        let my_lf = lf.get(i).copied().unwrap_or(end);
-        // A hard constraint caps the late finish: LS = CD (SNLT, MSO), LF = CD (FNLT, MFO).
-        let cap = match t.constraint {
-            Constraint::StartNoLaterThan(cd) => start_offset(o, cd) + d(i),
-            Constraint::FinishNoLaterThan(cd) => finish_offset(o, cd),
-            Constraint::MustStartOn(_) | Constraint::MustFinishOn(_) => ef.get(i).copied().unwrap_or(end),
-            _ => end,
-        };
-        // A deadline caps the late finish too (LF = min(LF, deadline)) and never moves the task.
-        let deadline = t.deadline.map_or(end, |dl| finish_offset(o, dl));
-        let my_lf = my_lf.min(cap).min(deadline);
-        // Roll-up: a summary's successors, constraint and deadline hold back each of its subtasks.
-        if let Some(k) = summary(i) {
-            for &c in k {
-                if let Some(x) = lf.get_mut(c) {
-                    *x = (*x).min(my_lf);
-                }
-            }
-            continue;
+        // Last resort: holds that would make the project finish later (a plan the rules above
+        // don't settle) give way, and every task is scheduled as soon as possible.
+        if end > asap_end {
+            fw = forward(p, o, &tree, &order, &dur, &crews, &[]);
+            end = asap_end;
         }
-        if let Some(x) = lf.get_mut(i) {
-            *x = my_lf;
-        }
-        bound_preds(t, o, &index, &mut lf, late_start(i, my_lf), my_lf, &d);
+        late = backward(p, o, &tree, &order, &index, &crews, &dur, &fw, end, false);
     }
-
-    let mut ls: Vec<i64> = (0..n).map(|i| late_start(i, lf.get(i).copied().unwrap_or(end))).collect();
-    // Roll-up of the late dates: inner summaries sit lower in the outline, so go bottom-up.
-    for i in (0..n).rev() {
-        if let Some(k) = summary(i) {
-            roll_up(k, &mut ls, &mut lf, i);
-        }
-    }
+    let Forward { es, ef, early, conflict, driver, held } = fw;
+    let Late { lf, ls, dur } = late;
+    let d = |i: usize| dur.get(i).copied().unwrap_or(0);
 
     let bad = || ModelError::Invalid("the schedule runs off the calendar (no working days, or past year 9999)".into());
     // Every offset used is in 0..=end; one walk of the calendar serves them all.
@@ -1180,6 +1202,148 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
         .collect();
     Ok(Schedule { tasks, finish: finish_all, rolled_up, assignments })
 }
+
+/// The late dates from one backward pass, by row (summaries rolled up), and each row's duration
+/// from here on.
+struct Late {
+    lf: Vec<i64>,
+    ls: Vec<i64>,
+    dur: Vec<i64>,
+}
+
+/// One backward pass over the early dates `fw` with the project finishing at `end`.
+///
+/// With `caps`, the late dates As Late As Possible tasks are held at, not the ones shown: each
+/// subtask may also start no later than a summary it sits in may start by that summary's
+/// start-to-start and start-to-finish successors (its start cap), and its predecessors are bound
+/// by that. A summary's start is its earliest subtask's, so the late finish less the span, which
+/// the shown late dates take for a summary's late start, doesn't hold a subtask that moves.
+#[allow(clippy::too_many_arguments)]
+fn backward(
+    p: &Project,
+    o: &Days,
+    tree: &Tree,
+    order: &[usize],
+    index: &HashMap<TaskId, usize>,
+    crews: &Crews,
+    dur: &[i64],
+    fw: &Forward,
+    end: i64,
+    caps: bool,
+) -> Late {
+    let n = p.tasks.len();
+    let (es, ef) = (&fw.es, &fw.ef);
+    let summary = |i: usize| tree.summary(i);
+
+    // Roll-up: from here on a summary's duration is its rolled-up one, and a task on its
+    // resources' calendars spans the working time it takes there.
+    let dur: Vec<i64> = (0..n)
+        .map(|i| {
+            if summary(i).is_some() || crews.has(i) {
+                ef.get(i).copied().unwrap_or(0) - es.get(i).copied().unwrap_or(0)
+            } else {
+                dur.get(i).copied().unwrap_or(0)
+            }
+        })
+        .collect();
+    let d = |i: usize| dur.get(i).copied().unwrap_or(0);
+    // Where a task starts to finish at `lf`: worked back on its resources' calendars, if it has any.
+    // A task on its resources' calendars that must finish when it does starts when it does: no
+    // walk back needed.
+    let late_start = |i: usize, lf: i64| match (es.get(i), ef.get(i)) {
+        (Some(&s), Some(&f)) if crews.has(i) && lf == f => s,
+        _ => crews.back(i, lf).unwrap_or(lf - d(i)),
+    };
+
+    // Backward pass.
+    let mut lf = vec![end; n];
+    let mut start_cap = vec![i64::MAX; n];
+    for &node in order.iter().rev() {
+        if let Some(s) = node.checked_sub(n) {
+            // A summary's hold: every subtask is final here, so the summary's late start and
+            // finish (rolled up from them) bound its predecessors.
+            let Some(t) = p.tasks.get(s) else { continue };
+            if t.preds.is_empty() || summary(s).is_none() {
+                continue;
+            }
+            let my_lf = tree.leaves(s).filter_map(|r| lf.get(r).copied()).max().unwrap_or(end);
+            let my_ls = tree.leaves(s).filter_map(|r| lf.get(r).map(|x| late_start(r, *x))).min().unwrap_or(my_lf);
+            bound_preds(t, o, index, &mut lf, my_ls, my_lf, &d);
+            cap_summary_preds(t, o, index, tree, &mut start_cap, my_ls, my_lf);
+            continue;
+        }
+        let i = node;
+        let Some(t) = p.tasks.get(i) else { continue };
+        let my_lf = lf.get(i).copied().unwrap_or(end);
+        // A hard constraint caps the late finish: LS = CD (SNLT, MSO), LF = CD (FNLT, MFO).
+        let cap = match t.constraint {
+            Constraint::StartNoLaterThan(cd) => start_offset(o, cd) + d(i),
+            Constraint::FinishNoLaterThan(cd) => finish_offset(o, cd),
+            Constraint::MustStartOn(_) | Constraint::MustFinishOn(_) => ef.get(i).copied().unwrap_or(end),
+            _ => end,
+        };
+        // A deadline caps the late finish too (LF = min(LF, deadline)) and never moves the task.
+        let deadline = t.deadline.map_or(end, |dl| finish_offset(o, dl));
+        let my_lf = my_lf.min(cap).min(deadline);
+        // Roll-up: a summary's successors, constraint and deadline hold back each of its subtasks.
+        if let Some(k) = summary(i) {
+            let cap = start_cap.get(i).copied().unwrap_or(i64::MAX);
+            for &c in k {
+                if let Some(x) = lf.get_mut(c) {
+                    *x = (*x).min(my_lf);
+                }
+                if let Some(x) = start_cap.get_mut(c) {
+                    *x = (*x).min(cap);
+                }
+            }
+            continue;
+        }
+        // Held to start by a summary's start-type successors (its start cap), and so to
+        // finish its duration after: for As Late As Possible holds only.
+        let cap = start_cap.get(i).copied().filter(|_| caps).unwrap_or(i64::MAX);
+        let my_lf = if cap < late_start(i, my_lf) { my_lf.min(cap.saturating_add(d(i))) } else { my_lf };
+        if let Some(x) = lf.get_mut(i) {
+            *x = my_lf;
+        }
+        let my_ls = late_start(i, my_lf).min(cap);
+        bound_preds(t, o, index, &mut lf, my_ls, my_lf, &d);
+        cap_summary_preds(t, o, index, tree, &mut start_cap, my_ls, my_lf);
+    }
+
+    let mut ls: Vec<i64> = (0..n).map(|i| late_start(i, lf.get(i).copied().unwrap_or(end))).collect();
+    // Roll-up of the late dates: inner summaries sit lower in the outline, so go bottom-up.
+    for i in (0..n).rev() {
+        if let Some(k) = summary(i) {
+            roll_up(k, &mut ls, &mut lf, i);
+        }
+    }
+    Late { lf, ls, dur }
+}
+
+/// The latest start each summary predecessor of a task may have by its start-to-start and
+/// start-to-finish links, given the task's late start and finish: the start cap (see `backward`).
+fn cap_summary_preds(t: &Task, o: &Days, index: &HashMap<TaskId, usize>, tree: &Tree, cap: &mut [i64], my_ls: i64, my_lf: i64) {
+    for l in &t.preds {
+        let Some(&j) = index.get(&l.pred) else { continue };
+        if tree.summary(j).is_none() {
+            continue;
+        }
+        let lag = l.lag.clamp(-MAX_MINUTES, MAX_MINUTES);
+        let bound = match l.kind {
+            LinkKind::SS => o.lags.before(my_ls, lag, false),
+            LinkKind::SF => o.lags.before(my_lf, lag, true),
+            LinkKind::FS | LinkKind::FF => continue,
+        };
+        if let Some(x) = cap.get_mut(j) {
+            *x = (*x).min(bound);
+        }
+    }
+}
+
+/// Most rounds of holding As Late As Possible tasks at their late starts (see the module notes):
+/// a later round is needed only when moving one changes a summary's span. Past it the last
+/// round's dates stand, the same on every run.
+const ALAP_ROUNDS: u32 = 4;
 
 /// Most working days a schedule spans: past year 9999 from any start, so only a calendar of a
 /// few working minutes a day can reach it. Bounds the calendar walk.
@@ -1509,7 +1673,7 @@ mod tests {
         fn summaries_with_links_and_constraints_never_panic(
             levels in proptest::collection::vec(0u32..5, 1..10),
             links in proptest::collection::vec((0usize..10, 0u32..12, 0u8..4, -3i64..4), 0..12),
-            constraints in proptest::collection::vec((0usize..10, 0u8..7, 0i64..30), 0..5),
+            constraints in proptest::collection::vec((0usize..10, 0u8..8, 0i64..30), 0..5),
         ) {
             let mut p = Project::new("t", date("2026-01-05"));
             for (i, l) in levels.iter().enumerate() {
@@ -1526,7 +1690,7 @@ mod tests {
             for (row, ty, day) in constraints {
                 let d = date("2026-01-01").add_days(day).unwrap();
                 let c = [Constraint::Asap, Constraint::StartNoEarlierThan(d), Constraint::FinishNoEarlierThan(d), Constraint::StartNoLaterThan(d),
-                    Constraint::FinishNoLaterThan(d), Constraint::MustStartOn(d), Constraint::MustFinishOn(d)][usize::from(ty)];
+                    Constraint::FinishNoLaterThan(d), Constraint::MustStartOn(d), Constraint::MustFinishOn(d), Constraint::AsLateAsPossible][usize::from(ty)];
                 if let Some(&id) = ids.get(row) {
                     p.task_mut(id).unwrap().constraint = c;
                 }
@@ -1546,7 +1710,7 @@ mod tests {
             levels in proptest::collection::vec(0u32..3, 1..10),
             durations in proptest::collection::vec(0i64..2000, 10),
             links in proptest::collection::vec((0usize..10, 0u32..12, 0u8..4, -2i64..3), 0..10),
-            constraints in proptest::collection::vec((0usize..10, 0u8..7, 0i64..30), 0..4),
+            constraints in proptest::collection::vec((0usize..10, 0u8..8, 0i64..30), 0..4),
             leave in proptest::collection::vec((0usize..3, 0i64..40, 0u8..5), 0..12),
             weeks in proptest::collection::vec((0usize..3, 0usize..7, 0u8..5), 0..6),
             assigned in proptest::collection::vec((0usize..10, 0usize..3, 1u32..30_000), 0..14),
@@ -1566,7 +1730,7 @@ mod tests {
             for (row, ty, day) in constraints {
                 let d = date("2026-01-01").add_days(day).unwrap();
                 let c = [Constraint::Asap, Constraint::StartNoEarlierThan(d), Constraint::FinishNoEarlierThan(d), Constraint::StartNoLaterThan(d),
-                    Constraint::FinishNoLaterThan(d), Constraint::MustStartOn(d), Constraint::MustFinishOn(d)][usize::from(ty)];
+                    Constraint::FinishNoLaterThan(d), Constraint::MustStartOn(d), Constraint::MustFinishOn(d), Constraint::AsLateAsPossible][usize::from(ty)];
                 if let Some(&id) = ids.get(row) {
                     p.task_mut(id).unwrap().constraint = c;
                 }
@@ -1782,13 +1946,13 @@ mod tests {
         /// as one with no calendar of its own, so the plan schedules the same: every task's dates,
         /// late dates, slack and driver, the finish and the summaries' durations. Plans with
         /// summaries, links with lags and leads, every constraint type (dates before the start
-        /// too), deadlines, a project holiday and the other resource's leave.
+        /// too, As Late As Possible), deadlines, a project holiday and the other resource's leave.
         #[test]
         fn a_resource_weekday_equal_to_the_projects_changes_no_dates(
             levels in proptest::collection::vec(0u32..3, 2..9),
             durations in proptest::collection::vec(0i64..9, 9),
             links in proptest::collection::vec((0usize..9, 0usize..9, 0u8..4, -2i64..3), 0..9),
-            constraints in proptest::collection::vec((0usize..9, 0u8..7, -3i64..16), 0..4),
+            constraints in proptest::collection::vec((0usize..9, 0u8..8, -3i64..16), 0..4),
             deadlines in proptest::collection::vec((0usize..9, 0i64..14), 0..2),
             assigned in proptest::collection::vec((0usize..9, 0usize..2, 0usize..4), 0..10),
             holiday in proptest::option::of(0i64..10),
@@ -1814,7 +1978,7 @@ mod tests {
             for (row, ty, day) in constraints {
                 let d = start.add_days(day).unwrap();
                 let c = [Constraint::Asap, Constraint::StartNoEarlierThan(d), Constraint::FinishNoEarlierThan(d), Constraint::StartNoLaterThan(d),
-                    Constraint::FinishNoLaterThan(d), Constraint::MustStartOn(d), Constraint::MustFinishOn(d)][usize::from(ty)];
+                    Constraint::FinishNoLaterThan(d), Constraint::MustStartOn(d), Constraint::MustFinishOn(d), Constraint::AsLateAsPossible][usize::from(ty)];
                 if let Some(&id) = ids.get(row) {
                     p.task_mut(id).unwrap().constraint = c;
                 }
@@ -1845,6 +2009,117 @@ mod tests {
                     proptest::prop_assert_eq!((a.finish, a.rolled_up), (b.finish, b.rolled_up));
                 }
                 (a, b) => proptest::prop_assert_eq!(a.err(), b.err()),
+            }
+        }
+    }
+
+    /// The worked example in the module notes: B (1 day, As Late As Possible) → C (2 days), beside
+    /// A (5 days). B is held at its late start, Wednesday; C follows, Thursday–Friday; neither
+    /// has slack and the finish stays Friday.
+    #[test]
+    fn as_late_as_possible_takes_the_late_dates() {
+        let mut p = Project::new("t", date("2026-01-05"));
+        p.add_task("A", 5 * D).unwrap();
+        let b = p.add_task("B", D).unwrap();
+        let c = p.add_task("C", 2 * D).unwrap();
+        p.set_preds(c, parse_preds("2", &crate::Options::default()).unwrap()).unwrap();
+        p.task_mut(b).unwrap().constraint = Constraint::AsLateAsPossible;
+        let s = schedule(&p).unwrap();
+        assert_eq!((s.tasks[&b].start_at, s.tasks[&b].finish_at), (at("2026-01-07", 8, 0), at("2026-01-07", 17, 0)));
+        assert_eq!((s.tasks[&c].start, s.tasks[&c].finish), (date("2026-01-08"), date("2026-01-09")));
+        assert_eq!((s.tasks[&b].slack, s.tasks[&c].slack), (0, 0));
+        assert_eq!(s.finish, date("2026-01-09"));
+    }
+
+    proptest::proptest! {
+        /// Plans with summaries, links with lags and leads, Start No Earlier Than dates, deadlines
+        /// and a resource on leave, some tasks As Late As Possible: the same dates twice, no
+        /// later project finish than with every task As Soon As Possible, no task earlier than it
+        /// would be then (unless a summary has a finish-type link), and each As Late As Possible task (not a summary) with no slack left
+        /// unless its links hold it past its late start.
+        #[test]
+        fn as_late_as_possible_keeps_the_finish_and_moves_nothing_earlier(
+            levels in proptest::collection::vec(0u32..3, 1..10),
+            durations in proptest::collection::vec(0i64..9, 10),
+            links in proptest::collection::vec((0usize..10, 0usize..10, 0u8..4, -2i64..3), 0..10),
+            late in proptest::collection::vec(0usize..10, 1..5),
+            snet in proptest::collection::vec((0usize..10, 0i64..12), 0..3),
+            deadlines in proptest::collection::vec((0usize..10, 0i64..14), 0..2),
+            assigned in proptest::collection::vec(0usize..10, 0..4),
+            leave in proptest::option::of(0i64..10),
+        ) {
+            let start = date("2026-03-02");
+            let mut p = Project::new("t", start);
+            for (i, l) in levels.iter().enumerate() {
+                let id = p.add_task(format!("T{i}"), durations[i] * 240).unwrap();
+                p.task_mut(id).unwrap().outline_level = *l;
+            }
+            let ids: Vec<TaskId> = p.tasks.iter().map(|t| t.id).collect();
+            let kinds = [LinkKind::FS, LinkKind::SS, LinkKind::FF, LinkKind::SF];
+            for (succ, pred, kind, lag) in links {
+                if let (Some(&s), Some(&pr)) = (ids.get(succ), ids.get(pred)) {
+                    let _ = p.set_preds(s, vec![crate::Link { pred: pr, kind: kinds[usize::from(kind)], lag: lag * 240, lag_unit: crate::DurationUnit::Hours }]);
+                }
+            }
+            for (row, day) in snet {
+                if let Some(&id) = ids.get(row) {
+                    p.task_mut(id).unwrap().constraint = Constraint::StartNoEarlierThan(start.add_days(day).unwrap());
+                }
+            }
+            for (row, day) in deadlines {
+                if let Some(&id) = ids.get(row) {
+                    p.task_mut(id).unwrap().deadline = Some(start.add_days(day).unwrap());
+                }
+            }
+            let ann = p.add_resource(Some("Ann"), crate::ResourceType::Work, None).unwrap();
+            for row in assigned {
+                if let Some(&id) = ids.get(row) {
+                    let _ = p.assign(id, ann, Some(crate::Units::Work(10_000)));
+                }
+            }
+            if let Some(day) = leave {
+                p.set_resource_exception(ann, start.add_days(day).unwrap(), vec![]).unwrap();
+            }
+            for row in late {
+                if let Some(&id) = ids.get(row) {
+                    p.task_mut(id).unwrap().constraint = Constraint::AsLateAsPossible;
+                }
+            }
+            // The same plan with those tasks As Soon As Possible.
+            let mut soon = p.clone();
+            for t in soon.tasks.iter_mut().filter(|t| t.constraint == Constraint::AsLateAsPossible) {
+                t.constraint = Constraint::Asap;
+            }
+            let asap = schedule(&soon);
+            let first = schedule(&p);
+            proptest::prop_assert_eq!(&first, &schedule(&p));
+            let (Ok(asap), Ok(alap)) = (asap, first) else { return Ok(()) };
+            // The project doesn't finish later: every task finishes by the latest finish as soon as
+            // possible, counted in working minutes (the end of a working day and the start of the
+            // next are the same working minute, which a milestone can show either way: see
+            // `moments`).
+            let at = |m: Moment| p.calendar.count_to(p.start, m);
+            let end = asap.tasks.values().map(|d| at(d.finish_at)).max().unwrap_or(0);
+            for t in &p.tasks {
+                proptest::prop_assert!(at(alap.tasks[&t.id].finish_at) <= end, "{} finishes after the project", t.name);
+            }
+            // A finish-type link into a summary holds its subtasks only as much as its finish
+            // needs: an As Late As Possible subtask finishing late lets the others start earlier.
+            let finish_holds = p.tasks.iter().any(|t| p.is_summary(t.id) && t.preds.iter().any(|l| matches!(l.kind, LinkKind::FF | LinkKind::SF)));
+            // A start-to-start or start-to-finish link from a summary holds an As Late As Possible
+            // subtask before its late start (its start cap: see `backward`), so it keeps some
+            // slack; and a task walked on a resource calendar spans its leave once it moves, which
+            // the late dates of its start-type successors count. Otherwise ES = LS exactly.
+            let start_caps = !p.assignments.is_empty()
+                || p.tasks.iter().any(|t| t.preds.iter().any(|l| matches!(l.kind, LinkKind::SS | LinkKind::SF) && p.is_summary(l.pred)));
+            for t in &p.tasks {
+                let (a, b) = (&asap.tasks[&t.id], &alap.tasks[&t.id]);
+                if !finish_holds {
+                    proptest::prop_assert!(b.start_at >= a.start_at, "{} moved earlier: {:?} before {:?}", t.name, b.start_at, a.start_at);
+                }
+                if t.constraint == Constraint::AsLateAsPossible && !p.is_summary(t.id) && b.driver == Driver::Constraint && !start_caps {
+                    proptest::prop_assert_eq!(b.slack, 0, "{} keeps slack", t.name);
+                }
             }
         }
     }

@@ -841,8 +841,8 @@ const COMMANDS: &[CommandSpec] = &[
             object(
                 json!({
                     "id": task_id(),
-                    "type": {"type": "string", "enum": model::Constraint::CODES, "description": "ASAP clears; SNET/FNET Start/Finish No Earlier Than; SNLT/FNLT Start/Finish No Later Than; MSO Must Start On; MFO Must Finish On. Constraints win over links."},
-                    "date": {"type": "string", "format": "date", "description": "YYYY-MM-DD; required except for ASAP"},
+                    "type": {"type": "string", "enum": model::Constraint::CODES, "description": "ASAP clears; ALAP As Late As Possible (no date); SNET/FNET Start/Finish No Earlier Than; SNLT/FNLT Start/Finish No Later Than; MSO Must Start On; MFO Must Finish On. Constraints win over links."},
+                    "date": {"type": "string", "format": "date", "description": "YYYY-MM-DD; required except for ASAP and ALAP"},
                 }),
                 &["id", "type"],
             )
@@ -1783,6 +1783,7 @@ mod tests {
             "task.indent" => vec![json!({"ids": [5]})],
             "task.outdent" => vec![json!({"ids": [3]})],
             "task.setFixedCost" => vec![json!({"id": 1, "amount": 2500})],
+            "task.setConstraint" => vec![json!({"id": 4, "type": "ALAP"}), json!({"id": 5, "type": "SNET", "date": "2026-11-09"})],
             "calendar.setWorkingTimes" => vec![
                 json!({"weekday": "Tue", "times": ["9:00-12:00", "13:00-16:00"]}),
                 json!({"weekday": "Fri", "times": [], "resource": 2}),
