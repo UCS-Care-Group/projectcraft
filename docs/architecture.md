@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** current · **Written:** 2026-10-17 · **Change:** minor (Microsoft Project XML export)
+> **Status:** current · **Written:** 2026-10-17 · **Change:** minor (CSV export)
 
 ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCS-Care-Group/mailcraft/blob/main/docs/architecture.md).
 
@@ -8,7 +8,7 @@ ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://g
 |---|---|---|---|
 | L0 | `projectcraft-time` | — | `Date` (days since 1970-01-01), weekday, ISO text |
 | L1 | `projectcraft-model` | time | `Project`, `Task`, `Link`, `Calendar`; `schedule()` (critical path) |
-| L2 | `projectcraft-interchange` | model, quick-xml | other programs' files: Microsoft Project XML (MSPDI) and CSV import to a new project and an import report; MSPDI export; XER later |
+| L2 | `projectcraft-interchange` | model, quick-xml | other programs' files: Microsoft Project XML (MSPDI) and CSV import to a new project and an import report; MSPDI and CSV export; XER later |
 | L4 | `projectcraft-engine` | model, time, interchange | `Session` (project, schedule, undo), `COMMANDS`, sample, JSON file, `file.import`, `file.export` |
 | L5 | *(planned)* `mcp` | engine | MCP server |
 | L6 | `projectcraft-ui-egui` | engine | Gantt Chart view |
@@ -27,6 +27,8 @@ ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://g
 
 ## Exporting
 `file.export` (`format`, `path`), File › Export and `projectcraft-cli export` write a copy with `interchange::export`: the project and its schedule in, text out, pure and deterministic (no clock, fixed order). The copy is written atomically; the project, its file and its undo history are unchanged. Only the format's own extension is accepted, so an export never writes a `.projectcraft` file.
+
+The task sheet's text comes from one place, `model::SheetText`: the whole project read once (rows, summaries, rolled-up work and cost, each task's assignments), then each cell as the sheet shows it. The Gantt Chart's sheet draws those cells and the CSV export writes them, so a CSV is always what the sheet shows.
 
 ## Scheduling
 Times are offsets in working minutes from the first working minute of the project, counted on the calendar's working times; durations, lags and slack are working minutes, and a day of duration is the project's hours per day. The forward pass gives early start/finish per link kind (FS, SS, FF, SF, with lag); the backward pass from the latest early finish gives late dates; total slack is late start minus early start; slack ≤ 0 is critical. Offsets become moments (a date and a minute of the day) through one walk of the calendar.
@@ -53,3 +55,4 @@ What the program protects, from whom, and which code does it: [threat-model.md](
 | 2026-10-17 | minor | CSV import (#103) |
 | 2026-10-17 | minor | Imports compare the file's dates with the scheduler's (#98) |
 | 2026-10-17 | minor | Microsoft Project XML export, `file.export` (#102) |
+| 2026-10-17 | minor | CSV export; the sheet's text in one place, `model::SheetText` (#104) |

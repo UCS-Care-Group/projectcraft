@@ -450,6 +450,8 @@ mod tests {
     use projectcraft_engine::model::Project;
     use serde_json::json;
 
+    use crate::Field;
+
     fn app() -> App {
         App::new(Session::new(Project::new("Test", projectcraft_engine::time::Date::EPOCH)), None)
     }
@@ -503,6 +505,40 @@ mod tests {
         // Undo still undoes the task added before the export.
         h.state_mut().run("edit.undo", json!({}));
         assert!(!h.state().session.project.tasks.iter().any(|t| t.name == "Mine"));
+    }
+
+    /// File › Export › CSV… writes the task sheet as it shows: its shown columns, each cell as
+    /// drawn. A column hidden with the column chooser isn't written.
+    #[test]
+    fn file_export_csv_writes_the_sheet_as_shown() {
+        use egui_kittest::kittest::Queryable;
+        let d = tmp("export-csv");
+        let mut a = App::new(projectcraft_engine::sample(), None);
+        a.run("view.setColumns", json!({"columns": ["Duration", "Resource Names"]}));
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(|ui, app: &mut App| app.ui(ui), a);
+        h.run_steps(2);
+        h.get_by_label("File").click();
+        h.run_steps(3);
+        h.get_by_label_contains("Export").click();
+        h.run_steps(2);
+        h.get_by_label("CSV…").click();
+        h.run_steps(2);
+        assert_eq!(h.state_mut().take_file_request(), Some(FileRequest::Export(Format::Csv)));
+        assert_eq!(h.state().export_name(Format::Csv), "Office move.csv");
+        h.state_mut().file_picked(FileRequest::Export(Format::Csv), Some(d.join("Office move")));
+        let text = std::fs::read_to_string(d.join("Office move.csv")).unwrap();
+        assert!(h.state().status().starts_with("Exported a copy as CSV"), "{}", h.state().status());
+        let mut lines = text.trim_start_matches('\u{FEFF}').split("\r\n");
+        assert_eq!(lines.next(), Some("ID,Task Name,Duration,Resource Names"));
+        // The second row as the sheet shows it.
+        let id = h.state().session.project.tasks[1].id;
+        let (name, duration, names) = (
+            h.state().cell_text(id, Field::Name).unwrap(),
+            h.state().cell_text(id, Field::Duration).unwrap(),
+            h.state().cell_text(id, Field::Resources).unwrap(),
+        );
+        let quoted = if names.contains(',') { format!("\"{names}\"") } else { names };
+        assert_eq!(lines.nth(1), Some(format!("2,{name},{duration},{quoted}").as_str()));
     }
 
     #[test]

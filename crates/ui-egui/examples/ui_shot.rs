@@ -12,7 +12,8 @@
 //! unsaved changes for the Save changes? prompt; a task's name selects its row; `"last": true`
 //! clicks the last, such as an open list's entry over a sheet showing the same text), with
 //! `"mods": "shift" | "ctrl" | "alt+shift"` held, `{"key": "ArrowDown"}` presses a key (egui's key
-//! names, same `mods`), `{"browse": "open" | "save" | "export", "dir": "/abs/dir"}` opens the built-in file
+//! names, same `mods`), `{"browse": "open" | "save" | "export", "dir": "/abs/dir"}` (with `"format": "csv"`
+//! for a CSV export; Microsoft Project XML otherwise) opens the built-in file
 //! browser as when no system dialog can be shown, `{"open": "/abs/file"}` opens a file as Open
 //! does (a `.xml` is imported, with its report), `{"recover": "/abs/dir"}` turns on the
 //! recovery copy with `dir` as the untitled folder (an `untitled.projectcraft.recovery` there is
@@ -80,7 +81,12 @@ fn run() -> Result<(), String> {
         } else if let Some(what) = l.get("browse").and_then(Value::as_str) {
             let request = match what {
                 "save" => FileRequest::SaveAs,
-                "export" => FileRequest::Export(projectcraft_engine::interchange::Format::Mspdi),
+                "export" => FileRequest::Export(
+                    l.get("format")
+                        .and_then(Value::as_str)
+                        .and_then(projectcraft_engine::interchange::Format::from_code)
+                        .unwrap_or(projectcraft_engine::interchange::Format::Mspdi),
+                ),
                 _ => FileRequest::Open,
             };
             let dir = l.get("dir").and_then(Value::as_str).map(std::path::PathBuf::from);

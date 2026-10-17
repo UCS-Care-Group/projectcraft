@@ -18,7 +18,7 @@ impl Session {
 
     /// Writes the project to `path` in `format`, atomically: the file there is always the
     /// previous one or this export, never half of either. Refused unless the name has the
-    /// format's extension (`.xml`), so an export never lands on a `.projectcraft` project.
+    /// format's extension (`.xml`, `.csv`), so an export never lands on a `.projectcraft` project.
     pub fn export_to(&self, path: &Path, format: Format) -> Result<(), CmdError> {
         check_export_path(path, format)?;
         let text = self.export(format)?;
@@ -122,10 +122,56 @@ mod tests {
         }
         assert_eq!(std::fs::read(&project).unwrap(), saved, "the project file is untouched");
         assert!(s.export_to(&d.join("PLAN.XML"), Format::Mspdi).is_ok(), "any case");
+        for bad in [project.clone(), d.join("plan.xml"), d.join(".csv"), d.join("plan.csv.projectcraft")] {
+            let e = s.export_to(&bad, Format::Csv).unwrap_err().to_string();
+            assert!(e.contains(".csv"), "{e}");
+        }
+        assert_eq!(std::fs::read(&project).unwrap(), saved, "the project file is untouched");
         let mut s = s;
-        for bad in [json!({"format": "csv", "path": "x.csv"}), json!({"format": "xer", "path": "x.xml"}), json!({"path": "x.xml"})] {
+        for bad in
+            [json!({"format": "csv", "path": d.join("x.xml").to_str().unwrap()}), json!({"format": "xer", "path": "x.xml"}), json!({"path": "x.xml"})]
+        {
             assert!(s.run("file.export", &bad).is_err(), "{bad}");
         }
-        assert!(s.export(Format::Csv).is_err(), "CSV export comes later");
+    }
+
+    /// The sample's task sheet as a CSV: ID, Task Name and the shown columns with their headings,
+    /// each cell as the sheet shows it; UTF-8 with a byte order mark, CRLF line ends.
+    #[test]
+    fn the_sample_exports_as_its_task_sheet() {
+        let s = crate::sample();
+        let csv = s.export(Format::Csv).unwrap();
+        assert_eq!(csv, s.export(Format::Csv).unwrap(), "deterministic");
+        assert!(csv.starts_with('\u{FEFF}'), "a byte order mark");
+        let lines: Vec<&str> = csv.trim_start_matches('\u{FEFF}').split_terminator("\r\n").collect();
+        assert_eq!(lines[0], "ID,Task Name,Duration,Work,Start,Finish,Predecessors,Resource Names,Cost,Fixed Cost,Deadline,Type,Effort Driven");
+        assert_eq!(lines.len(), s.project.tasks.len() + 1, "a row a task");
+        assert!(!csv.replace("\r\n", "").contains(['\r', '\n']), "every line ends CRLF");
+        let sheet = model::SheetText::new(&s.project, s.schedule.as_ref().ok());
+        for (row, line) in lines.iter().skip(1).enumerate() {
+            assert!(line.starts_with(&format!("{},", row + 1)), "{line}");
+            assert!(line.contains(&sheet.cell(row, model::Column::Start)), "{line}");
+        }
+        // Hidden columns are not written; shown ones follow the column chooser's order.
+        let mut s = s;
+        s.run("view.setColumns", &json!({"columns": ["Resource Names", "Duration"]})).unwrap();
+        let csv = s.export(Format::Csv).unwrap();
+        assert!(csv.starts_with("\u{FEFF}ID,Task Name,Resource Names,Duration\r\n"), "{csv}");
+        assert!(!csv.contains("Fixed Cost") && !csv.contains("2026-"), "{csv}");
+    }
+
+    #[test]
+    fn file_export_writes_a_csv_copy() {
+        let mut s = crate::sample();
+        let before = s.project.clone();
+        let path = dir().join("Office move.csv");
+        s.run("file.export", &json!({"format": "csv", "path": path.to_str().unwrap()})).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.starts_with(b"\xEF\xBB\xBFID,Task Name,"), "UTF-8 with a byte order mark");
+        assert_eq!(bytes, s.export(Format::Csv).unwrap().into_bytes());
+        assert_eq!(s.project, before);
+        // The file opens again as the same task sheet.
+        let back = Session::import_file(&path, None).unwrap();
+        assert_eq!(back.project.tasks.iter().map(|t| &t.name).collect::<Vec<_>>(), before.tasks.iter().map(|t| &t.name).collect::<Vec<_>>());
     }
 }

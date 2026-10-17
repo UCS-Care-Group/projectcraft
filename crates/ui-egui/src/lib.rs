@@ -11,8 +11,8 @@
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{
-    Column, Columns, DurationUnit, MAX_WORKING_TIMES, Outline, ResourceId, ResourceType, TaskId, TaskType, WorkingTime, check_working_times, clock,
-    duration_text, parse_clock,
+    Column, Columns, MAX_WORKING_TIMES, Outline, ResourceId, ResourceType, SheetText, TaskId, TaskType, WorkingTime, check_working_times, clock,
+    parse_clock,
 };
 use projectcraft_engine::{Session, WEEKDAYS, time::Date};
 use serde_json::{Value, json};
@@ -105,6 +105,11 @@ impl Field {
         }
     }
 
+    /// The hideable column it shows; `None` for Task Name.
+    fn hideable(self) -> Option<Column> {
+        Column::ALL.into_iter().find(|c| Field::of(*c) == self)
+    }
+
     /// Its heading and width.
     fn column(self) -> (&'static str, f32) {
         COLUMNS.iter().find(|c| c.0 == self).map_or(("", 80.0), |c| (c.1, c.2))
@@ -117,9 +122,18 @@ fn shown_fields(columns: &Columns) -> Vec<Field> {
     std::iter::once(Field::Name).chain(columns.shown().iter().map(|c| Field::of(*c))).collect()
 }
 
-/// The Effort Driven column's text.
-fn yes_no(b: bool) -> &'static str {
-    if b { "Yes" } else { "No" }
+/// A cell of a row (0-based) as the sheet shows it, from the project's own sheet text
+/// ([`SheetText`], which a CSV export writes too) in the interface language, and whether it can be
+/// typed in.
+fn shown_cell(sheet: &SheetText, row: usize, field: Field) -> (String, bool) {
+    match field.hideable() {
+        None => (sheet.name(row).to_owned(), true),
+        Some(c) => {
+            let text = sheet.cell(row, c);
+            let text = if matches!(c, Column::Type | Column::EffortDriven) { tl!(text.as_str()).to_owned() } else { text };
+            (text, sheet.editable(row, c))
+        }
+    }
 }
 
 /// Typed Effort Driven text: yes or no (or the start of either, or true, false, 1, 0), any case.
@@ -691,26 +705,10 @@ impl App {
     /// summary's duration, work, type and effort-driven setting, which follow its subtasks.
     fn cell_text(&self, id: TaskId, field: Field) -> Option<String> {
         let p = &self.session.project;
-        let t = p.task(id).ok()?;
-        let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
-        let date = |d: Option<Date>| d.map_or_else(String::new, |d| d.to_string());
-        Some(match field {
-            Field::Name => t.name.clone(),
-            Field::Duration | Field::Work | Field::Type | Field::EffortDriven | Field::LevelingDelay if p.is_summary(id) => return None,
-            Field::Duration => duration_text(t.duration, t.duration_unit, &p.options),
-            Field::Cost => return None,
-            Field::FixedCost => p.currency.format(t.fixed_cost),
-            Field::Work => assign::work_text(p.task_work(id), p),
-            Field::Type => tl!(t.task_type.name()).to_owned(),
-            Field::EffortDriven => tl!(yes_no(p.is_effort_driven(id))).to_owned(),
-            Field::Start => date(dates.map(|d| d.start)),
-            Field::Finish => date(dates.map(|d| d.finish)),
-            Field::Preds => p.preds_text_rows(&t.preds),
-            Field::Resources => p.resource_names(id),
-            Field::Deadline => date(t.deadline),
-            Field::Priority => t.priority.to_string(),
-            Field::LevelingDelay => duration_text(t.leveling_delay, DurationUnit::Days, &p.options),
-        })
+        let row = p.tasks.iter().position(|t| t.id == id)?;
+        let sheet = SheetText::new(p, self.session.schedule.as_ref().ok());
+        let (text, editable) = shown_cell(&sheet, row, field);
+        editable.then_some(text)
     }
 
     /// Issues the command for a cell's new text.
@@ -1198,8 +1196,11 @@ impl App {
             timescale::header(ui, header, scale);
             ui.end_row();
             let outline = Outline::of(&self.session.project);
-            let work = self.session.project.work_by_task();
-            let costs = self.session.project.cost_by_task();
+            // Every row's cells, read in one pass over the project: what a CSV export writes too.
+            let cells: Vec<Vec<(String, bool)>> = {
+                let sheet = SheetText::new(&self.session.project, self.session.schedule.as_ref().ok());
+                (0..order.len()).map(|i| fields.iter().map(|&f| shown_cell(&sheet, i, f)).collect()).collect()
+            };
             let overallocated = self.session.usage().map(|u| u.overallocated_tasks()).unwrap_or_default();
             // The ID column is the row number; commands get Unique IDs.
             for (i, id) in order.iter().copied().enumerate() {
@@ -1219,26 +1220,14 @@ impl App {
                 self.take_click(ui, &r, id, None);
                 indicator(ui, dates, overallocated.contains(&id));
                 let indent = (outline.level(i).saturating_sub(1).min(20) as f32) * INDENT_W;
-                for &field in &fields {
+                for (k, &field) in fields.iter().enumerate() {
                     let width = field.column().1;
                     let lead = if field == Field::Name { indent } else { 0.0 };
-                    let value = self.cell_text(id, field);
-                    let p = &self.session.project;
-                    let shown = match (&value, field) {
-                        (Some(v), _) => v.clone(),
-                        // A summary's: its own and its subtasks' work, any task's cost, its rolled-up duration in
-                        // days, and the type it is scheduled as.
-                        (None, Field::Work) => assign::work_text(work.get(&id).copied().unwrap_or(0), p),
-                        (None, Field::Cost) => p.currency.format(costs.get(&id).copied().unwrap_or(0)),
-                        (None, Field::Type) => tl!(p.task_type_of(id).name()).to_owned(),
-                        (None, Field::EffortDriven) => tl!(yes_no(false)).to_owned(),
-                        (None, Field::LevelingDelay) => String::new(),
-                        (None, _) => duration_text(duration, DurationUnit::Days, &p.options),
-                    };
+                    let (shown, editable) = cells.get(i).and_then(|r| r.get(k)).cloned().unwrap_or_default();
                     let inner = ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.add_space(lead);
-                        self.cell(ui, id, field, &shown, width - lead, value.is_some())
+                        self.cell(ui, id, field, &shown, width - lead, editable)
                     });
                     if let Some(text) = inner.inner {
                         edits.push((id, field, text));

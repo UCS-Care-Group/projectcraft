@@ -10,8 +10,9 @@
 //! listed in the report as converted, dropped or not yet imported; nothing is kept hidden. The
 //! file's own Start and Finish dates are only compared: each task whose dates differ is a line.
 //!
-//! Export writes the open project as Microsoft Project XML ([`export`]): everything it holds, with
-//! ProjectCraft's computed dates, so an exported file imports as the same project.
+//! Export writes the open project ([`export`]) as Microsoft Project XML, everything it holds with
+//! ProjectCraft's computed dates, so an exported file imports as the same project; or as a CSV of
+//! the task sheet's shown columns, each cell as the sheet shows it.
 //!
 //! Every file is hostile: DTDs and entities are refused, the file is capped at
 //! [`MAX_IMPORT_BYTES`] and its nesting at [`MAX_DEPTH`], and the model's caps (tasks, resources,
@@ -19,6 +20,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod csv;
+mod csv_export;
 mod links;
 mod mspdi;
 mod mspdi_export;
@@ -67,7 +69,7 @@ impl Format {
     }
 
     /// The formats ProjectCraft exports to so far.
-    pub const EXPORTS: [Format; 1] = [Format::Mspdi];
+    pub const EXPORTS: [Format; 2] = [Format::Mspdi, Format::Csv];
 
     /// Whether the project can be exported in this format yet.
     pub fn exports(self) -> bool {
@@ -83,7 +85,8 @@ impl Format {
     }
 }
 
-/// Why a project couldn't be exported.
+/// Why a project couldn't be exported. Every format ProjectCraft has exports; a format added
+/// before its export is written is refused with this.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ExportError {
     #[error("ProjectCraft doesn't export {} yet", .0.name())]
@@ -92,11 +95,11 @@ pub enum ExportError {
 
 /// The project as a file in `format`, with `schedule`'s computed dates (Start, Finish, slack)
 /// where there is one. Deterministic: the same project and schedule give the same bytes, with
-/// nothing taken from the clock.
+/// nothing taken from the clock. A CSV starts with a byte order mark.
 pub fn export(format: Format, project: &Project, schedule: Option<&Schedule>) -> Result<String, ExportError> {
     match format {
         Format::Mspdi => Ok(mspdi_export::export(project, schedule)),
-        Format::Csv => Err(ExportError::NotYet(Format::Csv)),
+        Format::Csv => Ok(csv_export::export(project, schedule)),
     }
 }
 

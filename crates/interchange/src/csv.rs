@@ -4,10 +4,17 @@
 //!
 //! The first row names the columns, matched to the task sheet's (any case; `_` reads as a space):
 //! `Task Name` (or `Name`) is required; `Duration`, `Predecessors` (by row), `Resource Names`,
-//! `Outline Level`, `Constraint Type` with `Constraint Date`, and `Deadline` are read when there.
-//! `ID` is the row number and is passed over; the earliest `Start` is the project's start. Every
-//! other column is a report line, and so is every cell that can't be read: the task keeps a
-//! default (1 day, level 1, As Soon As Possible, no deadline, no link, no resource) instead.
+//! `Outline Level`, `Constraint Type` with `Constraint Date`, `Deadline`, `Fixed Cost`, `Type`,
+//! `Effort Driven`, `Priority` and `Leveling Delay` are read when there. `ID` is the row number
+//! and is passed over; the earliest `Start` is the project's start, and the symbol of the first
+//! `Fixed Cost` or `Cost` amount picks the currency. Every other column is a report line, and so
+//! is every cell that can't be read: the task keeps a default (1 day, level 1, As Soon As
+//! Possible, no deadline, no link, no resource, no fixed cost, the project's task type, priority
+//! 500, no delay) instead.
+//!
+//! A quoted Task Name keeps the spaces at its ends; every other cell is trimmed. A Task Name or
+//! Resource Names cell that ProjectCraft's CSV export guarded against formula injection with an
+//! apostrophe in front ([`crate::csv_export`]) reads without it.
 //!
 //! Rows are counted from the first under the headings, blank rows included, so `Predecessors`
 //! reads `3` as the third row; blank rows themselves are not imported.
@@ -58,7 +65,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Import, ImportError> {
         if rows.len() >= MAX_TASKS {
             return Err(ImportError::TooManyTasks);
         }
-        rows.push(sheet.row(row, cells, past));
+        rows.push(sheet.row(row, cells, &reader.quoted, past));
     }
     let mut lines = sheet.lines();
     if let Some(row) = unclosed {
@@ -73,11 +80,15 @@ pub(crate) fn import(bytes: &[u8]) -> Result<Import, ImportError> {
         lines.push(line(Outcome::Dropped, "Blank rows", &plural(blank, "row"), "ProjectCraft has no blank rows; they still count for Predecessors"));
     }
     let mut p = Project::new("Imported project", Date::EPOCH);
+    if let Some(c) = currency(&rows, &mut lines) {
+        p.currency = c;
+    }
     let (tasks, mut notes) = tasks(&rows, &p);
     p.tasks = tasks;
     p.next_id = u32::try_from(p.tasks.len()).unwrap_or(u32::MAX - 1).saturating_add(1);
     p.start = start(&rows, &p, &mut lines);
     fit_outline(&mut p, &mut notes, sheet.at(Field::Duration).is_some(), &rows);
+    summaries(&mut p, &rows, &mut notes);
     links(&mut p, &rows, &mut notes);
     let resource_errors = resources(&mut p, &rows, &mut notes);
     lines.extend(task_lines(&p.tasks, &rows, &notes, &resource_errors));
@@ -108,6 +119,9 @@ struct Reader<'a> {
     sep: u8,
     /// The last cell read was quoted and ran to the end of the file.
     unclosed: bool,
+    /// Which of the last record's cells (up to the `max` kept) were quoted: their spaces are
+    /// the owner's, so a quoted Task Name keeps them.
+    quoted: Vec<bool>,
 }
 
 /// How a cell ended.
@@ -120,7 +134,7 @@ enum End {
 
 impl<'a> Reader<'a> {
     fn new(text: &'a str, sep: u8) -> Self {
-        Reader { text, pos: 0, sep, unclosed: false }
+        Reader { text, pos: 0, sep, unclosed: false, quoted: Vec::new() }
     }
 
     /// The next record's first `max` cells and how many more it had; `None` at the end.
@@ -130,10 +144,13 @@ impl<'a> Reader<'a> {
         }
         let mut cells = Vec::new();
         let mut past = 0usize;
+        self.quoted.clear();
         loop {
+            let quoted = self.text.as_bytes().get(self.pos) == Some(&b'"');
             let (cell, end) = self.cell();
             if cells.len() < max {
                 cells.push(cell);
+                self.quoted.push(quoted);
             } else {
                 past = past.saturating_add(1);
             }
@@ -147,6 +164,7 @@ impl<'a> Reader<'a> {
     fn cell(&mut self) -> (String, End) {
         let (text, bytes) = (self.text, self.text.as_bytes());
         let mut i = self.pos;
+        let began = i;
         let mut out = String::new();
         if bytes.get(i) == Some(&b'"') {
             i += 1;
@@ -197,7 +215,9 @@ impl<'a> Reader<'a> {
                 Some(_) => i += 1,
             }
         };
-        out.push_str(text.get(from..i).unwrap_or(""));
+        let rest = text.get(from..i).unwrap_or("");
+        // Spaces after a closing quote are padding; inside the quotes they are the cell's own.
+        out.push_str(if from > began { rest.trim_end() } else { rest });
         (out, end)
     }
 }
@@ -213,14 +233,21 @@ enum Field {
     ConstraintType,
     ConstraintDate,
     Deadline,
+    FixedCost,
+    Type,
+    EffortDriven,
+    Priority,
+    LevelingDelay,
     /// The row number: passed over.
     Id,
     /// Dates come from the scheduler; the earliest is the project's start.
     Start,
+    /// Worked out from the resources and fixed cost; its symbol can pick the currency.
+    Cost,
 }
 
 impl Field {
-    const READ: [Field; 9] = [
+    const READ: [Field; 15] = [
         Field::Name,
         Field::Duration,
         Field::Predecessors,
@@ -229,7 +256,13 @@ impl Field {
         Field::ConstraintType,
         Field::ConstraintDate,
         Field::Deadline,
+        Field::FixedCost,
+        Field::Type,
+        Field::EffortDriven,
+        Field::Priority,
+        Field::LevelingDelay,
         Field::Start,
+        Field::Cost,
     ];
 
     fn of(heading: &str) -> Option<Field> {
@@ -243,8 +276,14 @@ impl Field {
             "constraint type" => Field::ConstraintType,
             "constraint date" => Field::ConstraintDate,
             "deadline" => Field::Deadline,
+            "fixed cost" => Field::FixedCost,
+            "type" => Field::Type,
+            "effort driven" => Field::EffortDriven,
+            "priority" => Field::Priority,
+            "leveling delay" | "levelling delay" => Field::LevelingDelay,
             "id" => Field::Id,
             "start" => Field::Start,
+            "cost" => Field::Cost,
             _ => return None,
         })
     }
@@ -295,9 +334,15 @@ impl Sheet {
                     if f == Field::Start {
                         other.push((i, "ProjectCraft works out every task's dates; the earliest start is the project's start"));
                     }
+                    if f == Field::Cost {
+                        other.push((i, "ProjectCraft works out each task's cost from its resources and fixed cost; the file's are not used"));
+                    }
                 }
                 None if h.trim().is_empty() => {}
                 None if h.trim().eq_ignore_ascii_case("finish") => other.push((i, DATES)),
+                None if h.trim().eq_ignore_ascii_case("work") => {
+                    other.push((i, "ProjectCraft works out each task's work from its duration and Resource Names; the file's are not used"))
+                }
                 None if h.trim().eq_ignore_ascii_case("unique id") => other.push((i, "tasks are numbered from 1 in the file's order")),
                 None => other.push((i, NOT_READ)),
             }
@@ -310,12 +355,21 @@ impl Sheet {
         self.at.get(&f).copied()
     }
 
-    fn row(&mut self, row: usize, cells: Vec<String>, past: usize) -> Row {
+    fn row(&mut self, row: usize, cells: Vec<String>, quoted: &[bool], past: usize) -> Row {
         let mut out = HashMap::new();
         for &(f, i) in &self.read {
-            if let Some(c) = cells.get(i).map(|c| c.trim()).filter(|c| !c.is_empty()) {
-                out.insert(f, c.to_owned());
+            let Some(raw) = cells.get(i) else { continue };
+            let c = raw.trim();
+            let kept = f == Field::Name && quoted.get(i) == Some(&true);
+            if c.is_empty() && !(kept && !raw.is_empty()) {
+                continue;
             }
+            let c = match f {
+                Field::Name if kept => crate::csv_export::unguard(raw),
+                Field::Name | Field::ResourceNames => crate::csv_export::unguard(c),
+                _ => c,
+            };
+            out.insert(f, c.to_owned());
         }
         for (i, c) in cells.iter().enumerate() {
             if !c.trim().is_empty() && self.headings.get(i).is_some_and(|h| h.is_empty()) {
@@ -397,11 +451,17 @@ enum Note {
     BadConstraintDate,
     DateWithoutType,
     BadDeadline,
+    BadFixedCost,
+    BadType,
+    BadEffortDriven,
+    BadPriority,
+    BadLevelingDelay,
+    SummaryFields,
     ExtraCells,
 }
 
 impl Note {
-    const ALL: [Note; 23] = [
+    const ALL: [Note; 29] = [
         Note::NoName,
         Note::NameLines,
         Note::NoDuration,
@@ -424,6 +484,12 @@ impl Note {
         Note::BadConstraintDate,
         Note::DateWithoutType,
         Note::BadDeadline,
+        Note::BadFixedCost,
+        Note::BadType,
+        Note::BadEffortDriven,
+        Note::BadPriority,
+        Note::BadLevelingDelay,
+        Note::SummaryFields,
         Note::ExtraCells,
     ];
 
@@ -462,6 +528,14 @@ impl Note {
             Note::BadConstraintDate => (Converted, "Constraint Date", "unreadable (dates are read as YYYY-MM-DD); As Soon As Possible used"),
             Note::DateWithoutType => (Dropped, "Constraint Date", "no Constraint Type goes with it; As Soon As Possible used"),
             Note::BadDeadline => (Dropped, "Deadline", "unreadable (dates are read as YYYY-MM-DD); the task has no deadline"),
+            Note::BadFixedCost => (Dropped, "Fixed Cost", "unreadable (an amount in the project's currency, such as £1,250.00); no fixed cost"),
+            Note::BadType => (Converted, "Type", "unreadable (Fixed Units, Fixed Duration or Fixed Work); the project's default type used"),
+            Note::BadEffortDriven => (Converted, "Effort Driven", "unreadable (Yes or No); the project's default used"),
+            Note::BadPriority => (Converted, "Priority", "unreadable or out of range (0 to 1000); 500 used"),
+            Note::BadLevelingDelay => (Dropped, "Leveling Delay", "unreadable (a duration such as 2d); no delay"),
+            Note::SummaryFields => {
+                (Dropped, "Summary task fields", "a summary's Type, Effort Driven and Leveling Delay follow its subtasks; the file's are not used")
+            }
             Note::ExtraCells => (Dropped, "Cells past the last column", "a cell without a heading isn't read"),
         }
     }
@@ -497,6 +571,70 @@ fn date_cell(text: Option<&str>) -> Option<Result<Date, ()>> {
     Some(date_of(t).ok_or(()))
 }
 
+/// A duration with a decimal comma (`1,5 days`, as semicolon files from many locales write it)
+/// with a decimal point instead.
+fn decimal_point(text: &str) -> String {
+    if !text.contains('.') { text.replacen(',', ".", 1) } else { text.to_owned() }
+}
+
+/// An Effort Driven cell: Yes or No (or true, false, 1, 0), any case.
+fn yes_no(text: &str) -> Option<bool> {
+    match text.trim().to_lowercase().as_str() {
+        "yes" | "true" | "1" => Some(true),
+        "no" | "false" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// The currency the amounts are in: the one whose symbol starts the first Fixed Cost or Cost
+/// amount ([`model::KNOWN_CURRENCIES`]; the first listed when two share a symbol), with a report
+/// line; `None` (the project's default) when the symbol is the default's, unknown or missing.
+fn currency(rows: &[Row], lines: &mut Vec<ReportLine>) -> Option<model::Currency> {
+    let amount = rows.iter().find_map(|r| r.get(Field::FixedCost).or_else(|| r.get(Field::Cost)))?;
+    let symbol: String = amount.chars().take_while(|c| !c.is_ascii_digit() && !matches!(c, '.' | ',' | '-' | '+' | ' ')).collect();
+    let default = model::Currency::default();
+    if symbol.is_empty() || symbol == default.symbol {
+        return None;
+    }
+    let (code, _, _) = model::KNOWN_CURRENCIES.iter().find(|(_, s, _)| *s == symbol)?;
+    let c = model::Currency::new(code, None, None).ok()?;
+    lines.push(line(
+        Outcome::Converted,
+        "Currency",
+        "Project",
+        &format!("a CSV has no currency; the amounts' symbol, {}, is read as {}", c.symbol, c.code),
+    ));
+    Some(c)
+}
+
+/// A summary's Type, Effort Driven and Leveling Delay follow its subtasks: the project's
+/// defaults are kept, and a cell that says otherwise than the sheet shows for a summary
+/// (Fixed Duration, No, no delay) is a note.
+fn summaries(p: &mut Project, rows: &[Row], notes: &mut [u32]) {
+    let outline = Outline::of(p);
+    let options = p.options;
+    for (i, t) in p.tasks.iter_mut().enumerate() {
+        if !outline.is_summary(i) {
+            continue;
+        }
+        let differs = rows.get(i).is_some_and(|r| {
+            r.get(Field::Type).is_some_and(|x| model::TaskType::from_name(x).ok() != Some(model::TaskType::FixedDuration))
+                || r.get(Field::EffortDriven).is_some_and(|x| yes_no(x) != Some(false))
+                || r.get(Field::LevelingDelay).is_some_and(|x| !matches!(model::parse_duration(&decimal_point(x), &options), Ok((0, _))))
+        });
+        if let Some(n) = notes.get_mut(i) {
+            // Said once, as this line, rather than as the cells' own.
+            *n &= !(Note::BadType.bit() | Note::BadEffortDriven.bit() | Note::BadLevelingDelay.bit());
+            if differs {
+                *n |= Note::SummaryFields.bit();
+            }
+        }
+        t.task_type = options.task_type;
+        t.effort_driven = options.effort_driven || options.task_type == model::TaskType::FixedWork;
+        t.leveling_delay = 0;
+    }
+}
+
 /// Each row's task, numbered from 1, with the notes on it.
 fn tasks(rows: &[Row], p: &Project) -> (Vec<Task>, Vec<u32>) {
     let options = &p.options;
@@ -525,9 +663,7 @@ fn tasks(rows: &[Row], p: &Project) -> (Vec<Task>, Vec<u32>) {
                     }
                     None => text,
                 };
-                // A decimal comma (1,5 days), as semicolon files from many locales write it.
-                let text = if !text.contains('.') { text.replacen(',', ".", 1) } else { text.to_owned() };
-                match model::parse_duration(&text, options) {
+                match model::parse_duration(&decimal_point(text), options) {
                     Ok((m, unit)) if m >= MAX_MINUTES => {
                         note(Note::LongDuration);
                         (MAX_MINUTES, unit)
@@ -557,6 +693,46 @@ fn tasks(rows: &[Row], p: &Project) -> (Vec<Task>, Vec<u32>) {
                 None
             }
         };
+        let fixed_cost = match r.get(Field::FixedCost).map(|t| p.currency.parse(t)) {
+            None => 0,
+            Some(Ok(m)) => m,
+            Some(Err(_)) => {
+                note(Note::BadFixedCost);
+                0
+            }
+        };
+        let task_type = match r.get(Field::Type).map(model::TaskType::from_name) {
+            None => options.task_type,
+            Some(Ok(t)) => t,
+            Some(Err(_)) => {
+                note(Note::BadType);
+                options.task_type
+            }
+        };
+        let effort_driven = match r.get(Field::EffortDriven).map(yes_no) {
+            None => options.effort_driven,
+            Some(Some(on)) => on,
+            Some(None) => {
+                note(Note::BadEffortDriven);
+                options.effort_driven
+            }
+        };
+        let priority = match r.get(Field::Priority).map(|t| t.parse::<i64>().ok().and_then(|n| model::check_priority(n).ok())) {
+            None => model::DEFAULT_PRIORITY,
+            Some(Some(n)) => n,
+            Some(None) => {
+                note(Note::BadPriority);
+                model::DEFAULT_PRIORITY
+            }
+        };
+        let leveling_delay = match r.get(Field::LevelingDelay).map(|t| model::parse_duration(&decimal_point(t), options)) {
+            None => 0,
+            Some(Ok((m, _))) => m.clamp(0, MAX_MINUTES),
+            Some(Err(_)) => {
+                note(Note::BadLevelingDelay);
+                0
+            }
+        };
         if r.extra {
             note(Note::ExtraCells);
         }
@@ -570,11 +746,11 @@ fn tasks(rows: &[Row], p: &Project) -> (Vec<Task>, Vec<u32>) {
             constraint,
             outline_level: level,
             deadline,
-            fixed_cost: 0,
-            task_type: options.task_type,
-            effort_driven: options.effort_driven || options.task_type == model::TaskType::FixedWork,
-            priority: model::DEFAULT_PRIORITY,
-            leveling_delay: 0,
+            fixed_cost,
+            task_type,
+            effort_driven: effort_driven || task_type == model::TaskType::FixedWork,
+            priority,
+            leveling_delay,
         });
         notes.push(n);
     }
@@ -700,10 +876,11 @@ fn links(p: &mut Project, rows: &[Row], notes: &mut [u32]) {
     }
 }
 
-/// Each row's Resource Names, read as the column reads them ([`Project::set_resource_names`]):
-/// a name not yet a resource becomes a work resource. Each task is assigned on a project of its
-/// own with only the resources it names, so the work stays in proportion to the row, not the file.
-/// Returns the first few reasons a cell couldn't be read, by row index.
+/// Each row's Resource Names, read as the column reads them ([`Project::set_resource_names`]).
+/// A name not yet a resource becomes one of the type its units say ([`kind_of`]): a work
+/// resource, a cost resource for an amount, a material for a quantity. Each task is assigned on a
+/// project of its own with only the resources it names, so the work stays in proportion to the
+/// row, not the file. Returns the first few reasons a cell couldn't be read, by row index.
 fn resources(p: &mut Project, rows: &[Row], notes: &mut [u32]) -> Vec<(usize, String)> {
     let mut errors = Vec::new();
     // Lowercased name → index in `p.resources`.
@@ -719,16 +896,30 @@ fn resources(p: &mut Project, rows: &[Row], notes: &mut [u32]) -> Vec<(usize, St
         let id = task.id;
         own.tasks = vec![Task { outline_level: 1, preds: Vec::new(), ..task }];
         let mut picked = HashSet::new();
-        for name in names_in(text) {
-            if let Some(&k) = known.get(&name)
-                && picked.insert(k)
-                && let Some(res) = p.resources.get(k)
-            {
-                own.resources.push(res.clone());
+        let mut made = Vec::new();
+        for (name, units) in parts_in(text) {
+            let lower = name.to_lowercase();
+            if let Some(&k) = known.get(&lower) {
+                if picked.insert(k)
+                    && let Some(res) = p.resources.get(k)
+                {
+                    own.resources.push(res.clone());
+                }
+            } else if !own.resources.iter().any(|r| r.name.to_lowercase() == lower) && own.resources.len() < MAX_RESOURCES {
+                let (kind, label) = kind_of(units.as_deref(), &own.currency);
+                if let Ok(new) = own.add_resource(Some(&name), kind, None) {
+                    if let Some(res) = own.resources.iter_mut().find(|r| r.id == new) {
+                        res.material_label = label;
+                    }
+                    made.push(new);
+                }
             }
         }
         let made = match own.set_resource_names(id, text) {
-            Ok(made) => made,
+            Ok(also) => {
+                made.extend(also);
+                made
+            }
             Err(e) => {
                 if let Some(x) = notes.get_mut(i) {
                     *x |= Note::BadResources.bit();
@@ -769,31 +960,65 @@ fn resources(p: &mut Project, rows: &[Row], notes: &mut [u32]) -> Vec<(usize, St
     errors
 }
 
-/// The resource names in a Resource Names cell, cleaned and lowercased as names are compared; the
-/// cell itself is read by [`Project::set_resource_names`].
-fn names_in(text: &str) -> Vec<String> {
+/// The resources named in a Resource Names cell, each cleaned as a name is
+/// ([`model::check_name`]) with the text of its first brackets, for looking them up and for
+/// making the new ones; the cell itself is read by [`Project::set_resource_names`].
+fn parts_in(text: &str) -> Vec<(String, Option<String>)> {
     let mut out = Vec::new();
-    let mut part = String::new();
+    let (mut name, mut units) = (String::new(), None::<String>);
     let mut depth = 0u32;
     for c in text.chars().chain(std::iter::once(',')) {
         match c {
-            '[' => depth = depth.saturating_add(1),
-            ']' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                let name = part.split('[').next().unwrap_or("");
-                if let Ok(n) = model::check_name(name) {
-                    out.push(n.to_lowercase());
+            '[' => {
+                depth = depth.saturating_add(1);
+                if depth == 1 && units.is_none() {
+                    units = Some(String::new());
                 }
-                part.clear();
+                continue;
+            }
+            ']' => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            ',' if depth == 0 => {
+                if let Ok(n) = model::check_name(&name) {
+                    out.push((n, units.take()));
+                }
+                name.clear();
+                units = None;
                 continue;
             }
             _ => {}
         }
-        if depth == 0 && c != ']' {
-            part.push(c);
+        match (&mut units, depth) {
+            // The name ends at its brackets.
+            (None, 0) => name.push(c),
+            (Some(u), 1) => u.push(c),
+            _ => {}
         }
     }
     out
+}
+
+/// The type of resource a new name's units say it is, and a material's label: a work resource
+/// for none or a percentage (`50%`); a cost resource for an amount in the project's currency
+/// (`£200.00`); a material for a quantity (`32 boxes`, `2 boxes/h`, labelled `boxes`). Anything
+/// else is a work resource, and its units are refused with the cell.
+fn kind_of(units: Option<&str>, currency: &model::Currency) -> (model::ResourceType, String) {
+    use model::ResourceType::{Cost, Material, Work};
+    let Some(u) = units.map(str::trim).filter(|u| !u.is_empty()) else { return (Work, String::new()) };
+    if u.ends_with('%') {
+        return (Work, String::new());
+    }
+    if !currency.symbol.is_empty() && u.starts_with(currency.symbol.as_str()) && currency.parse(u).is_ok() {
+        return (Cost, String::new());
+    }
+    if model::parse_assignment_units(Material, u, currency, model::UnitsFormat::Percentage).is_ok() {
+        let amount = u.rsplit_once('/').map_or(u, |(a, _)| a).trim();
+        let label = amount.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.').trim();
+        return (Material, label.chars().take(model::MAX_RESOURCE_TEXT).collect::<String>().trim().to_owned());
+    }
+    (Work, String::new())
 }
 
 /// One line per note, naming the first few rows that have it.
@@ -887,8 +1112,27 @@ mod tests {
 
     #[test]
     fn names_in_a_cell_are_found_for_lookup() {
-        assert_eq!(names_in("Ann[50%], Bob ,Concrete[2 tons/d]"), ["ann", "bob", "concrete"]);
-        assert_eq!(names_in(",,[x]"), Vec::<String>::new());
+        let s = |n: &str, u: Option<&str>| (n.to_owned(), u.map(str::to_owned));
+        assert_eq!(
+            parts_in("Ann[50%], Bob ,Concrete[2 tons/d], Crane[£200.00]x, Odd[[a]b]"),
+            [s("Ann", Some("50%")), s("Bob", None), s("Concrete", Some("2 tons/d")), s("Crane", Some("£200.00")), s("Odd", Some("b"))]
+        );
+        assert_eq!(parts_in(",,[x]"), Vec::<(String, Option<String>)>::new());
+    }
+
+    #[test]
+    fn a_new_name_s_units_say_its_type() {
+        use model::ResourceType::{Cost, Material, Work};
+        let gbp = model::Currency::default();
+        let k = |u: Option<&str>| kind_of(u, &gbp);
+        assert_eq!(k(None), (Work, String::new()));
+        assert_eq!(k(Some("50%")), (Work, String::new()));
+        assert_eq!(k(Some("£1,200.50")), (Cost, String::new()));
+        assert_eq!(k(Some("32 boxes")), (Material, "boxes".to_owned()));
+        assert_eq!(k(Some("2 m³/h")), (Material, "m³".to_owned()));
+        assert_eq!(k(Some("5")), (Material, String::new()));
+        assert_eq!(k(Some("lots")), (Work, String::new()), "refused with the cell");
+        assert_eq!(kind_of(Some("$5.00"), &model::Currency::new("USD", None, None).unwrap()), (Cost, String::new()));
     }
 
     #[test]
