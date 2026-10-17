@@ -1118,10 +1118,11 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
         let finish = finish_at.date;
         finish_all = finish_all.max(finish);
         // A milestone at the start of its day has its late dates there too when they are its
-        // early ones (no slack) or a start-type constraint's date holds them.
+        // early ones (no slack; a summary of such milestones too) or a start-type constraint's
+        // date holds them.
         let late_on_day = d(i) == 0
-            && summary(i).is_none()
-            && ((lfi == s && sm.1) || matches!(t.constraint, Constraint::StartNoLaterThan(cd) if lfi == start_offset(o, cd)));
+            && ((lfi == s && sm.1)
+                || (summary(i).is_none() && matches!(t.constraint, Constraint::StartNoLaterThan(cd) if lfi == start_offset(o, cd))));
         let (late_start, late_finish) = if late_on_day { (day(lfi)?, day(lfi)?) } else { (first(ls)?, last(ls, lfi)?) };
         tasks.insert(
             t.id,
@@ -1443,6 +1444,23 @@ mod tests {
             assert_eq!((t.start, t.finish), (date(sd), date(fd)), "{preds}: a one-day task on one day");
         }
         assert_eq!(sch.tasks[&none].finish_at, at("2026-01-07", 8, 0), "no lag: the milestone's moment");
+    }
+
+    #[test]
+    fn a_summary_milestone_must_start_on_has_no_late_start_before_its_start() {
+        let mut p = Project::new("t", date("2026-01-05"));
+        let sum = p.add_task("T0", 0).unwrap();
+        let sub = p.add_task("T1", 0).unwrap();
+        p.task_mut(sub).unwrap().outline_level = 2;
+        p.task_mut(sum).unwrap().constraint = Constraint::MustStartOn(date("2026-01-06"));
+        for n in ["Ann", "Bob", "Cat"] {
+            p.add_resource(Some(n), crate::ResourceType::Work, None).unwrap();
+        }
+        let sch = schedule(&p).unwrap();
+        for id in [sum, sub] {
+            let t = sch.tasks[&id];
+            assert!(t.slack < 0 || t.late_start >= t.start, "{id:?}: {t:?}");
+        }
     }
 
     #[test]
