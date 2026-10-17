@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (CSV import) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (Microsoft Project XML links) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -59,6 +59,10 @@ have produced.
   fetched); any entity other than XML's five and character references is refused; nesting is
   capped at 64, so a depth bomb is refused at the cap. The file's tasks are capped at
   `MAX_TASKS`, durations clamped to `MAX_MINUTES`, outline levels kept to the outline rule.
+  Links are capped at 1,000,000 a file (the rest counted and reported), lags clamped to
+  `MAX_MINUTES` with every conversion done in 128-bit arithmetic, and links that would close a
+  loop dropped as for CSV; the report lines comparing the file's dates with ProjectCraft's stop
+  at 1,000, then one line for the rest.
 - **CSV** (`crates/interchange/src/csv.rs`, a reader of its own, no new dependency): a file over
   100 MB is refused, and so is one that isn't UTF-8 (a BOM is allowed); records are read one at a
   time, so a file of blank lines or separators holds no more than one row; columns are capped at
@@ -183,3 +187,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 | 2026-10-16 | minor | Assignments validated on load: counts capped, tasks and resources must exist, units in range (#55) |
 | 2026-10-17 | minor | Microsoft Project XML import: DTDs and entities refused, 100 MB and depth 64 caps, imports validated as project files, never written back (#97) |
 | 2026-10-17 | minor | CSV import: own RFC 4180 reader, records streamed, 1,000-column cap, loops of links dropped in bounded time (#103) |
+| 2026-10-17 | minor | Microsoft Project XML links: 1,000,000-link cap, lags clamped, loops dropped, date-comparison lines bounded (#98) |

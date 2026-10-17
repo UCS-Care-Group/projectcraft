@@ -7,16 +7,18 @@
 //! sheet's column names, then a task a row.
 //! An import always makes a new project; its dates are always worked out by ProjectCraft's
 //! scheduler, never taken from the file. Everything in the file that the project can't hold yet is
-//! listed in the report as converted, dropped or not yet imported; nothing is kept hidden.
+//! listed in the report as converted, dropped or not yet imported; nothing is kept hidden. The
+//! file's own Start and Finish dates are only compared: each task whose dates differ is a line.
 //!
 //! Every file is hostile: DTDs and entities are refused, the file is capped at
 //! [`MAX_IMPORT_BYTES`] and its nesting at [`MAX_DEPTH`], and the model's caps (tasks) and clamps
-//! (durations) apply.
+//! (durations, lags) apply.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod csv;
 mod links;
 mod mspdi;
+mod mspdi_links;
 mod xml;
 
 pub use projectcraft_model as model;
@@ -95,6 +97,8 @@ pub enum Outcome {
     Dropped,
     /// Left out for now: a later version imports it.
     NotYetImported,
+    /// A task whose Start or Finish, as ProjectCraft schedules it, isn't the file's.
+    DatesDiffer,
 }
 
 impl Outcome {
@@ -104,6 +108,7 @@ impl Outcome {
             Outcome::Converted => "Converted",
             Outcome::Dropped => "Dropped",
             Outcome::NotYetImported => "Not yet imported",
+            Outcome::DatesDiffer => "Dates differ",
         }
     }
 }
@@ -120,7 +125,8 @@ pub struct ReportLine {
     pub why: String,
 }
 
-/// The list shown after an import of everything converted, dropped or not yet imported.
+/// The list shown after an import of everything converted, dropped or not yet imported, and of
+/// every task whose dates differ from the file's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportReport {
     pub format: Format,

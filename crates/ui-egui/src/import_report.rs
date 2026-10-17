@@ -1,5 +1,6 @@
 //! The import report: shown after Open imports a Microsoft Project XML or CSV file, it lists
-//! what was converted, dropped or not imported yet, each with where in the file and why.
+//! what was converted, dropped or not imported yet, each with where in the file and why, and each
+//! task whose dates differ from the file's.
 
 use std::path::Path;
 
@@ -39,7 +40,10 @@ impl App {
             if report.lines.is_empty() {
                 ui.label(tl!("Everything in the file was imported."));
             } else {
-                ui.label(RichText::new(tl!("These parts of the file were converted, dropped, or aren't imported yet:")).color(t.text_dim));
+                ui.label(
+                    RichText::new(tl!("Parts of the file converted, dropped or not imported yet, and tasks whose dates differ from the file's:"))
+                        .color(t.text_dim),
+                );
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show(ui, |ui| {
                     egui::Grid::new("import-report-lines").striped(true).num_columns(4).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -52,6 +56,7 @@ impl App {
                                 Outcome::Converted => t.text,
                                 Outcome::Dropped => t.warning,
                                 Outcome::NotYetImported => t.text_dim,
+                                Outcome::DatesDiffer => t.accent_text,
                             };
                             ui.label(RichText::new(tl!(l.outcome.label())).color(colour));
                             ui.label(l.feature.as_str());
@@ -123,7 +128,7 @@ mod tests {
         assert!(h.state().is_dirty(), "an import is unsaved until saved as a project");
         assert_eq!(h.state().recent.first(), Some(&xml));
         h.get_by_label("Import Report");
-        h.get_by_label("Links (predecessors)");
+        h.get_by_label("Start and finish");
         // The dialog settles (wrapped text sized) over a couple of frames.
         h.run_steps(3);
         h.get_by_label("Close").click();
