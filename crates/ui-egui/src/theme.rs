@@ -41,6 +41,10 @@ pub struct Tokens {
     pub nonworking: Color32,
     /// A selected row of the sheet.
     pub row_selected: Color32,
+    /// An overallocated resource: its name, its indicator on a task, its work over Max Units.
+    pub overallocated: Color32,
+    /// Behind a Resource Usage cell whose work is over Max Units.
+    pub overallocated_fill: Color32,
 }
 
 impl Tokens {
@@ -70,6 +74,8 @@ impl Tokens {
             deadline_missed: Color32::from_rgb(0xA3, 0x15, 0x7A),
             nonworking: Color32::from_rgb(0xEB, 0xEB, 0xEE),
             row_selected: Color32::from_rgb(0xD4, 0xE6, 0xF8),
+            overallocated: Color32::from_rgb(0xC6, 0x28, 0x28),
+            overallocated_fill: Color32::from_rgb(0xFB, 0xE3, 0xE3),
         }
     }
 
@@ -99,6 +105,8 @@ impl Tokens {
             deadline_missed: Color32::from_rgb(0xF0, 0x6A, 0xC8),
             nonworking: Color32::from_rgb(0x31, 0x31, 0x36),
             row_selected: Color32::from_rgb(0x23, 0x3F, 0x5C),
+            overallocated: Color32::from_rgb(0xFF, 0x7A, 0x7A),
+            overallocated_fill: Color32::from_rgb(0x4A, 0x24, 0x26),
         }
     }
 

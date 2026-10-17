@@ -288,6 +288,9 @@ impl App {
             return;
         }
         let mut edits: Vec<(ResourceId, RField, String)> = Vec::new();
+        // Overallocated resources show red, their whole row, as in Microsoft Project.
+        let over: Vec<ResourceId> =
+            self.session.usage().map(|u| u.resources.iter().filter(|r| r.is_overallocated()).map(|r| r.id).collect()).unwrap_or_default();
         let picked: Vec<bool> = order.iter().map(|id| self.resources.sel.is_selected(*id)).collect();
         let row_colour = move |row: usize, _: &egui::Style| match row.checked_sub(1).and_then(|r| picked.get(r)) {
             Some(true) => Some(t.row_selected),
@@ -313,13 +316,14 @@ impl App {
             ui.end_row();
             for (i, id) in order.iter().copied().enumerate() {
                 let Ok(r) = self.session.project.resource(id).cloned() else { continue };
+                let colour = if over.contains(&id) { t.overallocated } else { t.text };
                 let row_id = i.saturating_add(1).to_string();
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(ID_W, ROW_H), Sense::click());
-                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, &row_id, egui::TextStyle::Body.resolve(ui.style()), t.text);
+                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, &row_id, egui::TextStyle::Body.resolve(ui.style()), colour);
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &row_id));
                 self.take_resource_click(ui, &resp, id, None);
                 for (field, _, width, right) in COLUMNS {
-                    if let Some(text) = self.resource_cell(ui, &r, field, width, right) {
+                    if let Some(text) = self.resource_cell(ui, &r, field, width, right, over.contains(&id)) {
                         edits.push((id, field, text));
                     }
                 }
@@ -358,7 +362,7 @@ impl App {
 
     /// One cell: its text, outlined when focused; an editor while being edited, returning the new
     /// text once when editing ends (Escape cancels).
-    fn resource_cell(&mut self, ui: &mut egui::Ui, r: &Resource, field: RField, width: f32, right: bool) -> Option<String> {
+    fn resource_cell(&mut self, ui: &mut egui::Ui, r: &Resource, field: RField, width: f32, right: bool, over: bool) -> Option<String> {
         if let Some((_, _, text)) = self.resources.editing.as_mut().filter(|(i, f, _)| *i == r.id && *f == field) {
             let edit = egui::TextEdit::singleline(text).desired_width(width).min_size(Vec2::new(width, 0.0));
             let edit = if right { edit.horizontal_align(egui::Align::RIGHT) } else { edit };
@@ -384,10 +388,11 @@ impl App {
         let t = Tokens::get(ui.ctx());
         let font = egui::TextStyle::Body.resolve(ui.style());
         let painter = ui.painter().with_clip_rect(rect);
+        let colour = if over { t.overallocated } else { t.text };
         if right {
-            painter.text(rect.right_center() - Vec2::new(6.0, 0.0), egui::Align2::RIGHT_CENTER, &shown, font, t.text);
+            painter.text(rect.right_center() - Vec2::new(6.0, 0.0), egui::Align2::RIGHT_CENTER, &shown, font, colour);
         } else {
-            painter.text(rect.left_center() + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, &shown, font, t.text);
+            painter.text(rect.left_center() + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, &shown, font, colour);
         }
         if self.resources.sel.cursor == Some(r.id) && self.resources.field == field {
             ui.painter().rect_stroke(rect.shrink(1.0), 2.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
@@ -395,6 +400,8 @@ impl App {
         let resp = if value.is_none() {
             let kind = tl!(r.kind.name()).to_lowercase();
             resp.on_hover_text(crate::i18n::fmt(tl!("Doesn't apply to a {type} resource"), &[("type", &kind)]))
+        } else if over && field == RField::Name {
+            resp.on_hover_text(tl!("Overallocated: more work on some days than Max Units allow on this resource's calendar (see Resource Usage)"))
         } else {
             resp
         };

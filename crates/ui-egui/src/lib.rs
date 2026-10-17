@@ -37,6 +37,7 @@ mod options;
 pub use files::{EXTENSION, FileRequest, MAX_RECENT, parse_recent, push_recent, recent_text};
 mod recovery;
 mod resource_sheet;
+mod resource_usage;
 mod selection;
 pub use recovery::{AUTOSAVE_EVERY, RECOVERY_EVERY, UNTITLED_RECOVERY, recovery_path};
 use selection::Selection;
@@ -172,6 +173,8 @@ pub enum View {
     #[default]
     GanttChart,
     ResourceSheet,
+    /// Resources with their assignments and their work on the timescale.
+    ResourceUsage,
 }
 
 /// The Change Working Time dialog's own state: the calendar picked, the weekday's working times
@@ -273,6 +276,8 @@ pub struct App {
     browser_dir: Option<std::path::PathBuf>,
     /// The Gantt Chart's day width in points: view state, not saved and not undone.
     day_w: f32,
+    /// The Resource Usage view's day width in points, likewise.
+    usage_day_w: f32,
     /// The view showing: view state, not saved and not undone.
     pub view: View,
     /// The Resource Sheet's selection and editing.
@@ -286,6 +291,8 @@ pub struct App {
 const ROW_H: f32 = 22.0;
 /// The ID column: room for five digits.
 const ID_W: f32 = 40.0;
+/// The indicators column: room for two indicators side by side.
+const IND_W: f32 = 36.0;
 /// How far each outline level indents a task name.
 const INDENT_W: f32 = 16.0;
 const NAME_W: f32 = 220.0;
@@ -320,6 +327,7 @@ impl App {
             browser: None,
             browser_dir: None,
             day_w: timescale::Preset::Days.day_w(),
+            usage_day_w: resource_usage::day_w(timescale::Preset::Days),
             view: View::default(),
             resources: resource_sheet::ResourceSheet::default(),
             assign: None,
@@ -341,14 +349,30 @@ impl App {
         self.session.project.tasks.iter().map(|t| t.id).collect()
     }
 
-    /// The Gantt Chart's timescale preset (from the View menu).
+    /// The timescale preset (from the View menu) of the view showing: the Gantt Chart's or
+    /// Resource Usage's.
     pub fn set_timescale(&mut self, preset: timescale::Preset) {
-        self.day_w = preset.day_w();
+        if self.view == View::ResourceUsage {
+            self.usage_day_w = resource_usage::day_w(preset);
+        } else {
+            self.day_w = preset.day_w();
+        }
     }
 
-    /// One zoom step in (wider days) or out.
+    /// One zoom step in (wider days) or out, of the view showing.
     pub fn zoom(&mut self, zoom_in: bool) {
-        self.day_w = if zoom_in { timescale::zoom_in(self.day_w) } else { timescale::zoom_out(self.day_w) };
+        let w = self.timescale_w();
+        let w = if zoom_in { timescale::zoom_in(w) } else { timescale::zoom_out(w) };
+        if self.view == View::ResourceUsage {
+            self.usage_day_w = w;
+        } else {
+            self.day_w = w;
+        }
+    }
+
+    /// The day width of the view showing.
+    fn timescale_w(&self) -> f32 {
+        if self.view == View::ResourceUsage { self.usage_day_w } else { self.day_w }
     }
 
     /// Opens the Change Working Time dialog on the project calendar.
@@ -456,8 +480,8 @@ impl App {
                 if ui.button(tl!("Save")).clicked() {
                     self.save();
                 }
-                // Zoom belongs to the Gantt Chart's timescale.
-                if self.view == View::GanttChart {
+                // Zoom belongs to a view with a timescale.
+                if self.view != View::ResourceSheet {
                     ui.separator();
                     self.zoom_control(ui);
                 }
@@ -481,6 +505,7 @@ impl App {
             egui::ScrollArea::both().show(ui, |ui| match self.view {
                 View::GanttChart => self.sheet(ui),
                 View::ResourceSheet => self.resource_sheet(ui),
+                View::ResourceUsage => self.resource_usage(ui),
             });
         });
         self.change_working_time(&ctx);
@@ -514,6 +539,9 @@ impl App {
             }
             let k = read_sheet_keys(ctx, self.resources.sel.cursor.is_some());
             self.resource_keys(k);
+            return;
+        }
+        if self.view == View::ResourceUsage {
             return;
         }
         let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
@@ -722,7 +750,8 @@ impl App {
     /// View: the timescale presets and zoom.
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button(tl!("View"), |ui| {
-            for (view, label) in [(View::GanttChart, "Gantt Chart"), (View::ResourceSheet, "Resource Sheet")] {
+            for (view, label) in [(View::GanttChart, "Gantt Chart"), (View::ResourceSheet, "Resource Sheet"), (View::ResourceUsage, "Resource Usage")]
+            {
                 if ui.radio(self.view == view, tl!(label)).clicked() {
                     self.set_view(view);
                     ui.close();
@@ -735,7 +764,7 @@ impl App {
             }
             ui.separator();
             ui.label(RichText::new(tl!("Timescale")).color(Tokens::get(ui.ctx()).text_dim));
-            let current = timescale::Preset::of(self.day_w);
+            let current = timescale::Preset::of(self.timescale_w());
             for preset in timescale::Preset::ALL {
                 if ui.radio(current == preset, tl!(preset.label())).clicked() {
                     self.set_timescale(preset);
@@ -748,10 +777,11 @@ impl App {
                 ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key)).replace(key.name(), sign)
             };
             let (in_keys, out_keys) = (shortcut(Key::Equals, "="), shortcut(Key::Minus, "-"));
-            if ui.add_enabled(self.day_w < timescale::MAX_DAY_W, egui::Button::new(tl!("Zoom In")).shortcut_text(in_keys)).clicked() {
+            let (w, timed) = (self.timescale_w(), self.view != View::ResourceSheet);
+            if ui.add_enabled(timed && w < timescale::MAX_DAY_W, egui::Button::new(tl!("Zoom In")).shortcut_text(in_keys)).clicked() {
                 self.zoom(true);
             }
-            if ui.add_enabled(self.day_w > timescale::MIN_DAY_W, egui::Button::new(tl!("Zoom Out")).shortcut_text(out_keys)).clicked() {
+            if ui.add_enabled(timed && w > timescale::MIN_DAY_W, egui::Button::new(tl!("Zoom Out")).shortcut_text(out_keys)).clicked() {
                 self.zoom(false);
             }
         });
@@ -813,10 +843,11 @@ impl App {
 
     /// The toolbar's zoom control: out, the preset showing, in.
     fn zoom_control(&mut self, ui: &mut egui::Ui) {
-        if ui.add_enabled(self.day_w > timescale::MIN_DAY_W, egui::Button::new("−")).on_hover_text(tl!("Zoom Out")).clicked() {
+        let w = self.timescale_w();
+        if ui.add_enabled(w > timescale::MIN_DAY_W, egui::Button::new("−")).on_hover_text(tl!("Zoom Out")).clicked() {
             self.zoom(false);
         }
-        let current = timescale::Preset::of(self.day_w);
+        let current = timescale::Preset::of(w);
         egui::ComboBox::from_id_salt("timescale").selected_text(tl!(current.label())).width(72.0).show_ui(ui, |ui| {
             for preset in timescale::Preset::ALL {
                 if ui.selectable_label(current == preset, tl!(preset.label())).clicked() {
@@ -824,7 +855,7 @@ impl App {
                 }
             }
         });
-        if ui.add_enabled(self.day_w < timescale::MAX_DAY_W, egui::Button::new("+")).on_hover_text(tl!("Zoom In")).clicked() {
+        if ui.add_enabled(w < timescale::MAX_DAY_W, egui::Button::new("+")).on_hover_text(tl!("Zoom In")).clicked() {
             self.zoom(true);
         }
     }
@@ -1099,7 +1130,7 @@ impl App {
             // The unnamed column after ID holds indicators, as Project's Indicators column.
             // ID and the indicators are narrow, fixed-width columns.
             ui.add_sized([ID_W, ROW_H], egui::Label::new(RichText::new(tl!("ID")).strong()));
-            ui.add_sized([ROW_H, ROW_H], egui::Label::new(""));
+            ui.add_sized([IND_W, ROW_H], egui::Label::new(""));
             let fields = shown_fields(&self.session.project.columns);
             for &field in &fields {
                 let (h, width) = field.column();
@@ -1121,6 +1152,7 @@ impl App {
             let outline = Outline::of(&self.session.project);
             let work = self.session.project.work_by_task();
             let costs = self.session.project.cost_by_task();
+            let overallocated = self.session.usage().map(|u| u.overallocated_tasks()).unwrap_or_default();
             // The ID column is the row number; commands get Unique IDs.
             for (i, id) in order.iter().copied().enumerate() {
                 let dates = self.session.schedule.as_ref().ok().and_then(|s| s.tasks.get(&id).copied());
@@ -1137,7 +1169,7 @@ impl App {
                     .inner;
                 r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &row_id));
                 self.take_click(ui, &r, id, None);
-                indicator(ui, dates);
+                indicator(ui, dates, overallocated.contains(&id));
                 let indent = (outline.level(i).saturating_sub(1).min(20) as f32) * INDENT_W;
                 for &field in &fields {
                     let width = field.column().1;
@@ -1254,32 +1286,61 @@ impl App {
     }
 }
 
-/// The indicator cell, drawn in code: a warning triangle when a constraint overrides one of the
-/// task's links, else a round "!" badge when the task finishes after its deadline. The tooltip
-/// names every indicator that applies.
-fn indicator(ui: &mut egui::Ui, dates: Option<projectcraft_engine::model::TaskDates>) {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ROW_H, ROW_H), Sense::hover());
-    let Some(d) = dates.filter(|d| d.constraint_conflict || d.deadline_missed) else { return };
+/// The indicator cell, drawn in code, left to right: a warning triangle when a constraint
+/// overrides one of the task's links, else a round "!" badge when the task finishes after its
+/// deadline; then a red person when one of its resources is overallocated while working on it.
+/// The tooltip names every indicator that applies.
+fn indicator(ui: &mut egui::Ui, dates: Option<projectcraft_engine::model::TaskDates>, overallocated: bool) {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(IND_W, ROW_H), Sense::hover());
+    let conflict = dates.is_some_and(|d| d.constraint_conflict);
+    let missed = dates.is_some_and(|d| d.deadline_missed);
+    if !(conflict || missed || overallocated) {
+        return;
+    }
     let t = Tokens::get(ui.ctx());
-    let (c, r) = (rect.center(), ROW_H * 0.36);
+    let r = ROW_H * 0.34;
+    let slot = IND_W / 2.0;
+    let mut c = egui::pos2(rect.left() + slot / 2.0, rect.center().y);
     let p = ui.painter();
     let mut tips = Vec::new();
-    if d.constraint_conflict {
+    if conflict {
         p.add(egui::Shape::convex_polygon(
             vec![c + Vec2::new(0.0, -r), c + Vec2::new(r, r * 0.8), c + Vec2::new(-r, r * 0.8)],
             t.warning,
             Stroke::NONE,
         ));
-        p.text(c + Vec2::new(0.0, r * 0.2), egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(ROW_H * 0.45), t.surface);
+        p.text(c + Vec2::new(0.0, r * 0.2), egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(ROW_H * 0.42), t.surface);
         tips.push(tl!("Constraint conflict: a link can't be honoured, so this task keeps its constraint date and has negative slack."));
-    } else {
+        c.x += slot;
+    } else if missed {
         p.circle_filled(c, r * 0.85, t.deadline_missed);
-        p.text(c, egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(ROW_H * 0.45), t.surface);
+        p.text(c, egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(ROW_H * 0.42), t.surface);
+        c.x += slot;
     }
-    if d.deadline_missed {
+    if missed {
         tips.push(tl!("Missed deadline: this task finishes after its deadline, so it has negative slack."));
     }
+    if overallocated {
+        person(p, c, r, &t);
+        tips.push(tl!("Overallocated: a resource on this task has more work than its Max Units allow on a day it works on it."));
+    }
     response.on_hover_text(tips.join("\n"));
+}
+
+/// A person, drawn in code in the overallocated colour: a round head over rounded shoulders, `r`
+/// tall either side of `c`.
+fn person(p: &egui::Painter, c: egui::Pos2, r: f32, t: &Tokens) {
+    let colour = t.overallocated;
+    p.circle_filled(c + Vec2::new(0.0, -r * 0.45), r * 0.4, colour);
+    // The shoulders: the top half of a flattened circle.
+    let (centre, radius) = (c + Vec2::new(0.0, r), r * 0.8);
+    let points: Vec<egui::Pos2> = (0..=12)
+        .map(|k| {
+            let a = std::f32::consts::PI * (1.0 + k as f32 / 12.0);
+            centre + Vec2::new(a.cos() * radius, a.sin() * radius * 0.9)
+        })
+        .collect();
+    p.add(egui::Shape::convex_polygon(points, colour, Stroke::NONE));
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1382,6 +1443,7 @@ mod tests {
             ("timescale.rs", include_str!("timescale.rs")),
             ("selection.rs", include_str!("selection.rs")),
             ("resource_sheet.rs", include_str!("resource_sheet.rs")),
+            ("resource_usage.rs", include_str!("resource_usage.rs")),
             ("options.rs", include_str!("options.rs")),
             ("assign.rs", include_str!("assign.rs")),
         ] {
@@ -1554,6 +1616,35 @@ mod tests {
 
     /// Zoom is view state: Ctrl+= and Ctrl+- and the View menu change the timescale, never the
     /// project or its undo history.
+    #[test]
+    /// Resource Usage lists each resource with its assignments; an overallocated one's days over
+    /// Max Units are red. Its timescale zooms on its own, leaving the Gantt Chart's alone, and
+    /// at Weeks a week's cell adds up its days. Showing it changes nothing.
+    fn resource_usage_shows_work_on_its_own_timescale() {
+        use egui_kittest::kittest::Queryable;
+        let app = App::new(projectcraft_engine::sample(), None);
+        let before = app.session.project.clone();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        h.run_steps(2);
+        for label in ["View", "Resource Usage"] {
+            h.get_by_label(label).click();
+            h.run_steps(3);
+        }
+        assert_eq!(h.state().view, View::ResourceUsage);
+        assert!(h.query_by_label("Network cabling").is_some(), "Tom Okafor's assignment is listed");
+        assert!(h.state().session.usage().unwrap().is_overallocated(ResourceId(1)));
+        h.key_press_modifiers(egui::Modifiers::COMMAND, Key::Minus);
+        h.run_steps(2);
+        assert_eq!(h.state().usage_day_w, timescale::zoom_out(resource_usage::day_w(timescale::Preset::Days)));
+        assert_eq!(h.state().day_w, timescale::Preset::Days.day_w(), "the Gantt Chart's zoom is its own");
+        h.get_by_label("View").click();
+        h.run_steps(2);
+        h.get_by_label("Weeks").click();
+        h.run_steps(3);
+        assert_eq!(timescale::Preset::of(h.state().usage_day_w), timescale::Preset::Weeks);
+        assert_eq!(h.state().session.project, before);
+    }
+
     #[test]
     fn zoom_and_timescale_presets_are_view_state() {
         use egui_kittest::kittest::Queryable;

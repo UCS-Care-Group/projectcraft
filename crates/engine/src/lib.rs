@@ -8,6 +8,7 @@
 
 mod file;
 
+use std::cell::OnceCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use serde_json::{Value, json};
@@ -17,7 +18,7 @@ pub use projectcraft_time as time;
 
 pub use file::{FORMAT_VERSION, TempSweep, create_private_dir_all, sweep_stale_temps, write_private};
 
-use model::{Date, ModelError, Project, ResourceField, ResourceId, Schedule, TaskId};
+use model::{Date, ModelError, Project, ResourceField, ResourceId, Schedule, TaskId, Usage};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CmdError {
@@ -69,6 +70,9 @@ pub struct CommandSpec {
 pub struct Session {
     pub project: Project,
     pub schedule: Result<Schedule, ModelError>,
+    /// Each work resource's usage over the schedule, worked out when first asked for after a
+    /// change ([`Session::usage`]).
+    usage: OnceCell<Result<Usage, ModelError>>,
     undo: Vec<Project>,
     redo: Vec<Project>,
 }
@@ -79,7 +83,7 @@ const UNDO_DEPTH: usize = 200;
 impl Session {
     pub fn new(project: Project) -> Self {
         let schedule = model::schedule(&project);
-        let mut s = Session { project, schedule, undo: Vec::new(), redo: Vec::new() };
+        let mut s = Session { project, schedule, usage: OnceCell::new(), undo: Vec::new(), redo: Vec::new() };
         s.reschedule();
         s
     }
@@ -90,10 +94,23 @@ impl Session {
     /// assignments work that duration.
     fn reschedule(&mut self) {
         self.project.normalize_outline();
-        self.schedule = model::schedule(&self.project);
+        self.rescheduled();
         if let Ok(s) = &self.schedule {
             self.project.set_rolled_up(&s.rolled_up);
         }
+    }
+
+    /// Schedules the project as it is, and forgets the usage worked out from the last schedule.
+    fn rescheduled(&mut self) {
+        self.schedule = model::schedule(&self.project);
+        self.usage = OnceCell::new();
+    }
+
+    /// Each work resource's work day by day and the days it is overallocated, over the current
+    /// schedule ([`model::usage`]); worked out once per change. An error when there is no schedule.
+    pub fn usage(&self) -> Result<&Usage, ModelError> {
+        let schedule = self.schedule.as_ref().map_err(Clone::clone);
+        self.usage.get_or_init(|| model::usage(&self.project, schedule?)).as_ref().map_err(Clone::clone)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -132,7 +149,7 @@ impl Session {
             Ok(()) => Ok(()),
             Err(e) => {
                 self.project = before;
-                self.schedule = model::schedule(&self.project);
+                self.rescheduled();
                 Err(e)
             }
         }
@@ -142,7 +159,7 @@ impl Session {
         let (from, to) = if undo { (&mut self.undo, &mut self.redo) } else { (&mut self.redo, &mut self.undo) };
         if let Some(p) = from.pop() {
             to.push(std::mem::replace(&mut self.project, p));
-            self.schedule = model::schedule(&self.project);
+            self.rescheduled();
         }
         Ok(())
     }
@@ -1671,6 +1688,8 @@ mod tests {
                 if s.run(c.id, &j).is_err() {
                     assert_eq!(s.project, before, "{} changed the project on error with {j}", c.id);
                 }
+                // Whatever the command left, the usage is worked out or refused, never a panic.
+                let _ = s.usage();
             }
         }
         assert!(Session::load_json("{").is_err());

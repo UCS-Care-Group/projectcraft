@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** current · **Written:** 2026-10-16 · **Change:** minor (resource calendars)
+> **Status:** current · **Written:** 2026-10-17 · **Change:** minor (resource usage)
 
 ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCS-Care-Group/mailcraft/blob/main/docs/architecture.md).
 
@@ -27,6 +27,9 @@ Times are offsets in working minutes from the first working minute of the projec
 
 A task with a work resource on a calendar of its own (the project calendar with the resource's own weekdays and exceptions on top, worked only within the project calendar's working time) is worked assignment by assignment: each from the task's start for its own duration on its resource's calendar. The task spans its earliest assignment start to its latest finish, and the passes see that span as the project-calendar working time it covers; its late start is worked back on the same calendars. Calendars are counted, not copied: the project calendar is indexed once per schedule (its weekly pattern and its exceptions' corrections added up in date order), and each resource adds only its own days, so working minutes between two dates cost a few binary searches. Other tasks, those without resources included, are on the project calendar.
 
+## Resource usage
+`model::usage` works out, from a project and its schedule, each work resource's work day by day and the days it is overallocated (work over Max Units × the day's working time on its calendar). Each assignment's work is spread over the working minutes it spans on its resource's calendar (the span the scheduler recorded, or the task's start for the assignment's duration), rounded so the days add up to its work; the walk is bounded in total days. `Session::usage` works it out once per change, on first use; the Resource Sheet, the task sheet's indicator and the Resource Usage view read it. Materials and cost resources are not in it.
+
 ## Security
 What the program protects, from whom, and which code does it: [threat-model.md](threat-model.md).
 
@@ -38,3 +41,4 @@ What the program protects, from whom, and which code does it: [threat-model.md](
 | 2026-10-16 | minor | Link to the threat model |
 | 2026-10-16 | minor | The scheduler counts working minutes |
 | 2026-10-16 | minor | Resource calendars |
+| 2026-10-17 | minor | Resource usage and overallocation |
