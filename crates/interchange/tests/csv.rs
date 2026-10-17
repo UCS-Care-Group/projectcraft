@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use projectcraft_interchange::model::{Constraint, Date, DurationUnit, LinkKind, MAX_MINUTES, MAX_TASKS, Project, TaskId};
+use projectcraft_interchange::model::{Constraint, Date, DurationUnit, LinkKind, MAX_MINUTES, MAX_TASKS, Project, TaskId, TaskType};
 use projectcraft_interchange::{Format, ImportError, Outcome, ReportLine, import};
 
 /// A kitchen refit, saved by a spreadsheet as "CSV UTF-8" with semicolons: a BOM, CRLF line
@@ -105,7 +105,7 @@ fn a_file_without_a_task_name_column_is_refused_with_a_clear_error() {
 
 #[test]
 fn every_unknown_column_has_its_own_report_line() {
-    let i = csv("Task Name,Notes,Work,Priority,Finish,,Duration\nDig,deep,8h,500,2026-01-01,x,1\n").unwrap();
+    let i = csv("Task Name,Notes,Work,Cost,Finish,,Duration\nDig,deep,8h,£5.00,2026-01-01,x,1\n").unwrap();
     let dropped: Vec<(&str, &str)> =
         i.report.lines.iter().filter(|l| l.feature.ends_with("column")).map(|l| (l.feature.as_str(), l.place.as_str())).collect();
     assert_eq!(
@@ -113,12 +113,14 @@ fn every_unknown_column_has_its_own_report_line() {
         [
             ("Notes column", "Column B"),
             ("Work column", "Column C"),
-            ("Priority column", "Column D"),
+            ("Cost column", "Column D"),
             ("Finish column", "Column E"),
             ("Untitled column", "Column F")
         ]
     );
     assert!(find(&i.report.lines, "Finish column").why.contains("works out"), "dates come from the scheduler");
+    assert!(find(&i.report.lines, "Work column").why.contains("works out"), "work comes from duration and resources");
+    assert!(find(&i.report.lines, "Cost column").why.contains("works out"), "costs are worked out");
     // A column with no heading and nothing in it (a spreadsheet's trailing separators) is no news.
     let i = csv("Task Name;Duration;;\nDig;1;;\n").unwrap();
     assert!(i.report.lines.is_empty() || i.report.lines.iter().all(|l| l.feature == "Project start"), "{:#?}", i.report.lines);
@@ -200,6 +202,71 @@ fn quoted_cells_hold_separators_quotes_and_line_breaks() {
     assert_eq!(names(&i.project), ["Say \"hi\"", "Line one", "Last"]);
     assert_eq!(find(&i.report.lines, "Task Name").place, "Row 2 Line one");
     assert_eq!(i.project.tasks[2].duration, 3 * 480);
+}
+
+#[test]
+fn a_quoted_task_name_keeps_its_spaces_and_others_are_trimmed() {
+    let i = csv("Task Name,Resource Names\n\"  Dig \" ,\" Ann \"\n  Pour  ,Bob\n\"  \",Cy\n").unwrap();
+    assert_eq!(names(&i.project), ["  Dig ", "Pour", "  "], "padding after the closing quote isn't the name's");
+    assert_eq!(i.project.resources.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["Ann", "Bob", "Cy"]);
+    assert!(lines_about(&i.report.lines, "Task Name").is_empty(), "a name of spaces, quoted, is a name");
+    let i = csv("Task Name,Resource Names\n\"\",Cy\n").unwrap();
+    assert_eq!(find(&i.report.lines, "Task Name").place, "Row 1");
+}
+
+/// The CSV export puts an apostrophe in front of a Task Name or Resource Names cell that a
+/// spreadsheet would run as a formula; the import takes it off again, and leaves every other
+/// apostrophe as it is.
+#[test]
+fn an_apostrophe_guarding_a_formula_is_taken_off() {
+    let i = csv("Task Name,Resource Names,Duration\n'=1+1,'@Ann,1\n'-2 days early,,1\n\"'+44, call\",,1\n'Tis the season,,1\n''=x,,1\n").unwrap();
+    assert_eq!(names(&i.project), ["=1+1", "-2 days early", "+44, call", "'Tis the season", "'=x"]);
+    assert_eq!(i.project.resources.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["@Ann"]);
+}
+
+#[test]
+fn fixed_cost_type_effort_driven_priority_and_leveling_delay_are_read() {
+    let text = "Task Name,Fixed Cost,Type,Effort Driven,Priority,Leveling Delay,Outline Level\n\
+        Build,£1.00,Fixed Work,No,10,2d,1\n\
+        Dig,\"£1,250.50\",fixed duration,yes,1000,4h,2\n\
+        Pour,,Fixed Work,No,0,1.5d,2\n\
+        Cure,lots,Fixed Speed,maybe,1001,soon,1\n\
+        Tidy,£0.00,Fixed Duration,No,500,0d,1\n";
+    let i = csv(text).unwrap();
+    let t = &i.project.tasks;
+    let defaults = &i.project.options;
+    assert_eq!(t.iter().map(|t| t.fixed_cost).collect::<Vec<_>>(), [100, 125_050, 0, 0, 0], "a summary keeps its own fixed cost");
+    // A summary's type, effort driven and delay follow its subtasks: the defaults, and a line.
+    assert_eq!((t[0].task_type, t[0].effort_driven, t[0].leveling_delay), (defaults.task_type, defaults.effort_driven, 0));
+    assert_eq!((t[1].task_type, t[1].effort_driven, t[1].leveling_delay), (TaskType::FixedDuration, true, 240));
+    assert_eq!((t[2].task_type, t[2].effort_driven, t[2].leveling_delay), (TaskType::FixedWork, true, 720), "Fixed Work is always effort driven");
+    assert_eq!((t[3].task_type, t[3].effort_driven, t[3].leveling_delay), (defaults.task_type, defaults.effort_driven, 0));
+    assert_eq!(t.iter().map(|t| t.priority).collect::<Vec<_>>(), [10, 1000, 0, 500, 500]);
+    let r = &i.report.lines;
+    for feature in ["Fixed Cost", "Type", "Effort Driven", "Priority", "Leveling Delay"] {
+        assert_eq!(find(r, feature).place, "Row 4 Cure", "{feature}");
+    }
+    assert_eq!(find(r, "Summary task fields").place, "Row 1 Build");
+    assert!(!r.iter().any(|l| l.feature.ends_with("column")), "every column is read: {r:#?}");
+    // A summary showing what the sheet shows for one (Fixed Duration, No, no delay) is no news.
+    let i = csv("Task Name,Type,Effort Driven,Leveling Delay,Outline Level\nBuild,Fixed Duration,No,,1\nDig,Fixed Units,No,0d,2\n").unwrap();
+    assert!(lines_about(&i.report.lines, "Summary task fields").is_empty(), "{:#?}", i.report.lines);
+}
+
+#[test]
+fn the_currency_is_the_one_the_amounts_are_written_in() {
+    let i = csv("Task Name,Fixed Cost,Resource Names\nDig,$1.50,Crane\nPour,\"$2,000.00\",\n").unwrap();
+    assert_eq!(i.project.currency.code, "USD");
+    assert_eq!(i.project.tasks.iter().map(|t| t.fixed_cost).collect::<Vec<_>>(), [150, 200_000]);
+    assert!(find(&i.report.lines, "Currency").why.contains("USD"));
+    let i = csv("Task Name,Cost,Fixed Cost\nDig,¥1235,¥1\n").unwrap();
+    assert_eq!((i.project.currency.code.as_str(), i.project.tasks[0].fixed_cost), ("JPY", 1));
+    // The default's symbol, no symbol, or one ProjectCraft doesn't know: the default, no line.
+    for text in ["Task Name,Fixed Cost\nDig,£1.50\n", "Task Name,Fixed Cost\nDig,1.50\n", "Task Name,Fixed Cost\nDig,Q1.50\n"] {
+        let i = csv(text).unwrap();
+        assert_eq!(i.project.currency, Default::default(), "{text}");
+        assert!(lines_about(&i.report.lines, "Currency").is_empty());
+    }
 }
 
 #[test]
@@ -308,8 +375,8 @@ proptest::proptest! {
 
     #[test]
     fn arbitrary_cells_never_panic(
-        heading in proptest::collection::vec("(Task Name|Duration|Predecessors|Resource Names|Outline Level|Constraint Type|Constraint Date|Deadline|Start|x|)", 1..9),
-        rows in proptest::collection::vec(proptest::collection::vec("[-0-9a-zA-Z ;,\"\\[\\]%.?+\r\n]{0,12}", 0..9), 0..12),
+        heading in proptest::collection::vec("(Task Name|Duration|Predecessors|Resource Names|Outline Level|Constraint Type|Constraint Date|Deadline|Start|Fixed Cost|Cost|Type|Effort Driven|Priority|Leveling Delay|x|)", 1..9),
+        rows in proptest::collection::vec(proptest::collection::vec("[-0-9a-zA-Z ;,\"\\[\\]%.?+\r\n$£'=@]{0,12}", 0..9), 0..12),
         sep in "[,;]",
     ) {
         let mut text = heading.join(&sep);
@@ -319,6 +386,8 @@ proptest::proptest! {
         }
         if let Ok(i) = csv(&text) {
             proptest::prop_assert!(i.project.tasks.iter().all(|t| (0..=MAX_MINUTES).contains(&t.duration)));
+            proptest::prop_assert!(i.project.tasks.iter().all(|t| (0..=MAX_MINUTES).contains(&t.leveling_delay) && t.priority <= 1000));
+            proptest::prop_assert!(i.project.tasks.iter().all(|t| (0..=projectcraft_interchange::model::MAX_MONEY).contains(&t.fixed_cost)));
             proptest::prop_assert!(projectcraft_interchange::model::schedule(&i.project).is_ok() || i.project.tasks.is_empty());
         }
     }

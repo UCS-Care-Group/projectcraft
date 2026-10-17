@@ -1,6 +1,6 @@
 # Threat model
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (Microsoft Project XML export) · **Target:** Microsoft Project
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change:** minor (CSV export) · **Target:** Microsoft Project
 
 What ProjectCraft protects, from whom, and how, with the code that does it. Rules for working in
 the code are in [`AGENTS.md`](../AGENTS.md); how to report a vulnerability is in
@@ -84,10 +84,22 @@ have produced.
   `crates/interchange/tests/csv.rs`), and `file.import` is in
   `hostile_params_never_panic`.
 - **An export never overwrites a project:** `file.export` only takes a name with the format's
-  extension (`.xml`), so never a `.projectcraft` or the project's own file; it is written
-  atomically, all text is XML-escaped and characters XML can't hold are dropped
+  extension (`.xml` or `.csv`), so never a `.projectcraft` or the project's own file; it is
+  written atomically, all text is XML-escaped and characters XML can't hold are dropped
   (`crates/engine/src/export.rs`, `crates/interchange/src/mspdi_export.rs`), and `file.export` is
-  in `hostile_params_never_panic`.
+  in `hostile_params_never_panic` with both formats.
+- **CSV formula injection** (CWE-1236): a CSV the owner exports may be opened by someone else in
+  a spreadsheet, and a plan may hold text from elsewhere (an imported file, a script driving the
+  commands). A spreadsheet runs a cell starting with `=`, `+`, `-` or `@` (or a tab or carriage
+  return) as a formula, which can fetch URLs or, in old configurations, run commands. The cells
+  that hold free text, Task Name and Resource Names, are written with an apostrophe in front when
+  they start like that (after any apostrophes of their own), so spreadsheets show them as text;
+  ProjectCraft's CSV import takes that apostrophe off again, so the round trip is exact. Every
+  other cell is written from a number, a date or a fixed word and can't start like a formula. Every
+  cell holding a separator, quote or line break is quoted (RFC 4180), so no cell can spill into
+  the next (`crates/interchange/src/csv_export.rs`). Limit: a spreadsheet that strips the
+  apostrophe and saves again writes the bare text; and other programs that read the CSV must
+  apply their own guard.
 
 ### Hostile command parameters
 
@@ -202,3 +214,4 @@ A malicious or vulnerable dependency, GitHub Action or build step.
 | 2026-10-17 | minor | Microsoft Project XML links: 1,000,000-link cap, lags clamped, loops dropped, date-comparison lines bounded (#98) |
 | 2026-10-17 | minor | Microsoft Project XML resources and costs: resource and assignment caps, exact decimal money and units clamped to the model, one exception budget for resource calendars (#101) |
 | 2026-10-17 | minor | Microsoft Project XML export: `.xml` names only (never a project file), atomic write, text escaped (#102) |
+| 2026-10-17 | minor | CSV export: `.csv` names only, atomic write, RFC 4180 quoting, Task Name and Resource Names guarded against formula injection with an apostrophe the import takes off (#104) |

@@ -318,6 +318,46 @@ fn exporting_a_large_plan_is_reported() {
     }
 }
 
+/// Exporting the 2,000-task staffed plan's task sheet as CSV, every column shown, and importing
+/// it again, are timed and reported; the export is gated by [`EXPORT_GATE`] (it reads the sheet in
+/// one pass, so a search per cell would show here). So is a 20,000-task plan, reported only.
+#[test]
+#[ignore = "timing; run in release by `cargo xtask perf`"]
+fn exporting_a_large_plan_as_csv_is_reported() {
+    use projectcraft_engine::interchange::Format;
+    use projectcraft_engine::model::Columns;
+    let median = |p: &Project| {
+        let mut p = p.clone();
+        p.columns = Columns::all();
+        let s = Session::new(p);
+        let mut times = Vec::new();
+        let mut csv = String::new();
+        for _ in 0..9 {
+            let t0 = Instant::now();
+            csv = s.export(Format::Csv).unwrap();
+            times.push(t0.elapsed());
+        }
+        times.sort();
+        (times[times.len() / 2], csv)
+    };
+    let plan = staffed(2_000, 19);
+    let (t_export, csv) = median(&plan);
+    let t0 = Instant::now();
+    let back = Session::import(Format::Csv, csv.as_bytes()).unwrap();
+    let t_import = t0.elapsed();
+    assert_eq!(back.project.tasks.len(), 2_000);
+    let (t_big, big) = median(&staffed(20_000, 19));
+    let build = if cfg!(debug_assertions) { "debug" } else { "release" };
+    println!(
+        "perf ({build}): export 2,000 tasks, {STAFF} resources, {STAFFED_ASSIGNMENTS} assignments as CSV ({} KB) {t_export:.2?} (median of 9; gate: under {EXPORT_GATE:?}), import it again {t_import:.2?}; 20,000 tasks ({} KB) {t_big:.2?} (reported)",
+        csv.len() / 1024,
+        big.len() / 1024
+    );
+    if !cfg!(debug_assertions) {
+        assert!(t_export < EXPORT_GATE, "exporting 2,000 tasks as CSV took {t_export:.2?}, over the {EXPORT_GATE:?} gate");
+    }
+}
+
 /// A hostile plan for the finish-type hold search: one summary over everything, Finish No
 /// Earlier Than a far date, holding blocks of `depth` nested summaries with the same constraint,
 /// each over two subtasks the hold can't move (Must Start On and Start No Later Than the project

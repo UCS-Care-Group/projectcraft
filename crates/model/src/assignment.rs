@@ -262,6 +262,12 @@ impl Project {
 
     /// The Resource Names column: `Ann[50%], Bob, Concrete[2 tons/d]`.
     pub fn resource_names(&self, task: TaskId) -> String {
+        self.names_text(self.assignments_of(task))
+    }
+
+    /// The Resource Names text of these assignments, in this order: each resource's name, with
+    /// its units in brackets where Project shows them.
+    pub(crate) fn names_text<'a>(&self, list: impl Iterator<Item = &'a Assignment>) -> String {
         let one = |a: &Assignment| {
             let name = self.resource(a.resource).map_or_else(|_| "?".to_owned(), |r| r.name.clone());
             match self.units_text(a) {
@@ -269,7 +275,7 @@ impl Project {
                 u => format!("{name}[{u}]"),
             }
         };
-        self.assignments_of(task).map(one).collect::<Vec<_>>().join(", ")
+        list.map(one).collect::<Vec<_>>().join(", ")
     }
 
     /// Units for this resource, refused when they belong to another type.

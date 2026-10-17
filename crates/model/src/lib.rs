@@ -13,6 +13,7 @@ mod resource;
 mod resource_calendar;
 mod rows;
 mod schedule;
+mod sheet;
 mod task_type;
 mod usage;
 mod view;
@@ -39,6 +40,7 @@ pub use resource::{
 };
 pub use resource_calendar::ResourceCalendar;
 pub use schedule::{Driver, Moment, Schedule, TaskDates, schedule};
+pub use sheet::SheetText;
 pub use task_type::{MAX_WORK, TaskType};
 pub use usage::{MAX_USAGE_DAYS, ResourceUsage, Usage, usage};
 pub use view::{Column, Columns};
@@ -627,7 +629,12 @@ impl Project {
     /// Predecessors as the Predecessors column shows them: by row ID. A link to a missing task
     /// (only a damaged file could hold one) shows as `?`.
     pub fn preds_text_rows(&self, preds: &[Link]) -> String {
-        let one = |l: &Link| match self.row_of(l.pred) {
+        self.preds_text_by(preds, |id| self.row_of(id))
+    }
+
+    /// [`Project::preds_text_rows`], each predecessor's row found by `row_of`.
+    pub(crate) fn preds_text_by(&self, preds: &[Link], row_of: impl Fn(TaskId) -> Option<usize>) -> String {
+        let one = |l: &Link| match row_of(l.pred) {
             Some(row) => link_text(row, l, &self.options),
             None => link_text('?', l, &self.options),
         };
