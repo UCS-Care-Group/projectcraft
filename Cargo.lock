@@ -2580,11 +2580,22 @@ name = "projectcraft-engine"
 version = "0.0.1"
 dependencies = [
  "craft-atomic",
+ "projectcraft-interchange",
  "projectcraft-model",
  "projectcraft-time",
  "proptest",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "projectcraft-interchange"
+version = "0.0.1"
+dependencies = [
+ "projectcraft-model",
+ "proptest",
+ "quick-xml",
  "thiserror 2.0.21",
 ]
 

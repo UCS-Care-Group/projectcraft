@@ -1,0 +1,17 @@
+[package]
+name = "projectcraft-interchange"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ProjectCraft interchange: other programs' files (Microsoft Project XML) in, a project and an import report out"
+
+[lints]
+workspace = true
+
+[dependencies]
+projectcraft-model = { workspace = true }
+quick-xml = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

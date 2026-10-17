@@ -127,7 +127,7 @@ fn days_to_minutes(v: &mut Value) -> Result<(), CmdError> {
 }
 
 /// Refuses what the editing commands could never have produced; repairs `next_id` so ids are never reused.
-fn validate(p: &mut Project) -> Result<(), CmdError> {
+pub(crate) fn validate(p: &mut Project) -> Result<(), CmdError> {
     let bad = |e: String| CmdError::Io(format!("not a valid ProjectCraft project: {e}"));
     if p.tasks.len() > model::MAX_TASKS {
         return Err(bad(format!("more than {} tasks", model::MAX_TASKS)));

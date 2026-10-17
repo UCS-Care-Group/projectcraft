@@ -13,7 +13,8 @@
 //! clicks the last, such as an open list's entry over a sheet showing the same text), with
 //! `"mods": "shift" | "ctrl" | "alt+shift"` held, `{"key": "ArrowDown"}` presses a key (egui's key
 //! names, same `mods`), `{"browse": "open" | "save", "dir": "/abs/dir"}` opens the built-in file
-//! browser as when no system dialog can be shown, `{"recover": "/abs/dir"}` turns on the
+//! browser as when no system dialog can be shown, `{"open": "/abs/file"}` opens a file as Open
+//! does (a `.xml` is imported, with its report), `{"recover": "/abs/dir"}` turns on the
 //! recovery copy with `dir` as the untitled folder (an `untitled.projectcraft.recovery` there is
 //! offered back). The window is 1280×720 pt at 2× (override with
 //! `{"width": w, "height": h}` and `{"scale": s}` on any line) and opens the sample project
@@ -79,6 +80,9 @@ fn run() -> Result<(), String> {
             let dir = l.get("dir").and_then(Value::as_str).map(std::path::PathBuf::from);
             harness.state_mut().open_file_browser(request, dir, true);
             harness.run_steps(4);
+        } else if let Some(path) = l.get("open").and_then(Value::as_str) {
+            harness.state_mut().open_path(std::path::Path::new(path));
+            harness.run_steps(6);
         } else if let Some(dir) = l.get("recover").and_then(Value::as_str) {
             harness.state_mut().keep_recovery(Some(dir.into()), true);
             harness.run_steps(4);

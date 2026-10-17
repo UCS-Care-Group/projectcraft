@@ -11,8 +11,11 @@ use serde_json::Value;
 const USAGE: &str = "\
 usage:
   projectcraft-cli commands [--json]                         list every command, its effect and params
-  projectcraft-cli run (--sample | FILE) [--cmd ID[=JSON]]... [--save OUT]
-  projectcraft-cli schedule (--sample | FILE)                print the task sheet with its dates
+  projectcraft-cli run SOURCE [--cmd ID[=JSON]]... [--save OUT]
+  projectcraft-cli schedule SOURCE                           print the task sheet with its dates
+
+SOURCE is --sample, a .projectcraft FILE, or --import FILE: Microsoft Project XML, imported as a
+new project (its import report goes to stderr; --save writes a .projectcraft, never the import).
 ";
 
 fn main() -> ExitCode {
@@ -25,8 +28,23 @@ fn main() -> ExitCode {
     }
 }
 
-fn open(source: Option<&String>) -> Result<Session, String> {
-    match source.map(String::as_str) {
+/// The session `args` name, and how many of them that took.
+fn open(args: &[String]) -> Result<(Session, usize), String> {
+    match args.first().map(String::as_str) {
+        Some("--import") => {
+            let f = args.get(1).ok_or_else(|| format!("--import needs a file\n\n{USAGE}"))?;
+            let s = Session::import_file(std::path::Path::new(f), None).map_err(|e| e.to_string())?;
+            if let Some(report) = s.import_report() {
+                eprint!("{}", report.text());
+            }
+            Ok((s, 2))
+        }
+        source => Ok((open_one(source)?, 1)),
+    }
+}
+
+fn open_one(source: Option<&str>) -> Result<Session, String> {
+    match source {
         Some("--sample") => Ok(projectcraft_engine::sample()),
         Some(f) => {
             let path = std::path::Path::new(f);
@@ -60,8 +78,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         Some("run") => {
-            let mut s = open(args.get(1))?;
-            let mut it = args.iter().skip(2);
+            let (mut s, used) = open(args.get(1..).unwrap_or_default())?;
+            let mut it = args.iter().skip(1 + used);
             while let Some(a) = it.next() {
                 let v = it.next().ok_or_else(|| format!("{a} needs a value"))?;
                 match a.as_str() {
@@ -72,6 +90,10 @@ fn run(args: Vec<String>) -> Result<(), String> {
                     }
                     "--save" => {
                         let path = std::path::Path::new(v);
+                        // A project is never written over (or as) Microsoft Project XML.
+                        if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("xml")) {
+                            return Err(format!("--save {v}: ProjectCraft saves .projectcraft files, not Microsoft Project XML"));
+                        }
                         s.save_to(path).map_err(|e| e.to_string())?;
                         sweep(path);
                     }
@@ -81,7 +103,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         Some("schedule") => {
-            let s = open(args.get(1))?;
+            let (s, _) = open(args.get(1..).unwrap_or_default())?;
             let sched = s.schedule.as_ref().map_err(|e| format!("can't schedule: {e}"))?;
             println!("{}  (start {}, finish {})", s.project.name, s.project.start, sched.finish);
             println!(

@@ -2,15 +2,15 @@
 //! dialog can't be (a Linux desktop with neither a file chooser portal nor zenity, where `rfd`
 //! answers "cancelled" at once and nothing would ever show).
 //!
-//! A folder field with Up and Home, the folder's subfolders and its `.projectcraft` files, a file
-//! name field, Open or Save, and Cancel. It only lists folders the owner moves to and never reads
+//! A folder field with Up and Home, the folder's subfolders and its `.projectcraft` files (and, to
+//! open, Microsoft Project XML `.xml` files, imported), a file name field, Open or Save, and Cancel. It only lists folders the owner moves to and never reads
 //! a file: the chosen path goes to [`App::file_picked`], exactly as the system dialog's answer.
 
 use std::path::{Path, PathBuf};
 
 use egui::{Align2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 
-use crate::files::{EXTENSION, FileRequest};
+use crate::files::{EXTENSION, FileRequest, IMPORT_EXTENSION};
 use crate::theme::Tokens;
 use crate::{App, i18n};
 
@@ -37,14 +37,23 @@ pub(crate) struct Listing {
     pub(crate) truncated: bool,
 }
 
-/// Whether `path` is a ProjectCraft project by its extension (any case).
-fn is_project(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(EXTENSION))
+/// Whether `path` has one of `extensions` (any case).
+fn has_extension(path: &Path, extensions: &[&str]) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| extensions.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
-/// The subfolders and project files in `dir`, at most `cap` of them, folders first and each by
-/// name. Hidden entries (a leading dot) are left out; entries that can't be read are skipped.
-pub(crate) fn list_dir(dir: &Path, cap: usize) -> std::io::Result<Listing> {
+/// The files a request lists: projects, and for Open also the files ProjectCraft imports.
+pub(crate) fn listed_extensions(request: FileRequest) -> &'static [&'static str] {
+    match request {
+        FileRequest::Open => &[EXTENSION, IMPORT_EXTENSION],
+        FileRequest::SaveAs => &[EXTENSION],
+    }
+}
+
+/// The subfolders and files with one of `extensions` in `dir`, at most `cap` of them, folders
+/// first and each by name. Hidden entries (a leading dot) are left out; entries that can't be read
+/// are skipped.
+pub(crate) fn list_dir(dir: &Path, cap: usize, extensions: &[&str]) -> std::io::Result<Listing> {
     let mut listing = Listing::default();
     for (i, item) in std::fs::read_dir(dir)?.enumerate() {
         if i >= MAX_SCANNED {
@@ -63,7 +72,7 @@ pub(crate) fn list_dir(dir: &Path, cap: usize) -> std::io::Result<Listing> {
             Ok(t) => t.is_dir(),
             Err(_) => continue,
         };
-        if !dir && !is_project(&path) {
+        if !dir && !has_extension(&path, extensions) {
             continue;
         }
         if listing.entries.len() >= cap {
@@ -150,7 +159,7 @@ impl FileBrowser {
 
     /// Show the folder `dir`; an unreadable one says why, and Up still works.
     pub(crate) fn navigate(&mut self, dir: PathBuf) {
-        self.listing = list_dir(&dir, MAX_LISTED).map_err(|e| e.to_string());
+        self.listing = list_dir(&dir, MAX_LISTED, listed_extensions(self.request)).map_err(|e| e.to_string());
         self.location = dir.to_string_lossy().into_owned();
         self.dir = dir;
         self.selected = None;
@@ -363,7 +372,11 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
             b.note = Note::None;
         }
     });
-    ui.label(RichText::new(tl!("ProjectCraft projects (*.projectcraft)")).color(t.text_dim));
+    let kinds = match b.request {
+        FileRequest::Open => tl!("ProjectCraft projects (*.projectcraft) and Microsoft Project XML (*.xml), imported as a new project"),
+        FileRequest::SaveAs => tl!("ProjectCraft projects (*.projectcraft)"),
+    };
+    ui.label(RichText::new(kinds).color(t.text_dim));
     ui.add_space(8.0);
     let mut cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
     let enter = !location_done && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -428,14 +441,20 @@ mod tests {
         }
         std::fs::create_dir(dir.join("zeta")).unwrap();
         std::fs::create_dir(dir.join(".git")).unwrap();
-        let l = list_dir(&dir, 100).unwrap();
+        let l = list_dir(&dir, 100, &[EXTENSION]).unwrap();
         let names: Vec<&str> = l.entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["zeta", "A.PROJECTCRAFT", "b.projectcraft", "c.projectcraft"]);
         assert!(!l.truncated);
-        let capped = list_dir(&dir, 2).unwrap();
+        let capped = list_dir(&dir, 2, &[EXTENSION]).unwrap();
         assert_eq!(capped.entries.len(), 2);
         assert!(capped.truncated);
-        assert!(list_dir(&dir.join("missing"), 10).is_err(), "an unreadable folder is an error, not a panic");
+        assert!(list_dir(&dir.join("missing"), 10, &[EXTENSION]).is_err(), "an unreadable folder is an error, not a panic");
+        // Open lists Microsoft Project XML too, to import; Save As only projects.
+        std::fs::write(dir.join("Plan.XML"), b"x").unwrap();
+        let open = list_dir(&dir, 100, listed_extensions(FileRequest::Open)).unwrap();
+        assert!(open.entries.iter().any(|e| e.name == "Plan.XML"));
+        let save = list_dir(&dir, 100, listed_extensions(FileRequest::SaveAs)).unwrap();
+        assert!(!save.entries.iter().any(|e| e.name == "Plan.XML"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
