@@ -9,7 +9,8 @@
 //! `{"theme": "light" | "dark"}` switches the theme, `{"shot": "/abs/out.png"}` saves the window
 //! as PNG, `{"steps": n}` runs extra frames,
 //! `{"click": "label"}` clicks the first widget with that label (say `File`, or `Open` with
-//! unsaved changes for the Save changes? prompt; a task's name selects its row), with
+//! unsaved changes for the Save changes? prompt; a task's name selects its row; `"last": true`
+//! clicks the last, such as an open list's entry over a sheet showing the same text), with
 //! `"mods": "shift" | "ctrl" | "alt+shift"` held, `{"key": "ArrowDown"}` presses a key (egui's key
 //! names, same `mods`), `{"browse": "open" | "save", "dir": "/abs/dir"}` opens the built-in file
 //! browser as when no system dialog can be shown, `{"recover": "/abs/dir"}` turns on the
@@ -66,7 +67,9 @@ fn run() -> Result<(), String> {
             harness.run_steps(2);
         } else if let Some(label) = l.get("click").and_then(Value::as_str) {
             // The first widget with this label (a toolbar button, a menu, a menu item).
-            match harness.query_all_by_label(label).next() {
+            let last = l.get("last").and_then(Value::as_bool).unwrap_or(false);
+            let found = if last { harness.query_all_by_label(label).last() } else { harness.query_all_by_label(label).next() };
+            match found {
                 Some(node) => node.click_modifiers(mods(&l)),
                 None => println!("click: no `{label}`"),
             }

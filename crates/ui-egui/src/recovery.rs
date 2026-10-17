@@ -193,6 +193,9 @@ impl App {
                 self.session = session;
                 self.editing = None;
                 self.status = tl!("Restored unsaved changes").to_owned();
+                if let Some(notice) = crate::calendar_notice(&self.session.project) {
+                    self.status = format!("{} · {notice}", self.status);
+                }
                 if let Some(k) = &mut self.keeper {
                     k.recovery_of = Some(self.session.project.clone());
                     k.written = Some(copy);

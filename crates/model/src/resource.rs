@@ -12,7 +12,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Currency, ModelError, Project, TaskId, UnitsFormat};
+use crate::{Currency, ModelError, Project, ResourceCalendar, TaskId, UnitsFormat};
 
 /// Most resources in one project. ponytail: a cap, not a measured limit.
 pub const MAX_RESOURCES: usize = 100_000;
@@ -155,6 +155,10 @@ pub struct Resource {
     pub cost_per_use: i64,
     #[serde(default, skip_serializing_if = "AccrueAt::is_prorated")]
     pub accrue_at: AccrueAt,
+    /// Work resources: its working time where it differs from the project calendar (part time,
+    /// leave). A file without one follows the project calendar.
+    #[serde(default, skip_serializing_if = "ResourceCalendar::is_empty")]
+    pub calendar: ResourceCalendar,
 }
 
 fn full_time() -> u32 {
@@ -216,6 +220,7 @@ impl Resource {
             overtime_rate: 0,
             cost_per_use: 0,
             accrue_at: AccrueAt::default(),
+            calendar: ResourceCalendar::default(),
         }
     }
 
@@ -433,7 +438,7 @@ impl Project {
         self.resources.iter().find(|r| r.id == id).ok_or_else(|| ModelError::Invalid(format!("no resource {id}")))
     }
 
-    fn resource_mut(&mut self, id: ResourceId) -> Result<&mut Resource, ModelError> {
+    pub(crate) fn resource_mut(&mut self, id: ResourceId) -> Result<&mut Resource, ModelError> {
         self.resources.iter_mut().find(|r| r.id == id).ok_or_else(|| ModelError::Invalid(format!("no resource {id}")))
     }
 
@@ -523,6 +528,12 @@ impl Project {
         let retyped = self.resource(id)?.kind != r.kind;
         *self.resource_mut(id)? = r;
         if retyped {
+            // Only a work resource has a calendar.
+            if let Ok(r) = self.resource_mut(id)
+                && r.kind != ResourceType::Work
+            {
+                r.calendar = ResourceCalendar::default();
+            }
             let tasks: BTreeSet<TaskId> = self.assignments.iter().filter(|a| a.resource == id).map(|a| a.task).collect();
             self.assignments.retain(|a| a.resource != id);
             self.settle_all(&tasks);
@@ -585,6 +596,10 @@ impl Project {
         }
         let max = ids.last().map_or(0, |r| r.0);
         self.next_resource_id = self.next_resource_id.max(max.saturating_add(1)).max(1);
+        // A calendar on a material or cost resource is never used: dropped, not refused.
+        for r in self.resources.iter_mut().filter(|r| r.kind != ResourceType::Work) {
+            r.calendar = ResourceCalendar::default();
+        }
         self.check_assignments()
     }
 }

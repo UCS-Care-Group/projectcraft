@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (assignment units as decimals; material rates show their label) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-17 · **Change list:** minor (M2.4 resource calendars) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -39,7 +39,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 - [x] Resource Sheet: work, material and cost resources
 - [x] Assignments: Resource Names column, Assign Resources dialog, material quantities
 - [x] Task types (Fixed Units, Fixed Duration, Fixed Work) and effort-driven scheduling, as Microsoft Project documents them
-- [ ] Resource calendars (leave and part-time working)
+- [x] Resource calendars (leave and part-time working)
 - [x] Costs: rates, cost per use, fixed costs, cost resources, rolled up to the penny
 - [ ] Overallocation shown in red; Resource Usage view
 - [ ] Stretch: manual resource levelling (delays only)
@@ -105,6 +105,7 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-16 | M2: deleting resources that have assignments in the Resource Sheet asks first (Delete / Cancel), naming how many tasks they are assigned to; Cancel or Escape changes nothing, Delete is one `resource.delete` and one undo step; a resource on no task is deleted at once (#83) |
 | 2026-10-17 | M2: assignment units shown as decimals on request, as Project's "Show assignment units as a" option: `project.setOptions` takes `assignmentUnitsAs` (Percentage, the default, or Decimal), shown under Assignment units in Project › Options…; with Decimal, Resource Names (`Ann[0.5]`), Max Units in the Resource Sheet and Assign Resources show `0.5` and `1` and read a bare number as a decimal (up to four places); a number with `%` always reads as a percentage; additive file field, written only when Decimal, so older files load and save unchanged (#84) |
 | 2026-10-17 | M2: a material resource's standard rate shows its material label, as Project shows material rates: `£2.50/ton` in the Resource Sheet and in the rate shown on a resource's name in Assign Resources (work resources `£45.00/hr`); typed with the label or without (`£2.50/ton`, `2.50 / Ton`, `£2.50`), any other label refused; a material with no label shows the amount alone (#85) |
+| 2026-10-17 | M2.4: resource calendars: each work resource has its own calendar based on the project calendar, keeping only what differs (weekdays with their own working times, exceptions of its own such as leave or a short day); on a day its own exception comes first, then the project's, then its own weekday; a resource works only within the project calendar's working time (Microsoft Project also lets one work when the project doesn't: not yet); each work assignment is scheduled on its resource's calendar from the task's start and the task spans its earliest assignment's start to its latest's finish (Project's default, Ignore Resource Calendar No); a task without resources stays on the project calendar; late dates and slack are worked back on the same calendars; `calendar.setWorking`, `calendar.setWorkingTimes` (with `fromProject` to follow the project again), `calendar.addException` and `calendar.removeException` take a `resource`, refusing materials, costs and a week with no working day, and a project-calendar edit that would leave a resource no working weekday is refused, naming it (a file already so opens with that resource on the project calendar, and the status line names it); a resource made a material or cost loses its calendar; Change Working Time has a For calendar picker (the project calendar and each work resource), Use Project Times, and says which of a resource's own times aren't worked; calendars are counted from an index built once per schedule, never copied per resource, so the project calendar's exceptions cost a binary search (constrained tasks on main too); each task's assignments are walked from a known count a day at a time; `cargo xtask perf` gates under 1 s a hostile plan staffed on resource calendars (100,000 tasks, 181,800 assignments, 2,000 exceptions: about 0.09 s) and a plan at the assignment cap (1,000,000 assignments: about 0.23 s), and reports 200 tasks with 30 resources on their own calendars (under 1 ms); additive `calendar` field on resources, validated on load; worked examples (#57) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -134,3 +135,4 @@ ProjectCraft aims for parity with Microsoft Project's scheduling, as its documen
 | 2026-10-17 | minor | Resource-calendar gap listed (#95) |
 | 2026-10-17 | minor | Assignment units as decimals (#84) |
 | 2026-10-17 | minor | Material rates show their label (#85) |
+| 2026-10-17 | minor | M2.4 resource calendars |

@@ -11,7 +11,8 @@
 
 use egui::{Key, Modifiers, RichText, Sense, Stroke, Vec2};
 use projectcraft_engine::model::{
-    Column, Columns, DurationUnit, MAX_WORKING_TIMES, Outline, TaskId, TaskType, WorkingTime, check_working_times, clock, duration_text, parse_clock,
+    Column, Columns, DurationUnit, MAX_WORKING_TIMES, Outline, ResourceId, ResourceType, TaskId, TaskType, WorkingTime, check_working_times, clock,
+    duration_text, parse_clock,
 };
 use projectcraft_engine::{Session, WEEKDAYS, time::Date};
 use serde_json::{Value, json};
@@ -173,11 +174,13 @@ pub enum View {
     ResourceSheet,
 }
 
-/// The Change Working Time dialog's own state: the weekday's working times and the exception
-/// being typed. Everything else it shows is the project calendar, and every change it makes is a
-/// `calendar.*` command.
+/// The Change Working Time dialog's own state: the calendar picked, the weekday's working times
+/// and the exception being typed. Everything else it shows is that calendar, and every change it
+/// makes is a `calendar.*` command.
 #[derive(Default)]
 struct WorkingTimeForm {
+    /// The work resource whose calendar is shown; `None` for the project calendar.
+    resource: Option<ResourceId>,
     date: String,
     working: bool,
     /// The exception's own hours; blank for the default.
@@ -186,8 +189,8 @@ struct WorkingTimeForm {
     /// The weekday whose working times are shown (0 is Monday), and its from/to rows as typed.
     day: usize,
     rows: Vec<(String, String)>,
-    /// The weekday `rows` were read from; `None` reads them again from the calendar.
-    loaded: Option<usize>,
+    /// The weekday (and calendar) `rows` were read from; `None` reads them again.
+    loaded: Option<(usize, Option<ResourceId>)>,
 }
 
 /// Weekday names for the working-times picker, Monday first.
@@ -210,6 +213,19 @@ fn typed_times(rows: &[(String, String)]) -> Result<Vec<String>, &'static str> {
 /// Working times as the dialog lists them: `9:00–13:00, 14:00–16:00`.
 fn times_text(times: &[WorkingTime]) -> String {
     times.iter().map(|w| format!("{}–{}", clock(w.from), clock(w.to))).collect::<Vec<_>>().join(", ")
+}
+
+/// What to tell the owner about a project just opened: work resources whose calendar leaves them
+/// no working weekday (a file can hold that, the commands can't make it), which are scheduled on
+/// the project calendar instead.
+fn calendar_notice(project: &projectcraft_engine::model::Project) -> Option<String> {
+    match project.resources_on_the_project_calendar().as_slice() {
+        [] => None,
+        names => Some(i18n::fmt(
+            tl!("{names}: no working weekday on their own calendar, so scheduled on the project calendar"),
+            &[("names", &names.join(", "))],
+        )),
+    }
 }
 
 pub struct App {
@@ -277,6 +293,7 @@ const NAME_W: f32 = 220.0;
 impl App {
     pub fn new(session: Session, path: Option<std::path::PathBuf>) -> Self {
         let saved = session.project.clone();
+        let status = calendar_notice(&session.project).unwrap_or_default();
         App {
             session,
             path,
@@ -286,7 +303,7 @@ impl App {
             sel: Selection::default(),
             field: Field::Name,
             clicked: None,
-            status: String::new(),
+            status,
             appearance: egui::ThemePreference::System,
             themed: None,
             saved,
@@ -817,11 +834,42 @@ impl App {
     /// one undo step and a refused one (no working weekday, overlapping times) changes nothing.
     fn change_working_time(&mut self, ctx: &egui::Context) {
         let Some(mut form) = self.working_time.take() else { return };
-        let calendar = self.session.project.calendar.clone();
-        if form.loaded != Some(form.day) {
-            form.rows = calendar.weekday_times(form.day).iter().map(|w| (clock(w.from), clock(w.to))).collect();
-            form.loaded = Some(form.day);
+        let project = &self.session.project;
+        // A resource deleted or made a material since (by undo, say): back to the project calendar.
+        if form.resource.is_some_and(|r| project.resource(r).map_or(true, |r| r.kind != ResourceType::Work)) {
+            form.resource = None;
         }
+        // Borrowed, never copied: the project calendar, and the resource's own days if one is shown.
+        let base = &project.calendar;
+        let picked = form.resource.and_then(|r| project.resource(r).ok());
+        let own = picked.map(|r| &r.calendar);
+        // Each weekday's times as set: a resource's own, or the project calendar's.
+        let set_times = |i: usize| match own {
+            Some(c) => c.weekday_times(base, i),
+            None => base.weekday_times(i),
+        };
+        let set_working: [bool; 7] = std::array::from_fn(|i| !set_times(i).is_empty());
+        if form.loaded != Some((form.day, form.resource)) {
+            form.rows = set_times(form.day).iter().map(|w| (clock(w.from), clock(w.to))).collect();
+            form.loaded = Some((form.day, form.resource));
+        }
+        // A resource works only within the project calendar's working time: say so where its own
+        // times reach outside it.
+        let worked_note = |set: &[WorkingTime], worked: &[WorkingTime]| -> Option<String> {
+            (set != worked).then(|| match worked {
+                [] => tl!("Not worked: the project calendar doesn't work then").to_owned(),
+                w => i18n::fmt(tl!("Worked within the project calendar: {times}"), &[("times", &times_text(w))]),
+            })
+        };
+        let day_note = own.and_then(|c| worked_note(set_times(form.day), &c.weekday_worked(base, form.day)));
+        // Each command names the calendar it changes: the one shown as this frame began.
+        let shown_resource = form.resource;
+        let on = |mut params: Value| {
+            if let (Some(r), Some(m)) = (shown_resource, params.as_object_mut()) {
+                m.insert("resource".into(), json!(r.0));
+            }
+            params
+        };
         let error = self.status.clone();
         let t = Tokens::get(ctx);
         let mut commands: Vec<(&'static str, Value)> = Vec::new();
@@ -830,19 +878,43 @@ impl App {
         let modal = egui::Modal::new(egui::Id::new("change_working_time")).show(ctx, |ui| {
             ui.set_width(520.0);
             ui.heading(tl!("Change Working Time"));
-            ui.label(RichText::new(tl!("Project calendar")).color(t.text_dim));
+            ui.horizontal(|ui| {
+                let label = ui.label(tl!("For calendar"));
+                let shown = picked.map_or_else(|| tl!("Project calendar").to_owned(), |r| r.name.clone());
+                egui::ComboBox::from_id_salt("working_time_calendar")
+                    .selected_text(shown)
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut form.resource, None, tl!("Project calendar"));
+                        // Listed only while open, and only the rows in view drawn: a plan may
+                        // have thousands of people.
+                        let people: Vec<(ResourceId, &str)> =
+                            project.resources.iter().filter(|r| r.kind == ResourceType::Work).map(|r| (r.id, r.name.as_str())).collect();
+                        let row_h = ui.spacing().interact_size.y;
+                        egui::ScrollArea::vertical().max_height(row_h * 12.0).show_rows(ui, row_h, people.len(), |ui, range| {
+                            for (id, name) in people.get(range).into_iter().flatten() {
+                                ui.selectable_value(&mut form.resource, Some(*id), *name);
+                            }
+                        });
+                    })
+                    .response
+                    .labelled_by(label.id);
+            });
+            if form.resource.is_some() {
+                ui.label(RichText::new(tl!("Based on the project calendar: only what differs is its own.")).color(t.text_dim));
+            }
             ui.add_space(10.0);
 
             ui.label(RichText::new(tl!("Working days")).strong());
-            let mut working = calendar.working;
+            let mut working = set_working;
             ui.horizontal(|ui| {
                 for (w, name) in working.iter_mut().zip(WEEKDAYS) {
                     ui.checkbox(w, tl!(name));
                 }
             });
-            if working != calendar.working {
+            if working != set_working {
                 let weekdays: Vec<&str> = WEEKDAYS.iter().zip(working).filter(|(_, w)| *w).map(|(n, _)| *n).collect();
-                commands.push(("calendar.setWorking", json!({ "weekdays": weekdays })));
+                commands.push(("calendar.setWorking", on(json!({ "weekdays": weekdays }))));
             }
             ui.add_space(10.0);
 
@@ -854,9 +926,16 @@ impl App {
                         ui.selectable_value(&mut form.day, i, tl!(name));
                     }
                 });
+                if let Some(c) = &own {
+                    let mine = c.week.get(form.day).is_some_and(Option::is_some);
+                    ui.label(RichText::new(if mine { tl!("its own") } else { tl!("as the project calendar") }).color(t.text_dim));
+                }
             });
             if form.rows.is_empty() {
                 ui.label(RichText::new(tl!("Non-working: add working times to work this day.")).color(t.text_dim));
+            }
+            if let Some(note) = &day_note {
+                ui.label(RichText::new(note.as_str()).color(t.text_dim));
             }
             let mut remove = None;
             for (i, (from, to)) in form.rows.iter_mut().enumerate() {
@@ -881,28 +960,52 @@ impl App {
                     match typed_times(&form.rows) {
                         Ok(times) => {
                             let weekday = WEEKDAYS.get(form.day).copied().unwrap_or("Mon");
-                            commands.push(("calendar.setWorkingTimes", json!({"weekday": weekday, "times": times})));
+                            commands.push(("calendar.setWorkingTimes", on(json!({"weekday": weekday, "times": times}))));
                         }
                         Err(why) => invalid = Some(why),
                     }
+                }
+                let mine = own.as_ref().is_some_and(|c| c.week.get(form.day).is_some_and(Option::is_some));
+                if mine && ui.button(tl!("Use Project Times")).on_hover_text(tl!("This weekday follows the project calendar again")).clicked() {
+                    let weekday = WEEKDAYS.get(form.day).copied().unwrap_or("Mon");
+                    commands.push(("calendar.setWorkingTimes", on(json!({"weekday": weekday, "fromProject": true}))));
                 }
             });
             ui.add_space(10.0);
 
             ui.label(RichText::new(tl!("Exceptions")).strong());
-            if calendar.exceptions.is_empty() {
+            // A resource lists its own; the project calendar's apply to it too. Only the rows in
+            // view are drawn.
+            if own.is_some() {
+                ui.label(RichText::new(tl!("The project calendar's exceptions apply too, except on a day with one of its own.")).color(t.text_dim));
+            }
+            let count = own.map_or(base.exceptions.len(), |c| c.exceptions.len());
+            if count == 0 {
                 ui.label(RichText::new(tl!("None: every day follows its weekday.")).color(t.text_dim));
             } else {
-                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                    egui::Grid::new("exceptions").striped(true).num_columns(5).spacing([16.0, 4.0]).show(ui, |ui| {
-                        for (date, worked) in &calendar.exceptions {
+                let row_h = ui.spacing().interact_size.y;
+                egui::ScrollArea::vertical().max_height(180.0).show_rows(ui, row_h, count, |ui, range| {
+                    // Each row: its date, its times as set, and what is worked of them if less.
+                    let rows: Vec<(Date, Vec<WorkingTime>, Option<String>)> = match own {
+                        Some(c) => c
+                            .exceptions
+                            .iter()
+                            .skip(range.start)
+                            .take(range.len())
+                            .map(|(d, set)| (*d, set.clone(), worked_note(set, &c.times_on(base, *d))))
+                            .collect(),
+                        None => base.exceptions.keys().skip(range.start).take(range.len()).map(|d| (*d, base.times_on(*d).to_vec(), None)).collect(),
+                    };
+                    egui::Grid::new("exceptions").striped(true).num_columns(6).spacing([16.0, 4.0]).show(ui, |ui| {
+                        for (date, set, note) in &rows {
                             ui.label(date.to_string());
                             let weekday = WEEKDAYS.get(usize::from(date.weekday())).copied().unwrap_or("");
                             ui.label(RichText::new(tl!(weekday)).color(t.text_dim));
-                            ui.label(if *worked { tl!("Working") } else { tl!("Non-working") });
-                            ui.label(RichText::new(times_text(calendar.times_on(*date))).color(t.text_dim));
+                            ui.label(if set.is_empty() { tl!("Non-working") } else { tl!("Working") });
+                            ui.label(RichText::new(times_text(set)).color(t.text_dim));
+                            ui.label(RichText::new(note.as_deref().unwrap_or("")).color(t.text_dim));
                             if ui.small_button(tl!("Remove")).clicked() {
-                                commands.push(("calendar.removeException", json!({"date": date.to_string()})));
+                                commands.push(("calendar.removeException", on(json!({"date": date.to_string()}))));
                             }
                             ui.end_row();
                         }
@@ -926,7 +1029,7 @@ impl App {
                         Err(why) => invalid = Some(why),
                     }
                     if invalid.is_none() {
-                        commands.push(("calendar.addException", params));
+                        commands.push(("calendar.addException", on(params)));
                         add = true;
                     }
                 }
@@ -1326,6 +1429,78 @@ mod tests {
         h.get_by_label("Close").click();
         h.run_steps(2);
         assert!(h.state().working_time.is_none());
+    }
+
+    /// The calendar picker: a work resource's own calendar is edited through the same commands,
+    /// naming the resource; the project calendar is left as it was, and the resource's tasks move.
+    #[test]
+    fn change_working_time_picks_a_resource_calendar() {
+        use egui_kittest::kittest::Queryable;
+        use projectcraft_engine::model::ResourceId;
+        let priya = ResourceId(1);
+        let mut app = App::new(projectcraft_engine::sample(), None);
+        app.open_change_working_time();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(|ui, app: &mut App| app.ui(ui), app);
+        h.run_steps(3);
+        let project_calendar = h.state().session.project.calendar.clone();
+        h.get_by_label("For calendar").click();
+        h.run_steps(3);
+        assert!(h.query_by_label("Packing boxes").is_none() && h.query_by_label("Travel").is_none(), "only work resources have calendars");
+        // The sheet behind shows her name too; the list is drawn last, on top.
+        h.query_all_by_label("Priya Shah").last().unwrap().click();
+        h.run_steps(3);
+        assert_eq!(h.state().working_time.as_ref().unwrap().resource, Some(priya));
+        assert!(h.query_by_label("Based on the project calendar: only what differs is its own.").is_some());
+        // Fridays off for Priya alone.
+        h.get_by_label("Fri").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.project.resource_calendar(priya).unwrap().working, [true, true, true, true, false, false, false]);
+        assert_eq!(h.state().session.project.calendar, project_calendar);
+        // Leave on Tuesday 3 November: Agree the brief (Priya, 2 days from Monday) finishes Wednesday.
+        let finish = |h: &Harness<'static, App>| h.state().session.schedule.as_ref().unwrap().tasks[&TaskId(1)].finish;
+        assert_eq!(finish(&h), Date::from_ymd(2026, 11, 3).unwrap());
+        h.get_by_label("Date").focus();
+        h.run_steps(1);
+        h.get_by_label("Date").type_text("2026-11-03");
+        h.run_steps(2);
+        h.get_by_label("Add Exception").click();
+        h.run_steps(3);
+        assert_eq!(finish(&h), Date::from_ymd(2026, 11, 4).unwrap());
+        assert!(h.state().session.project.calendar.exceptions.is_empty(), "the project calendar has none");
+        // Friday back to the project's times, and the leave removed.
+        h.state_mut().working_time.as_mut().unwrap().day = 4;
+        h.run_steps(3);
+        h.get_by_label("Use Project Times").click();
+        h.run_steps(3);
+        h.get_by_label("Remove").click();
+        h.run_steps(3);
+        assert!(h.state().session.project.resource(priya).unwrap().calendar.is_empty());
+        assert_eq!(finish(&h), Date::from_ymd(2026, 11, 3).unwrap());
+        // Undo, step by step, back to where it started; back on the project calendar, no Use
+        // Project Times.
+        while h.state().session.can_undo() {
+            h.state_mut().session.run("edit.undo", &json!({})).unwrap();
+        }
+        h.state_mut().working_time.as_mut().unwrap().resource = None;
+        h.run_steps(3);
+        assert!(h.query_by_label("Use Project Times").is_none());
+    }
+
+    /// A file whose resource has no working weekday left (the commands refuse that) opens with
+    /// that resource on the project calendar, and the status line says so, by name.
+    #[test]
+    fn a_resource_on_the_project_calendar_is_named_on_open() {
+        let mut s = projectcraft_engine::sample();
+        for day in ["Tue", "Wed", "Thu", "Fri"] {
+            s.run("calendar.setWorkingTimes", &json!({"weekday": day, "times": [], "resource": 1})).unwrap();
+        }
+        assert!(calendar_notice(&s.project).is_none());
+        let mut v: Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
+        v["calendar"]["times"] = json!([[], [{"from": 480, "to": 1020}], [{"from": 480, "to": 1020}], [], [], [], []]);
+        let opened = Session::load_json(&v.to_string()).unwrap();
+        assert!(opened.schedule.is_ok());
+        let app = App::new(opened, None);
+        assert_eq!(app.status, "Priya Shah: no working weekday on their own calendar, so scheduled on the project calendar");
     }
 
     /// Working times are edited as from/to rows: Apply sets the weekday's times in one command;

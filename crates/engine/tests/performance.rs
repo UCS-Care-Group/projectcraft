@@ -3,8 +3,9 @@
 //! calendar with holidays and working Saturdays.
 //!
 //! The gate (`reschedule_200_tasks_under_10_ms`) is `#[ignore]`d because timings mean nothing in
-//! a debug build; `cargo xtask ci` runs it in release (`cargo xtask perf`). A 2,000-task plan is
-//! timed and reported, not gated. Typing a long Resource Names text into a large plan is gated too
+//! a debug build; `cargo xtask ci` runs it in release (`cargo xtask perf`). A 2,000-task plan,
+//! and the 200-task plan staffed with 30 resources on calendars of their own, are timed and
+//! reported, not gated. Typing a long Resource Names text into a large plan is gated too
 //! (`resource_names_on_a_large_plan_stay_fast`).
 
 use std::time::{Duration, Instant};
@@ -136,6 +137,32 @@ fn plan(n: usize, seed: u64) -> Project {
     p
 }
 
+/// `plan` staffed: 30 work resources, each with about a week's leave a quarter and every third
+/// one part time (Fridays off), and one or two of them on each task with duration.
+fn staffed(n: usize, seed: u64) -> Project {
+    let mut p = plan(n, seed);
+    let mut rng = Lcg(seed ^ 0x5eed);
+    let people: Vec<ResourceId> = (0..30).map(|k| p.add_resource(Some(&format!("Person {k}")), ResourceType::Work, None).unwrap()).collect();
+    for (k, r) in people.iter().enumerate() {
+        for q in 0..4 {
+            let first = date("2026-01-05").add_days(q * 91 + rng.below(80) as i64).unwrap();
+            for d in 0..5 {
+                p.set_resource_exception(*r, first.add_days(d).unwrap(), vec![]).unwrap();
+            }
+        }
+        if k % 3 == 0 {
+            p.set_resource_weekday_times(*r, 4, Some(vec![])).unwrap();
+        }
+    }
+    let tasks: Vec<TaskId> = p.tasks.iter().filter(|t| t.outline_level == 4 && t.duration > 0).map(|t| t.id).collect();
+    for t in tasks {
+        for _ in 0..1 + rng.below(2) {
+            let _ = p.assign(t, people[rng.below(30) as usize], None);
+        }
+    }
+    p
+}
+
 /// One phase's rows: (outline level, name).
 fn phase_rows(phase: usize) -> Vec<(u32, String)> {
     let mut rows = vec![(1, format!("Phase {phase}"))];
@@ -192,6 +219,15 @@ fn the_generated_plan_is_realistic_and_schedules_deterministically() {
     let c = Session::load_json(&a.save_json().unwrap()).unwrap();
     assert_eq!(a.schedule.as_ref().unwrap(), c.schedule.as_ref().unwrap());
     assert!(Session::new(plan(2_000, 19)).schedule.is_ok());
+    // Staffed, on resource calendars: the same dates every time, and some tasks moved by them.
+    let staffed_plan = staffed(200, 19);
+    let (a, b) = (Session::new(staffed_plan.clone()), Session::new(staffed_plan.clone()));
+    assert_eq!(a.schedule.as_ref().unwrap(), b.schedule.as_ref().unwrap());
+    let mut bare = staffed_plan;
+    for r in &mut bare.resources {
+        r.calendar = Default::default();
+    }
+    assert_ne!(a.schedule.as_ref().unwrap().tasks, Session::new(bare).schedule.unwrap().tasks, "leave moves tasks");
 }
 
 /// The gate: a 200-task plan reschedules in under 10 ms in release (median of 31 edits). Also
@@ -204,7 +240,10 @@ fn reschedule_200_tasks_under_10_ms() {
     let mut large = Session::new(plan(2_000, 19));
     let t2000 = median_reschedule(&mut large, RUNS);
     let build = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let mut crewed = Session::new(staffed(200, 19));
+    let t_crewed = median_reschedule(&mut crewed, RUNS);
     println!("perf ({build}, median of {RUNS}): reschedule 200 tasks {t200:.2?}, 2,000 tasks {t2000:.2?} (gate: 200 under {GATE:?})");
+    println!("perf ({build}, median of {RUNS}): reschedule 200 tasks with 30 resources on their own calendars {t_crewed:.2?} (reported)");
     if !cfg!(debug_assertions) {
         assert!(t200 < GATE, "200-task reschedule took {t200:.2?}, over the {GATE:?} gate");
     }
@@ -236,6 +275,53 @@ fn hostile(n: usize, depth: u32) -> Project {
     p
 }
 
+/// [`hostile`] staffed: 10 people with a day's leave each on every subtask, and a project
+/// calendar of 2,000 exceptions, so every hold-search step also walks resource calendars.
+fn hostile_staffed() -> Project {
+    let mut p = hostile(projectcraft_engine::model::MAX_TASKS, 9);
+    let start = date("2026-01-05");
+    for k in 0..2_000 {
+        p.calendar.add_exception(start.add_days(k).unwrap(), k % 7 != 5).unwrap();
+    }
+    let people: Vec<ResourceId> = (0..10).map(|k| p.add_resource(Some(&format!("P{k}")), ResourceType::Work, None).unwrap()).collect();
+    for r in &people {
+        p.set_resource_exception(*r, date("2026-02-02"), vec![]).unwrap();
+    }
+    let deepest = p.tasks.iter().map(|t| t.outline_level).max().unwrap_or(1);
+    let leaves: Vec<(TaskId, i64)> = p.tasks.iter().filter(|t| t.outline_level == deepest).map(|t| (t.id, t.duration)).collect();
+    for (t, d) in leaves {
+        for r in &people {
+            p.assignments.push(Assignment { task: t, resource: *r, units: Units::Work(10_000), work: d, duration: d });
+        }
+    }
+    p
+}
+
+/// The most assignments a plan holds, on resource calendars: 100,000 one-day tasks, each with all
+/// 10 people (each with a day's leave) on it, so 1,000,000 assignments, and a project calendar of
+/// 2,000 exceptions. No links: the cost is walking every assignment on its calendar.
+fn staffed_to_the_cap() -> Project {
+    let mut p = Project::new("Capped", date("2026-01-05"));
+    let start = date("2026-01-05");
+    for k in 0..2_000 {
+        p.calendar.add_exception(start.add_days(k).unwrap(), k % 7 != 5).unwrap();
+    }
+    for k in 0..projectcraft_engine::model::MAX_TASKS {
+        p.add_task(format!("T{k}"), DAY).unwrap();
+    }
+    let people: Vec<ResourceId> = (0..10).map(|k| p.add_resource(Some(&format!("P{k}")), ResourceType::Work, None).unwrap()).collect();
+    for r in &people {
+        p.set_resource_exception(*r, date("2026-02-02"), vec![]).unwrap();
+    }
+    let tasks: Vec<TaskId> = p.tasks.iter().map(|t| t.id).collect();
+    for t in tasks {
+        for r in &people {
+            p.assignments.push(Assignment { task: t, resource: *r, units: Units::Work(10_000), work: DAY, duration: DAY });
+        }
+    }
+    p
+}
+
 /// The worst case the finish-type hold search allows: a full-size hostile plan (`MAX_TASKS`
 /// tasks) schedules within [`HOSTILE_GATE`] in release (median of 3), the same dates every time.
 #[test]
@@ -260,6 +346,35 @@ fn hostile_finish_holds_stay_bounded() {
     println!("perf ({build}, median of 3): hostile finish holds, {} tasks {t:.2?} (gate: under {HOSTILE_GATE:?})", p.tasks.len());
     if !cfg!(debug_assertions) {
         assert!(t < HOSTILE_GATE, "hostile schedule took {t:.2?}, over the {HOSTILE_GATE:?} gate");
+    }
+    // Staffed on resource calendars: the hold searches' budget counts the calendar walks too.
+    let p = hostile_staffed();
+    let t0 = Instant::now();
+    let s = projectcraft_engine::model::schedule(&p);
+    let t = t0.elapsed();
+    assert!(s.is_ok());
+    assert_eq!(s, projectcraft_engine::model::schedule(&p), "same dates every time");
+    println!(
+        "perf ({build}): hostile finish holds staffed on resource calendars, {} tasks, {} assignments, 2,000 exceptions {t:.2?} (gate: under {HOSTILE_GATE:?})",
+        p.tasks.len(),
+        p.assignments.len()
+    );
+    if !cfg!(debug_assertions) {
+        assert!(t < HOSTILE_GATE, "staffed hostile schedule took {t:.2?}, over the {HOSTILE_GATE:?} gate");
+    }
+    // As many assignments as a plan holds, every one walked on its resource's calendar.
+    let p = staffed_to_the_cap();
+    let t0 = Instant::now();
+    let s = projectcraft_engine::model::schedule(&p);
+    let t = t0.elapsed();
+    assert!(s.is_ok());
+    println!(
+        "perf ({build}): {} tasks with {} assignments on resource calendars, 2,000 exceptions {t:.2?} (gate: under {HOSTILE_GATE:?})",
+        p.tasks.len(),
+        p.assignments.len()
+    );
+    if !cfg!(debug_assertions) {
+        assert!(t < HOSTILE_GATE, "a schedule at the assignment cap took {t:.2?}, over the {HOSTILE_GATE:?} gate");
     }
 }
 

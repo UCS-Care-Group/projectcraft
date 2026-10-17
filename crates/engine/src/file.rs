@@ -446,6 +446,10 @@ mod tests {
                 overtime_rate: 6_000,
                 cost_per_use: 1_000,
                 accrue_at: AccrueAt::Start,
+                calendar: model::ResourceCalendar {
+                    week: [None, None, None, None, Some(vec![]), None, None],
+                    exceptions: [(Date::from_ymd(2026, 3, 10).unwrap(), vec![])].into(),
+                },
             },
             Resource {
                 material_label: "tons".into(),
