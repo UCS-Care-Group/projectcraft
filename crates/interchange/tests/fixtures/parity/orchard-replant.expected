@@ -1,6 +1,7 @@
 # Accepted "Dates differ" lines for orchard-replant.xml, one a line as the import report writes
 # them. Each is a conversion the import report also lists, and a gap in ROADMAP.md (M4, import
-# gaps). The percent lag (ID 4) and the task after it (ID 6) match the file.
+# gaps). The percent lag (ID 4), As Late As Possible (ID 5) and the task after them (ID 6)
+# match the file.
 
 # Elapsed duration: ProjectCraft has no elapsed time, so 2ed becomes 2 working days; Project runs
 # 48 hours round the clock, to Wednesday 08:00.
@@ -9,9 +10,6 @@ Dates differ: Start and finish (ID 2 Soak the rootstock): the file has 2026-10-0
 # Elapsed lag: 3ed becomes 3 working days, so the task starts a day later than after 72 hours
 # round the clock (which end on the Saturday).
 Dates differ: Start and finish (ID 3 Dig planting pits): the file has 2026-10-12 to 2026-10-13; ProjectCraft works out 2026-10-13 to 2026-10-14
-
-# As Late As Possible isn't supported yet: scheduled As Soon As Possible.
-Dates differ: Start and finish (ID 5 Order the labels): the file has 2026-10-13 to 2026-10-14; ProjectCraft works out 2026-10-05 to 2026-10-05
 
 # Task calendars aren't supported yet: the task is scheduled on the project calendar, on weekdays.
 Dates differ: Start and finish (ID 7 Weekend watering): the file has 2026-10-10 to 2026-10-11; ProjectCraft works out 2026-10-08 to 2026-10-09

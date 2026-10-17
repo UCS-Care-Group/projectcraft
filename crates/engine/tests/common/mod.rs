@@ -106,6 +106,7 @@ pub fn generated(seed: u64) -> Session {
             3 => Constraint::StartNoLaterThan(near(&mut rng)),
             4 => Constraint::FinishNoEarlierThan(near(&mut rng)),
             5 => Constraint::FinishNoLaterThan(near(&mut rng)),
+            6 => Constraint::AsLateAsPossible,
             _ => Constraint::Asap,
         };
         let deadline = rng.chance(20).then(|| near(&mut rng));

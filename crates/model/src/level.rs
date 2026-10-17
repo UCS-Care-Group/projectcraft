@@ -610,7 +610,7 @@ mod tests {
             durations in proptest::collection::vec(0i64..2400, 1..10),
             preds in proptest::collection::vec((0usize..10, 0u32..11), 0..8),
             priorities in proptest::collection::vec((0usize..10, 0u32..1001), 0..6),
-            constrained in proptest::collection::vec((0usize..10, 0usize..7, 0i64..20), 0..4),
+            constrained in proptest::collection::vec((0usize..10, 0usize..8, 0i64..20), 0..4),
             leave in proptest::collection::vec((0usize..3, 0i64..30), 0..6),
             max in proptest::collection::vec(1u32..30_000, 3),
             assigned in proptest::collection::vec((0usize..10, 0usize..3, 1u32..30_000), 0..14),

@@ -155,7 +155,7 @@ fn bad_constraint_params_change_nothing() {
     let e = s.run("task.setConstraint", &json!({"id": 2, "type": "SNET"})).unwrap_err().to_string();
     assert!(e.contains("date"), "{e}");
     assert!(s.run("task.setConstraint", &json!({"id": 2, "type": "MSO"})).is_err());
-    assert!(s.run("task.setConstraint", &json!({"id": 2, "type": "ALAP", "date": "2026-01-12"})).is_err());
+    assert!(s.run("task.setConstraint", &json!({"id": 2, "type": "ALAPX"})).is_err());
     assert!(s.run("task.setConstraint", &json!({"id": 2, "type": "SNET", "date": "2026-02-30"})).is_err());
     assert!(s.run("task.setConstraint", &json!({"id": 9, "type": "SNET", "date": "2026-01-12"})).is_err());
     assert_eq!(s.project, before);

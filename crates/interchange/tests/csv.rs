@@ -153,7 +153,8 @@ fn bad_cells_are_report_lines_not_failures() {
     assert_eq!(p.tasks[2].preds.iter().map(|l| l.pred.0).collect::<Vec<_>>(), [1, 2], "the repeat is dropped");
     assert!(p.tasks[3].preds.is_empty());
     assert!(p.tasks[4].preds.is_empty(), "a task can't be its own predecessor");
-    assert!(p.tasks.iter().all(|t| t.constraint.is_asap() && t.deadline.is_none()));
+    assert_eq!(p.tasks[2].constraint, Constraint::AsLateAsPossible, "As Late As Possible comes in as it is");
+    assert!(p.tasks.iter().enumerate().all(|(k, t)| (k == 2 || t.constraint.is_asap()) && t.deadline.is_none()));
     let r = &i.report.lines;
     let place = |f: &str| find(r, f).place.clone();
     assert_eq!(place("Duration"), "Row 1 A, Row 2 B");
@@ -163,7 +164,7 @@ fn bad_cells_are_report_lines_not_failures() {
     assert!(lines_about(r, "Links (predecessors)").iter().any(|l| l.place == "Row 3 C" && l.why.contains("twice")), "{r:#?}");
     assert!(lines_about(r, "Links (predecessors)").iter().any(|l| l.place == "Row 5 E" && l.why.contains("its own predecessor")), "{r:#?}");
     assert_eq!(place("Outline Level"), "Row 2 B");
-    assert_eq!(place("As Late As Possible"), "Row 3 C");
+    assert!(lines_about(r, "As Late As Possible").is_empty(), "{r:#?}");
     assert_eq!(place("Constraint Type"), "Row 4 D");
     assert!(lines_about(r, "Constraint Date").iter().any(|l| l.place == "Row 2 B"), "{r:#?}");
     assert!(lines_about(r, "Constraint Date").iter().any(|l| l.place == "Row 5 E"), "{r:#?}");

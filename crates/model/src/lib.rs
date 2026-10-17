@@ -105,8 +105,8 @@ pub struct Link {
 }
 
 /// A date rule on a task's start or finish, as Microsoft Project's Constraint Type field.
-/// Constraints win over links. Written to the file as `"ASAP"` or `{"SNET": "2026-01-12"}`;
-/// a file without one is As Soon As Possible.
+/// Constraints win over links. Written to the file as `"ASAP"`, `"ALAP"` or
+/// `{"SNET": "2026-01-12"}`; a file without one is As Soon As Possible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Constraint {
     /// No constraint: as early as the links allow.
@@ -125,17 +125,23 @@ pub enum Constraint {
     MustStartOn(Date),
     #[serde(rename = "MFO")]
     MustFinishOn(Date),
+    /// As late as it can without delaying its successors or the project finish: it takes its
+    /// late dates (see the `schedule` module's notes). No date.
+    #[serde(rename = "ALAP")]
+    AsLateAsPossible,
 }
 
 impl Constraint {
-    /// Every type's short code, ASAP first.
-    pub const CODES: [&'static str; 7] = ["ASAP", "SNET", "FNET", "SNLT", "FNLT", "MSO", "MFO"];
+    /// Every type's short code, ASAP first and ALAP last.
+    pub const CODES: [&'static str; 8] = ["ASAP", "SNET", "FNET", "SNLT", "FNLT", "MSO", "MFO", "ALAP"];
 
-    /// Builds a constraint from its short code (any case) and date. ASAP takes no date and ignores one given.
+    /// Builds a constraint from its short code (any case) and date. ASAP and ALAP take no date and
+    /// ignore one given.
     pub fn from_code(code: &str, date: Option<Date>) -> Result<Constraint, ModelError> {
         let code = code.trim().to_ascii_uppercase();
         let make: fn(Date) -> Constraint = match code.as_str() {
             "ASAP" => return Ok(Constraint::Asap),
+            "ALAP" => return Ok(Constraint::AsLateAsPossible),
             "SNET" => Constraint::StartNoEarlierThan,
             "FNET" => Constraint::FinishNoEarlierThan,
             "SNLT" => Constraint::StartNoLaterThan,
@@ -159,6 +165,7 @@ impl Constraint {
             Constraint::FinishNoLaterThan(_) => "FNLT",
             Constraint::MustStartOn(_) => "MSO",
             Constraint::MustFinishOn(_) => "MFO",
+            Constraint::AsLateAsPossible => "ALAP",
         }
     }
 
@@ -172,13 +179,14 @@ impl Constraint {
             Constraint::FinishNoLaterThan(_) => "Finish No Later Than",
             Constraint::MustStartOn(_) => "Must Start On",
             Constraint::MustFinishOn(_) => "Must Finish On",
+            Constraint::AsLateAsPossible => "As Late As Possible",
         }
     }
 
-    /// The constraint date; `None` for ASAP.
+    /// The constraint date; `None` for ASAP and ALAP.
     pub fn date(self) -> Option<Date> {
         match self {
-            Constraint::Asap => None,
+            Constraint::Asap | Constraint::AsLateAsPossible => None,
             Constraint::StartNoEarlierThan(d)
             | Constraint::FinishNoEarlierThan(d)
             | Constraint::StartNoLaterThan(d)
@@ -980,10 +988,12 @@ mod tests {
         for code in Constraint::CODES {
             let c = Constraint::from_code(code, d).unwrap();
             assert_eq!(c.code(), code);
-            assert_eq!(c.date(), if code == "ASAP" { None } else { d });
+            assert_eq!(c.date(), if matches!(code, "ASAP" | "ALAP") { None } else { d });
         }
         assert!(Constraint::from_code("SNET", None).unwrap_err().to_string().contains("Start No Earlier Than needs a date"));
-        assert!(Constraint::from_code("ALAP", d).is_err());
+        assert_eq!(Constraint::from_code("alap", None).unwrap(), Constraint::AsLateAsPossible);
+        assert_eq!(Constraint::AsLateAsPossible.name(), "As Late As Possible");
+        assert!(Constraint::from_code("ALAPX", d).is_err());
     }
 
     proptest::proptest! {

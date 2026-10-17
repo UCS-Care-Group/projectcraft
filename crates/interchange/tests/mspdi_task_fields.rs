@@ -108,12 +108,16 @@ fn every_constraint_type_is_imported_and_scheduled() {
 }
 
 #[test]
-fn as_late_as_possible_becomes_as_soon_as_possible_reported() {
+fn as_late_as_possible_is_imported_and_scheduled() {
+    // Sow the lawn (2 days) sets the finish, Tuesday 3 March; Rake (1 day) As Late As Possible
+    // takes its late dates, the Tuesday. A date given with it is ignored, as Project does.
     let i = mspdi(&plan(&[(1, "Sow the lawn", 16, "<ConstraintType>1</ConstraintType>"), (2, "Rake", 8, &constraint(1, "2026-03-20T08:00:00"))]));
-    assert!(i.project.tasks.iter().all(|t| t.constraint.is_asap()));
-    let l = find(&i, "As Late As Possible");
-    assert_eq!((l.outcome, l.place.as_str()), (Outcome::Converted, "ID 1 Sow the lawn, ID 2 Rake"));
-    assert_eq!(model::schedule(&i.project).unwrap().tasks[&TaskId(1)].start, d(2026, 3, 2));
+    assert!(i.project.tasks.iter().all(|t| t.constraint == Constraint::AsLateAsPossible));
+    assert!(others(&i).is_empty(), "imported as it is: {:#?}", others(&i));
+    let s = model::schedule(&i.project).unwrap();
+    assert_eq!(dates(&s, 1), (d(2026, 3, 2), d(2026, 3, 3), d(2026, 3, 2), d(2026, 3, 3)));
+    assert_eq!(dates(&s, 2), (d(2026, 3, 3), d(2026, 3, 3), d(2026, 3, 3), d(2026, 3, 3)));
+    assert_eq!(s.tasks[&TaskId(2)].driver, Driver::Constraint);
 }
 
 #[test]

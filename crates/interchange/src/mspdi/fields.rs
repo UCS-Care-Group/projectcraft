@@ -71,7 +71,6 @@ impl TaskFields {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum Note {
-    Alap,
     UnknownConstraint,
     NoConstraintDate,
     FarConstraintDate,
@@ -87,8 +86,7 @@ enum Note {
 }
 
 impl Note {
-    const ALL: [Note; 13] = [
-        Note::Alap,
+    const ALL: [Note; 12] = [
         Note::UnknownConstraint,
         Note::NoConstraintDate,
         Note::FarConstraintDate,
@@ -111,7 +109,6 @@ impl Note {
     fn line(self) -> (Outcome, &'static str, &'static str) {
         use Outcome::*;
         match self {
-            Note::Alap => (Converted, "As Late As Possible", "not supported yet; As Soon As Possible used"),
             Note::UnknownConstraint => {
                 (Converted, "Constraint", "the constraint type code isn't one of Project's (0 to 7); As Soon As Possible used")
             }
@@ -189,10 +186,7 @@ pub(super) fn apply(f: &TaskFields, t: &mut Task, start: Date, digits: u32, cale
     let mut note = |n: Note| notes |= n.bit();
     t.constraint = match f.constraint_type.as_deref().map(int) {
         None | Some(Some(0)) => Constraint::Asap,
-        Some(Some(1)) => {
-            note(Note::Alap);
-            Constraint::Asap
-        }
+        Some(Some(1)) => Constraint::AsLateAsPossible,
         Some(Some(code @ 2..=7)) => match f.constraint_date.as_deref().and_then(date_of) {
             None => {
                 note(Note::NoConstraintDate);

@@ -446,7 +446,6 @@ enum Note {
     BadResources,
     TooManyResources,
     BadConstraintType,
-    Alap,
     NoConstraintDate,
     BadConstraintDate,
     DateWithoutType,
@@ -461,7 +460,7 @@ enum Note {
 }
 
 impl Note {
-    const ALL: [Note; 29] = [
+    const ALL: [Note; 28] = [
         Note::NoName,
         Note::NameLines,
         Note::NoDuration,
@@ -479,7 +478,6 @@ impl Note {
         Note::BadResources,
         Note::TooManyResources,
         Note::BadConstraintType,
-        Note::Alap,
         Note::NoConstraintDate,
         Note::BadConstraintDate,
         Note::DateWithoutType,
@@ -523,7 +521,6 @@ impl Note {
             Note::BadResources => (Dropped, "Resource Names", "unreadable; the task has no resources"),
             Note::TooManyResources => (Dropped, "Resource Names", "more resources or assignments than a project holds; the task has no resources"),
             Note::BadConstraintType => (Converted, "Constraint Type", "unreadable; As Soon As Possible used"),
-            Note::Alap => (Converted, "As Late As Possible", "not supported yet; As Soon As Possible used"),
             Note::NoConstraintDate => (Converted, "Constraint Date", "the constraint needs a date and the file gives none; As Soon As Possible used"),
             Note::BadConstraintDate => (Converted, "Constraint Date", "unreadable (dates are read as YYYY-MM-DD); As Soon As Possible used"),
             Note::DateWithoutType => (Dropped, "Constraint Date", "no Constraint Type goes with it; As Soon As Possible used"),
@@ -767,10 +764,6 @@ fn constraint(r: &Row, note: &mut impl FnMut(Note)) -> Constraint {
         return Constraint::Asap;
     };
     let words = kind.split_whitespace().collect::<Vec<_>>().join(" ");
-    if words.eq_ignore_ascii_case("as late as possible") || words.eq_ignore_ascii_case("alap") {
-        note(Note::Alap);
-        return Constraint::Asap;
-    }
     let code = Constraint::CODES.into_iter().find(|&c| {
         c.eq_ignore_ascii_case(&words) || Constraint::from_code(c, Some(Date::EPOCH)).is_ok_and(|k| k.name().eq_ignore_ascii_case(&words))
     });
@@ -778,8 +771,9 @@ fn constraint(r: &Row, note: &mut impl FnMut(Note)) -> Constraint {
         note(Note::BadConstraintType);
         return Constraint::Asap;
     };
-    if code == "ASAP" {
-        return Constraint::Asap;
+    // As Soon and As Late As Possible take no date.
+    if let Ok(c) = Constraint::from_code(code, None) {
+        return c;
     }
     match date {
         None => {

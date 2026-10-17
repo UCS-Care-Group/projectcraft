@@ -359,6 +359,7 @@ fn constraint(p: &Project, c: Constraint) -> (u8, Option<Moment>) {
     };
     match c {
         Constraint::Asap => (0, None),
+        Constraint::AsLateAsPossible => (1, None),
         Constraint::MustStartOn(d) => (2, at(d, true)),
         Constraint::MustFinishOn(d) => (3, at(d, false)),
         Constraint::StartNoEarlierThan(d) => (4, at(d, true)),
