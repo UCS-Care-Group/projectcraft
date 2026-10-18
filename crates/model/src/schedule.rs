@@ -3,7 +3,9 @@
 //! minute on or after the project start, counted on the plan's working time (the project calendar,
 //! with any resource calendar's time outside it added: see [`Crews`]); at the end each is turned
 //! into a [`Moment`] (a date and a minute of the day) through it. Durations, lags and slack are
-//! working minutes; lags and slack count on the project calendar. Integer arithmetic only.
+//! working minutes; lags and slack count on the project calendar. Integer arithmetic only. A late
+//! start before the early one only by time outside the project calendar (a Saturday morning a
+//! resource works) is no slack, so the late dates are then never before the early ones.
 //!
 //! Constraints: Start No Earlier Than raises the early start to its date, Finish No Earlier Than
 //! the early finish (ES = max(ES, CD), EF = max(EF, CD)). A constraint date is a day: a start type
@@ -1176,6 +1178,12 @@ pub fn schedule(p: &Project) -> Result<Schedule, ModelError> {
             && ((lfi == s && sm.1)
                 || (summary(i).is_none() && matches!(t.constraint, Constraint::StartNoLaterThan(cd) if lfi == start_offset(o, cd))));
         let (late_start, late_finish) = if late_on_day { (day(lfi)?, day(lfi)?) } else { (first(ls)?, last(ls, lfi)?) };
+        // Slack counts on the project calendar, so a late start before the early one only by
+        // time outside it (a Saturday morning a resource works) is no slack, not negative: the
+        // late dates are then the early ones, never before them. Plans on the project calendar
+        // alone never get here.
+        let early_i = if summary(i).is_some() { s } else { early.get(i).copied().unwrap_or(s) };
+        let (late_start, late_finish) = if slack >= 0 && ls < early_i { (start_at.date, late_finish.max(finish)) } else { (late_start, late_finish) };
         tasks.insert(
             t.id,
             TaskDates {
@@ -1939,6 +1947,58 @@ mod tests {
         let (plain, own) = with_and_without_own_weekday(&p, ann, tuesday());
         assert_eq!((plain.tasks[&b].start_at, plain.tasks[&b].finish_at), (at("2026-03-03", 8, 0), at("2026-03-04", 8, 0)));
         assert_eq!(own.tasks, plain.tasks);
+    }
+
+    /// Monday 2026-03-02; Cat also works Saturday mornings (8:00-12:00). Summary S, Start No
+    /// Earlier Than Monday 9th, over milestone M; B (2 hours, Cat) after S, Start No Later Than
+    /// Saturday 7th, so it starts Saturday 8:00. S and M must finish by then: the end of Friday,
+    /// the same working minute on the project calendar as Monday 8:00, where they are. No slack,
+    /// and the late dates are Monday, not Friday (they used to be Friday: a late start before the
+    /// start with no negative slack).
+    #[test]
+    fn a_milestone_with_no_slack_keeps_its_late_dates_on_its_day_beside_a_resource_saturday() {
+        let mut p = Project::new("t", date("2026-03-02"));
+        let s = p.add_task("S", 0).unwrap();
+        p.task_mut(s).unwrap().constraint = Constraint::StartNoEarlierThan(date("2026-03-09"));
+        let m = p.add_task("M", 0).unwrap();
+        p.task_mut(m).unwrap().outline_level = 2;
+        let b = p.add_task("B", 120).unwrap();
+        p.set_preds(b, parse_preds("1", &crate::Options::default()).unwrap()).unwrap();
+        p.task_mut(b).unwrap().constraint = Constraint::StartNoLaterThan(date("2026-03-07"));
+        let cat = p.add_resource(Some("Cat"), crate::ResourceType::Work, None).unwrap();
+        p.set_resource_weekday_times(cat, 5, Some(vec![crate::parse_working_time("8:00-12:00").unwrap()])).unwrap();
+        p.assign(b, cat, Some(crate::Units::Work(10_000))).unwrap();
+        let sch = schedule(&p).unwrap();
+        assert_eq!(sch.tasks[&b].start_at, at("2026-03-07", 8, 0));
+        for id in [s, m] {
+            let t = sch.tasks[&id];
+            assert_eq!((t.start, t.slack), (date("2026-03-09"), 0), "{id:?}");
+            assert_eq!((t.late_start, t.late_finish), (date("2026-03-09"), date("2026-03-09")), "{id:?}");
+        }
+    }
+
+    /// As above, but the summary holds A (1 hour, Cat), and milestone B is start-to-start after
+    /// the summary, Start No Later Than Saturday 7th. Walked back on Cat's calendar A could start
+    /// Saturday 8:00, four of her hours before Monday 8:00, but slack counts on the project
+    /// calendar, where those are the same minute: no slack, and late dates on Monday, not
+    /// Saturday.
+    #[test]
+    fn a_late_start_before_the_start_only_by_a_resources_own_time_is_no_slack() {
+        let mut p = Project::new("t", date("2026-03-02"));
+        let s = p.add_task("S", 0).unwrap();
+        p.task_mut(s).unwrap().constraint = Constraint::StartNoEarlierThan(date("2026-03-09"));
+        let a = p.add_task("A", 60).unwrap();
+        p.task_mut(a).unwrap().outline_level = 2;
+        let b = p.add_task("B", 0).unwrap();
+        p.set_preds(b, parse_preds("1SS", &crate::Options::default()).unwrap()).unwrap();
+        p.task_mut(b).unwrap().constraint = Constraint::StartNoLaterThan(date("2026-03-07"));
+        let cat = p.add_resource(Some("Cat"), crate::ResourceType::Work, None).unwrap();
+        p.set_resource_weekday_times(cat, 5, Some(vec![crate::parse_working_time("8:00-12:00").unwrap()])).unwrap();
+        p.assign(a, cat, Some(crate::Units::Work(10_000))).unwrap();
+        let sch = schedule(&p).unwrap();
+        let t = sch.tasks[&a];
+        assert_eq!((t.start, t.slack), (date("2026-03-09"), 0));
+        assert_eq!((t.late_start, t.late_finish), (date("2026-03-09"), date("2026-03-09")));
     }
 
     proptest::proptest! {
