@@ -24,13 +24,13 @@ serde_json = "1"
 proptest = "1"
 # Microsoft Project XML (MSPDI) import; DTDs and entities are refused by the reader in
 # `crates/interchange`. Pure Rust, no default features, builds for wasm.
-quick-xml = { version = "0.41", default-features = false }
+quick-xml = { version = "0.42", default-features = false }
 
 # ui
-egui = "0.36"
-eframe = { version = "0.36", default-features = false }
+egui = "0.37"
+eframe = { version = "0.37", default-features = false }
 # Headless screenshots (ui-egui's `ui_shot` example), as MailCraft and WordCraft. Dev-only.
-egui_kittest = "0.36"
+egui_kittest = "0.37"
 # native Open / Save As dialogs; the desktop app only (layers forbid it below L6)
 rfd = "0.17"
 
