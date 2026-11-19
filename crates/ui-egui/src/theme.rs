@@ -116,9 +116,11 @@ impl Tokens {
     }
 }
 
-/// Put both palettes into egui (ours as its light and its dark style) and pick the theme:
-/// `System` follows the OS (or browser) appearance, `Light` and `Dark` pin it.
+/// Put both palettes into egui (ours as its light and its dark style), install a Hebrew
+/// fallback font if not yet registered on `ctx`, and pick the theme: `System` follows the OS (or
+/// browser) appearance, `Light` and `Dark` pin it.
 pub fn apply(ctx: &egui::Context, preference: egui::ThemePreference) {
+    install_hebrew_fonts(ctx);
     ctx.set_visuals_of(egui::Theme::Light, visuals(&Tokens::light()));
     ctx.set_visuals_of(egui::Theme::Dark, visuals(&Tokens::dark()));
     ctx.all_styles_mut(|s| {
@@ -131,6 +133,65 @@ pub fn apply(ctx: &egui::Context, preference: egui::ThemePreference) {
         // Ctrl with = and - zoom the Gantt Chart's timescale; the window itself never zooms.
         o.zoom_with_keyboard = false;
     });
+}
+
+fn hebrew_font_data() -> Option<egui::FontData> {
+    #[cfg(has_hebrew_craft_font)]
+    {
+        Some(egui::FontData::from_static(include_bytes!(env!("HEBREW_CRAFT_FONT_PATH"))))
+    }
+    #[cfg(not(has_hebrew_craft_font))]
+    {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            #[cfg(target_os = "macos")]
+            const CANDIDATES: &[&str] = &[
+                "/System/Library/Fonts/SFHebrew.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+                "/Library/Fonts/Arial Unicode.ttf",
+            ];
+            #[cfg(all(unix, not(target_os = "macos")))]
+            const CANDIDATES: &[&str] = &[
+                "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+                "/usr/share/fonts/noto/NotoSansHebrew-Regular.ttf",
+                "/usr/share/fonts/opentype/noto/NotoSansHebrew-Regular.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            ];
+            #[cfg(windows)]
+            const CANDIDATES: &[&str] = &[r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\tahoma.ttf"];
+            #[cfg(not(any(unix, windows)))]
+            const CANDIDATES: &[&str] = &[];
+
+            for path in CANDIDATES {
+                if let Ok(bytes) = std::fs::read(path) {
+                    return Some(egui::FontData::from_owned(bytes));
+                }
+            }
+        }
+        None
+    }
+}
+
+fn install_hebrew_fonts(ctx: &egui::Context) {
+    let key = egui::Id::new("projectcraft_hebrew_fonts_installed");
+    if ctx.data(|d| d.get_temp::<bool>(key)) == Some(true) {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(key, true));
+    let Some(font_data) = hebrew_font_data() else {
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert("hebrew_fallback".to_owned(), std::sync::Arc::new(font_data));
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        if let Some(list) = fonts.families.get_mut(&family) {
+            list.push("hebrew_fallback".to_owned());
+        }
+    }
+    ctx.set_fonts(fonts);
 }
 
 /// egui's visuals for one of our palettes.
@@ -174,4 +235,26 @@ fn visuals(t: &Tokens) -> Visuals {
 
 fn shadow(t: &Tokens, light: u8, dark: u8) -> Color32 {
     Color32::from_black_alpha(if t.dark { dark } else { light })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hebrew_fallback_font_supplies_hebrew_glyphs_when_available() {
+        let ctx = egui::Context::default();
+        apply(&ctx, egui::ThemePreference::Light);
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        if hebrew_font_data().is_some() {
+            ctx.fonts_mut(|fonts| {
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                    let font = egui::FontId::new(14.0, family);
+                    for ch in "אבגדהוזחטיכלמנסעפצקרשתךםןףץ".chars() {
+                        assert!(fonts.has_glyph(&font, ch), "missing Hebrew glyph {ch} in {font:?}");
+                    }
+                }
+            });
+        }
+    }
 }
