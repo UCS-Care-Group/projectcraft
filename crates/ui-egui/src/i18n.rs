@@ -136,36 +136,86 @@ pub fn logical_of(s: &str) -> &str {
     if is_rtl() { hebrew_catalog().visual_to_logical.get(s).copied().unwrap_or(s) } else { s }
 }
 
-/// Break `logical` text at `max_width` first, then apply visual RTL ordering to each display row.
+fn wrap_paragraph_logical<'a>(ctx: &egui::Context, paragraph: &'a str, font_id: &egui::FontId, max_width: f32) -> Vec<&'a str> {
+    if paragraph.is_empty() || !max_width.is_finite() {
+        return vec![paragraph];
+    }
+    let max_w = max_width.max(1.0);
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut in_word = false;
+    let mut word_start = 0usize;
+    for (idx, ch) in paragraph.char_indices() {
+        if ch.is_whitespace() {
+            if in_word {
+                spans.push((word_start, idx));
+                in_word = false;
+            }
+        } else if !in_word {
+            word_start = idx;
+            in_word = true;
+        }
+    }
+    if in_word {
+        spans.push((word_start, paragraph.len()));
+    }
+    let Some(&(mut line_start, mut line_end)) = spans.first() else {
+        return vec![paragraph];
+    };
+    let mut rows = Vec::new();
+    for &(span_start, span_end) in spans.iter().skip(1) {
+        let candidate = &paragraph[line_start..span_end];
+        let width = ctx.fonts_mut(|f| f.layout_no_wrap(candidate.to_owned(), font_id.clone(), Default::default()).rect.width());
+        if width <= max_w {
+            line_end = span_end;
+        } else {
+            rows.push(&paragraph[line_start..line_end]);
+            line_start = span_start;
+            line_end = span_end;
+        }
+    }
+    rows.push(&paragraph[line_start..line_end]);
+    rows
+}
+
+/// Break `logical` text at `max_width` first using original logical substrings, then apply visual
+/// RTL ordering to each display row containing RTL characters.
 pub fn wrapped_visual_lines(ctx: &egui::Context, lang: Lang, logical: &str, font_id: egui::FontId, max_width: f32) -> String {
     if !lang.is_rtl() || !logical.chars().any(is_rtl_script) {
         return logical.to_owned();
     }
-    let galley = ctx.fonts_mut(|f| f.layout(logical.to_owned(), font_id, Default::default(), max_width.max(1.0)));
     let mut out = String::with_capacity(logical.len());
-    for (idx, placed) in galley.rows.iter().enumerate() {
-        if idx > 0 {
-            out.push('\n');
+    let mut first_row = true;
+    for paragraph in logical.split('\n') {
+        for row_logical in wrap_paragraph_logical(ctx, paragraph, &font_id, max_width) {
+            if !first_row {
+                out.push('\n');
+            }
+            first_row = false;
+            if row_logical.chars().any(is_rtl_script) {
+                push_visual_rtl_line(row_logical, &mut out);
+            } else {
+                out.push_str(row_logical);
+            }
         }
-        let row_text = placed.text();
-        push_visual_rtl_line(row_text.trim_end_matches(' '), &mut out);
     }
     out
 }
 
+/// Render a wrapping label for an explicit `lang`, deferring RTL visual reordering until after
+/// egui determines line breaks.
+pub fn wrapped_label_for(ui: &mut egui::Ui, lang: Lang, text: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    let logical = if lang.is_rtl() { logical_of(text) } else { text };
+    let needs_rtl_wrap = lang.is_rtl() && logical.chars().any(is_rtl_script);
+    let shown =
+        if needs_rtl_wrap { wrapped_visual_lines(ui.ctx(), lang, logical, font_id.clone(), ui.available_width()) } else { logical.to_owned() };
+    let rich = style(egui::RichText::new(shown).font(font_id));
+    if needs_rtl_wrap { ui.add(egui::Label::new(rich).extend()) } else { ui.add(egui::Label::new(rich).wrap()) }
+}
+
 /// Render a wrapping label, deferring RTL visual reordering until after egui determines line breaks.
 pub fn wrapped_label(ui: &mut egui::Ui, text: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
-    let font_id = egui::TextStyle::Body.resolve(ui.style());
-    let lang = current();
-    let rtl = lang.is_rtl();
-    let shown = if rtl {
-        let logical = logical_of(text);
-        wrapped_visual_lines(ui.ctx(), lang, logical, font_id.clone(), ui.available_width())
-    } else {
-        text.to_owned()
-    };
-    let rich = style(egui::RichText::new(shown).font(font_id));
-    if rtl { ui.add(egui::Label::new(rich).extend()) } else { ui.add(egui::Label::new(rich).wrap()) }
+    wrapped_label_for(ui, current(), text, style)
 }
 
 /// `s` in `lang` (in visual RTL order for egui 0.36 when [`Lang::Hebrew`] is passed).
@@ -795,7 +845,23 @@ mod tests {
         let lines: Vec<&str> = wrapped.lines().collect();
         assert!(lines.len() >= 2, "expected wrapped lines, got {wrapped:?}");
         assert!(lines[0].contains("המרת"), "first wrapped row should begin with opening words: {lines:?}");
+        assert!(!lines[0].contains("תרמה"), "characters inside Hebrew words must remain logical: {lines:?}");
         assert!(!lines[0].contains("היחידות"), "first wrapped row should not start with paragraph end: {lines:?}");
         assert!(lines.last().unwrap().contains("היחידות"), "last wrapped row should contain closing words: {lines:?}");
+        assert!(!lines.last().unwrap().contains("תודיחיה"), "closing word letters must remain logical: {lines:?}");
+
+        let english_long = "This is a long English-only fallback diagnostic message that should still wrap.";
+        let mut english_resp_width = 0.0f32;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.allocate_ui(egui::vec2(140.0, 200.0), |ui| {
+                    let resp = wrapped_label_for(ui, Lang::Hebrew, english_long, |r| r);
+                    english_resp_width = resp.rect.width();
+                });
+            });
+        })
+        .textures_delta
+        .clear();
+        assert!(english_resp_width <= 150.0, "English fallback in Hebrew mode must still wrap, got width {english_resp_width}");
     }
 }
