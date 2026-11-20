@@ -1,8 +1,10 @@
 //! The app's settings folder and what's kept in it: the recent-files list (`recent-files.txt`, one
-//! path a line), the autosave switch (`autosave.txt`, `off` when turned off) and an untitled
-//! project's recovery copy (`recovery/`).
+//! path a line), the autosave switch (`autosave.txt`, `off` when turned off), the interface
+//! language (`language.txt`, BCP 47 tag), and an untitled project's recovery copy (`recovery/`).
 
 use std::path::PathBuf;
+
+use projectcraft_ui_egui::i18n::Lang;
 
 /// The settings folder: macOS `~/Library/Application Support/ProjectCraft`, Windows
 /// `%APPDATA%\ProjectCraft`, otherwise `$XDG_CONFIG_HOME/projectcraft` or `~/.config/projectcraft`.
@@ -82,5 +84,63 @@ pub fn save_autosave(on: bool) {
         .and_then(|()| projectcraft_engine::write_private(&file, if on { "on\n" } else { "off\n" }.as_bytes()));
     if let Err(e) = result {
         eprintln!("couldn't save the autosave setting to {}: {e}", file.display());
+    }
+}
+
+fn language_file() -> Option<PathBuf> {
+    settings_dir().map(|d| d.join("language.txt"))
+}
+
+fn resolve_language_from_str(saved: Option<&str>, env_tags: &[Option<String>]) -> Lang {
+    if let Some(tag) = saved.and_then(Lang::from_tag) {
+        return tag;
+    }
+    for env_val in env_tags.iter().flatten() {
+        if let Some(lang) = Lang::from_tag(env_val) {
+            return lang;
+        }
+    }
+    Lang::English
+}
+
+/// The interface language: `language.txt` if valid, otherwise `PROJECTCRAFT_LANG` / locale env vars.
+pub fn load_language() -> Lang {
+    let mut bytes = Vec::new();
+    let saved = if let Some(Ok(f)) = language_file().map(std::fs::File::open) {
+        let _ = std::io::Read::read_to_end(&mut std::io::Read::take(f, 64), &mut bytes);
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    } else {
+        None
+    };
+    let env_tags = ["PROJECTCRAFT_LANG", "LC_ALL", "LC_MESSAGES", "LANG"].map(|k| std::env::var(k).ok());
+    resolve_language_from_str(saved.as_deref(), &env_tags)
+}
+
+/// Writes the interface language tag. A failure only loses the setting, so it's reported and otherwise ignored.
+pub fn save_language(lang: Lang) {
+    let Some(file) = language_file() else {
+        return;
+    };
+    let body = format!("{}\n", lang.code());
+    let result = file
+        .parent()
+        .map_or(Ok(()), projectcraft_engine::create_private_dir_all)
+        .and_then(|()| projectcraft_engine::write_private(&file, body.as_bytes()));
+    if let Err(e) = result {
+        eprintln!("couldn't save the language setting to {}: {e}", file.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn language_resolution_normalizes_hebrew_and_legacy_iw_tags() {
+        assert_eq!(resolve_language_from_str(Some("he\n"), &[]), Lang::Hebrew);
+        assert_eq!(resolve_language_from_str(Some("iw_IL.UTF-8"), &[]), Lang::Hebrew);
+        assert_eq!(resolve_language_from_str(None, &[None, Some("he_IL.UTF-8".to_owned())]), Lang::Hebrew);
+        assert_eq!(resolve_language_from_str(Some("xx"), &[Some("iw".to_owned())]), Lang::Hebrew);
+        assert_eq!(resolve_language_from_str(None, &[None, Some("fr_FR.UTF-8".to_owned())]), Lang::English);
     }
 }

@@ -175,6 +175,15 @@ fn hebrew_font_data() -> Option<egui::FontData> {
     }
 }
 
+fn apply_hebrew_fallback(fonts: &mut egui::FontDefinitions, font_data: egui::FontData) {
+    fonts.font_data.insert("hebrew_fallback".to_owned(), std::sync::Arc::new(font_data));
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        if let Some(list) = fonts.families.get_mut(&family) {
+            list.push("hebrew_fallback".to_owned());
+        }
+    }
+}
+
 fn install_hebrew_fonts(ctx: &egui::Context) {
     let key = egui::Id::new("projectcraft_hebrew_fonts_installed");
     if ctx.data(|d| d.get_temp::<bool>(key)) == Some(true) {
@@ -185,12 +194,7 @@ fn install_hebrew_fonts(ctx: &egui::Context) {
         return;
     };
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert("hebrew_fallback".to_owned(), std::sync::Arc::new(font_data));
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        if let Some(list) = fonts.families.get_mut(&family) {
-            list.push("hebrew_fallback".to_owned());
-        }
-    }
+    apply_hebrew_fallback(&mut fonts, font_data);
     ctx.set_fonts(fonts);
 }
 
@@ -242,19 +246,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hebrew_fallback_registers_in_proportional_and_monospace_families() {
+        let mut fonts = egui::FontDefinitions::default();
+        apply_hebrew_fallback(&mut fonts, egui::FontData::from_static(&[]));
+        assert!(fonts.font_data.contains_key("hebrew_fallback"));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let list = fonts.families.get(&family).expect("family present");
+            assert_eq!(list.last().map(String::as_str), Some("hebrew_fallback"));
+        }
+    }
+
+    #[test]
     fn hebrew_fallback_font_supplies_hebrew_glyphs_when_available() {
         let ctx = egui::Context::default();
         apply(&ctx, egui::ThemePreference::Light);
         ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
-        if hebrew_font_data().is_some() {
-            ctx.fonts_mut(|fonts| {
-                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                    let font = egui::FontId::new(14.0, family);
-                    for ch in "אבגדהוזחטיכלמנסעפצקרשתךםןףץ".chars() {
-                        assert!(fonts.has_glyph(&font, ch), "missing Hebrew glyph {ch} in {font:?}");
-                    }
+        let Some(_) = hebrew_font_data() else {
+            #[cfg(has_hebrew_craft_font)]
+            panic!("CRAFT_FONTS_DIR Hebrew font enabled at build time but missing at runtime");
+            #[cfg(not(has_hebrew_craft_font))]
+            {
+                eprintln!("skipping glyph check: no CRAFT_FONTS_DIR or system Hebrew font found on this host");
+                return;
+            }
+        };
+        ctx.fonts_mut(|fonts| {
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                let font = egui::FontId::new(14.0, family);
+                for ch in "אבגדהוזחטיכלמנסעפצקרשתךםןףץ".chars() {
+                    assert!(fonts.has_glyph(&font, ch), "missing Hebrew glyph {ch} in {font:?}");
                 }
-            });
-        }
+            }
+        });
     }
 }

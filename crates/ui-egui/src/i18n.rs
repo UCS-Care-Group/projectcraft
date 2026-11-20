@@ -134,9 +134,14 @@ fn hebrew_catalog() -> &'static HebrewCatalog {
     })
 }
 
+/// Recover the logical string for a catalog entry when `s` was visually reordered for `lang`.
+pub fn logical_of_for(lang: Lang, s: &str) -> &str {
+    if lang.is_rtl() { hebrew_catalog().visual_to_logical.get(s).copied().unwrap_or(s) } else { s }
+}
+
 /// Recover the logical string for a catalog entry when `s` was visually reordered for RTL.
 pub fn logical_of(s: &str) -> &str {
-    if is_rtl() { hebrew_catalog().visual_to_logical.get(s).copied().unwrap_or(s) } else { s }
+    logical_of_for(current(), s)
 }
 
 fn wrap_paragraph_logical<'a>(ctx: &egui::Context, paragraph: &'a str, font_id: &egui::FontId, max_width: f32) -> Vec<&'a str> {
@@ -208,12 +213,16 @@ pub fn wrapped_visual_lines(ctx: &egui::Context, lang: Lang, logical: &str, font
 /// egui determines line breaks.
 pub fn wrapped_label_for(ui: &mut egui::Ui, lang: Lang, text: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
     let font_id = egui::TextStyle::Body.resolve(ui.style());
-    let logical = if lang.is_rtl() { logical_of(text) } else { text };
+    let logical = logical_of_for(lang, text);
     let needs_rtl_wrap = lang.is_rtl() && logical.chars().any(is_rtl_script);
     let shown =
         if needs_rtl_wrap { wrapped_visual_lines(ui.ctx(), lang, logical, font_id.clone(), ui.available_width()) } else { logical.to_owned() };
     let rich = style(egui::RichText::new(shown).font(font_id));
-    if needs_rtl_wrap { ui.add(egui::Label::new(rich).extend()) } else { ui.add(egui::Label::new(rich).wrap()) }
+    if needs_rtl_wrap {
+        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| ui.add(egui::Label::new(rich).extend())).inner
+    } else {
+        ui.add(egui::Label::new(rich).wrap())
+    }
 }
 
 /// Render a wrapping label, deferring RTL visual reordering until after egui determines line breaks.
@@ -579,5 +588,27 @@ mod tests {
         .textures_delta
         .clear();
         assert!(english_resp_width <= 150.0, "English fallback in Hebrew mode must still wrap, got width {english_resp_width}");
+
+        // Calling wrapped_label_for(Lang::Hebrew, ...) while global current() is English must
+        // recover the logical catalog entry via logical_of_for(lang, ...) and right-align it.
+        let catalog_notice =
+            t_for(Lang::Hebrew, "Converting durations between hours, days, weeks and months; the currency of every amount; how units show");
+        let mut rtl_rect = egui::Rect::NOTHING;
+        let mut container_rect = egui::Rect::NOTHING;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.allocate_ui(egui::vec2(220.0, 200.0), |ui| {
+                    container_rect = ui.max_rect();
+                    rtl_rect = wrapped_label_for(ui, Lang::Hebrew, catalog_notice, |r| r).rect;
+                });
+            });
+        })
+        .textures_delta
+        .clear();
+        assert!(
+            (rtl_rect.right() - container_rect.right()).abs() <= 2.0,
+            "Hebrew wrapped label should right-align to container edge: rtl={rtl_rect:?} container={container_rect:?}"
+        );
+        assert!(rtl_rect.height() >= 24.0, "catalog notice should wrap into multiple lines: {rtl_rect:?}");
     }
 }

@@ -278,6 +278,7 @@ pub struct App {
     /// Recently opened or saved files, newest first (the shell loads and persists it).
     pub recent: Vec<std::path::PathBuf>,
     recent_changed: bool,
+    language_changed: bool,
     /// A dialog for the shell to show.
     file_request: Option<FileRequest>,
     /// The unsaved-changes prompt, and what follows it.
@@ -343,6 +344,7 @@ impl App {
             saved,
             recent: Vec::new(),
             recent_changed: false,
+            language_changed: false,
             file_request: None,
             prompt: None,
             after_save: None,
@@ -367,6 +369,19 @@ impl App {
     /// The status bar's message, if any (the last error, or what Open or Save did).
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    /// Switches the active interface language and marks it for the shell to persist.
+    pub fn set_language(&mut self, lang: i18n::Lang) {
+        if i18n::current() != lang {
+            i18n::set_current(lang);
+            self.language_changed = true;
+        }
+    }
+
+    /// Returns the newly chosen language if the user changed it since the last call.
+    pub fn take_language_changed(&mut self) -> Option<i18n::Lang> {
+        std::mem::take(&mut self.language_changed).then(i18n::current)
     }
 
     /// Runs a command; an error goes to the status bar. True when it ran.
@@ -849,6 +864,16 @@ impl App {
             if ui.add_enabled(timed && w > timescale::MIN_DAY_W, egui::Button::new(tl!("Zoom Out")).shortcut_text(out_keys)).clicked() {
                 self.zoom(false);
             }
+            ui.separator();
+            ui.menu_button(tl!("Language"), |ui| {
+                let active = i18n::current();
+                for lang in i18n::Lang::ALL {
+                    if ui.radio(active == lang, lang.name()).clicked() {
+                        self.set_language(lang);
+                        ui.close();
+                    }
+                }
+            });
         });
     }
 
