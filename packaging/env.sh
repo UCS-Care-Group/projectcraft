@@ -69,7 +69,7 @@ copy_docs() {
 copy_font_licences() {
   local dest="$1" f
   mkdir -p "$dest/egui-default-fonts"
-  for f in Hack-Regular.txt OFL.txt UFL.txt emoji-icon-font-mit-license.txt; do
+  for f in Hack-Regular.txt NOTICES.txt OFL.txt UFL.txt emoji-icon-font-mit-license.txt; do
     if [ ! -f "$ROOT/licenses/egui-default-fonts/$f" ]; then
       echo "error: missing required egui default font licence $ROOT/licenses/egui-default-fonts/$f" >&2
       exit 1
