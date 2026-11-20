@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Hardened-runtime entitlements for ProjectCraft: pure Rust, no JIT, no unsigned libraries,
-     and unsandboxed so local project files can be opened from paths, CLI, and drag-and-drop. -->
+<!-- Hardened-runtime entitlements for ProjectCraft: pure Rust, no JIT, no unsigned libraries.
+     Intentionally empty because App Sandbox (com.apple.security.app-sandbox) is not enabled,
+     so com.apple.security.files.user-selected.* does not apply and local files opened via paths,
+     CLI, or drag-and-drop are permitted without sandbox entitlements. -->
 <plist version="1.0">
 <dict>
 </dict>
