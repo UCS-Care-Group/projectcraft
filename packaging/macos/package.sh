@@ -49,6 +49,17 @@ if [ "$SKIP_BUILD" = 1 ] && [ "$BUILD_ONLY" = 1 ]; then
   exit 2
 fi
 
+# Keep in sync with LSMinimumSystemVersion in Info.plist.in.
+export MACOSX_DEPLOYMENT_TARGET=11.0
+IDENTITY="${MACOS_SIGN_IDENTITY:--}"
+SHORT_VERSION="${VERSION%%[-+]*}"
+case "$SHORT_VERSION" in
+  ''|*[!0-9.]*)
+    echo "error: version '$VERSION' does not start with a numeric CFBundleShortVersionString prefix" >&2
+    exit 2
+    ;;
+esac
+
 # Validate version, bundle identifier, deployment target, and build SHA before Info.plist substitution.
 for value in "$APP_ID" "$VERSION" "$SHORT_VERSION" "$MACOSX_DEPLOYMENT_TARGET" "${PROJECTCRAFT_BUILD_SHA:-unknown}"; do
   case "$value" in
@@ -63,10 +74,6 @@ escape_sed_repl() {
   printf '%s' "$1" | sed -e 's/[\\/&]/\\&/g'
 }
 
-# Keep in sync with LSMinimumSystemVersion in Info.plist.in.
-export MACOSX_DEPLOYMENT_TARGET=11.0
-IDENTITY="${MACOS_SIGN_IDENTITY:--}"
-SHORT_VERSION="${VERSION%%[-+]*}"
 WORK="$CARGO_TARGET_DIR/macos-package"
 APP="$WORK/ProjectCraft.app"
 DMG="$DIST/projectcraft-$VERSION-macos-$ARCH.dmg"
