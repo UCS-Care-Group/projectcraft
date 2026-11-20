@@ -5,10 +5,14 @@ use std::path::{Path, PathBuf};
 
 fn find_fonts_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CRAFT_FONTS_DIR").filter(|v| !v.is_empty()) {
-        let p = PathBuf::from(dir);
+        let p = PathBuf::from(&dir);
         if p.is_dir() {
             return Some(p);
         }
+        println!(
+            "cargo:warning=CRAFT_FONTS_DIR points to a missing directory ({}); falling back to sibling craft-fonts or system fonts",
+            p.display()
+        );
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for ancestor in manifest.ancestors().skip(1) {
