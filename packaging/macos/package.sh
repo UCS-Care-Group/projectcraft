@@ -62,7 +62,7 @@ done
 # Keep in sync with LSMinimumSystemVersion in Info.plist.in.
 export MACOSX_DEPLOYMENT_TARGET=11.0
 IDENTITY="${MACOS_SIGN_IDENTITY:--}"
-SHORT_VERSION="${VERSION%%-*}"
+SHORT_VERSION="${VERSION%%[-+]*}"
 WORK="$CARGO_TARGET_DIR/macos-package"
 APP="$WORK/ProjectCraft.app"
 DMG="$DIST/projectcraft-$VERSION-macos-$ARCH.dmg"
