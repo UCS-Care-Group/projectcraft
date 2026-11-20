@@ -279,7 +279,7 @@ impl App {
                 (false, false) => tl!("Units: the share of each resource's working time (50% is half its day)."),
                 (false, true) => tl!("Units: the share of each resource's working time (0.5 is half its day; 50% works too)."),
             };
-            ui.label(RichText::new(hint).color(t.text_dim));
+            crate::i18n::wrapped_label(ui, hint, |r| r.color(t.text_dim));
             if !error.is_empty() {
                 ui.add_space(6.0);
                 ui.label(RichText::new(error.as_str()).color(t.warning));

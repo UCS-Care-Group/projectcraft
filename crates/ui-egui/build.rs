@@ -34,14 +34,28 @@ fn candidate_hebrew_font(dir: &Path) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
+fn absolutize(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    path.canonicalize().unwrap_or_else(|_| std::env::current_dir().map_or_else(|_| path.clone(), |cwd| cwd.join(&path)))
+}
+
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(has_hebrew_craft_font)");
     println!("cargo:rerun-if-env-changed=CRAFT_FONTS_DIR");
-    if let Some(dir) = find_fonts_dir()
-        && let Some(font) = candidate_hebrew_font(&dir)
-    {
-        println!("cargo:rerun-if-changed={}", font.display());
-        println!("cargo:rustc-cfg=has_hebrew_craft_font");
-        println!("cargo:rustc-env=HEBREW_CRAFT_FONT_PATH={}", font.display());
+    if let Some(dir) = find_fonts_dir() {
+        let dir = absolutize(dir);
+        println!("cargo:rerun-if-changed={}", dir.display());
+        let font_dir = dir.join("fonts/noto-sans-hebrew");
+        if font_dir.is_dir() {
+            println!("cargo:rerun-if-changed={}", font_dir.display());
+        }
+        if let Some(font) = candidate_hebrew_font(&dir) {
+            let font = absolutize(font);
+            println!("cargo:rerun-if-changed={}", font.display());
+            println!("cargo:rustc-cfg=has_hebrew_craft_font");
+            println!("cargo:rustc-env=HEBREW_CRAFT_FONT_PATH={}", font.display());
+        }
     }
 }

@@ -131,6 +131,43 @@ fn hebrew_catalog() -> &'static HebrewCatalog {
     })
 }
 
+/// Recover the logical string for a catalog entry when `s` was visually reordered for RTL.
+pub fn logical_of(s: &str) -> &str {
+    if is_rtl() { hebrew_catalog().visual_to_logical.get(s).copied().unwrap_or(s) } else { s }
+}
+
+/// Break `logical` text at `max_width` first, then apply visual RTL ordering to each display row.
+pub fn wrapped_visual_lines(ctx: &egui::Context, lang: Lang, logical: &str, font_id: egui::FontId, max_width: f32) -> String {
+    if !lang.is_rtl() || !logical.chars().any(is_rtl_script) {
+        return logical.to_owned();
+    }
+    let galley = ctx.fonts_mut(|f| f.layout(logical.to_owned(), font_id, Default::default(), max_width.max(1.0)));
+    let mut out = String::with_capacity(logical.len());
+    for (idx, placed) in galley.rows.iter().enumerate() {
+        if idx > 0 {
+            out.push('\n');
+        }
+        let row_text = placed.text();
+        push_visual_rtl_line(row_text.trim_end_matches(' '), &mut out);
+    }
+    out
+}
+
+/// Render a wrapping label, deferring RTL visual reordering until after egui determines line breaks.
+pub fn wrapped_label(ui: &mut egui::Ui, text: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    let lang = current();
+    let rtl = lang.is_rtl();
+    let shown = if rtl {
+        let logical = logical_of(text);
+        wrapped_visual_lines(ui.ctx(), lang, logical, font_id.clone(), ui.available_width())
+    } else {
+        text.to_owned()
+    };
+    let rich = style(egui::RichText::new(shown).font(font_id));
+    if rtl { ui.add(egui::Label::new(rich).extend()) } else { ui.add(egui::Label::new(rich).wrap()) }
+}
+
 /// `s` in `lang` (in visual RTL order for egui 0.36 when [`Lang::Hebrew`] is passed).
 pub fn t_for(lang: Lang, s: &str) -> &str {
     match lang {
@@ -186,11 +223,22 @@ fn pseudo(s: &str) -> &'static str {
     leaked
 }
 
+/// Fill `{name}` placeholders in `template` for `lang`, keeping logical text order (for
+/// row-aware wrapping in [`wrapped_label`]).
+pub fn fmt_logical_for(lang: Lang, template: &str, args: &[(&str, &str)]) -> String {
+    let source = if lang == Lang::Hebrew { hebrew_catalog().visual_to_logical.get(template).copied().unwrap_or(template) } else { template };
+    fill_placeholders(source, args)
+}
+
+/// Fill `{name}` placeholders in a (translated) template in one pass, keeping logical text order.
+pub fn fmt_logical(template: &str, args: &[(&str, &str)]) -> String {
+    fmt_logical_for(current(), template, args)
+}
+
 /// Fill `{name}` placeholders in `template` for `lang`. When [`Lang::Hebrew`] is selected,
 /// recovers the logical template before substituting so inserted values reorder cleanly for egui 0.36.
 pub fn fmt_for(lang: Lang, template: &str, args: &[(&str, &str)]) -> String {
-    let source = if lang == Lang::Hebrew { hebrew_catalog().visual_to_logical.get(template).copied().unwrap_or(template) } else { template };
-    let out = fill_placeholders(source, args);
+    let out = fmt_logical_for(lang, template, args);
     if lang == Lang::Hebrew { visual_rtl(&out) } else { out }
 }
 
@@ -379,6 +427,18 @@ fn push_visual_rtl_line(line: &str, out: &mut String) {
         };
         if attach && let Some(slot) = cls.get_mut(i) {
             *slot = BidiClass::En;
+        }
+    }
+
+    // Keep leading path/dot prefixes (e.g. `/tmp/...`, `.env`) attached to following LTR/numeric runs.
+    for i in (0..len.saturating_sub(1)).rev() {
+        if cls.get(i) == Some(&BidiClass::N)
+            && chars.get(i).is_some_and(|c| matches!(c, '/' | '.' | '~' | '\\'))
+            && matches!(cls.get(i + 1), Some(BidiClass::L | BidiClass::En))
+            && (i == 0 || cls.get(i - 1) != Some(&BidiClass::R))
+            && let Some(slot) = cls.get_mut(i)
+        {
+            *slot = BidiClass::L;
         }
     }
 
@@ -713,9 +773,29 @@ mod tests {
         assert_eq!(t_for(Lang::Hebrew, "Assign Resources…"), "…משאבים הקצאת");
         assert_eq!(fmt_for(Lang::Hebrew, t_for(Lang::Hebrew, "Task: {name}"), &[("name", "Alpha")]), "Alpha :משימה");
         assert_eq!(fmt_for(Lang::Hebrew, t_for(Lang::Hebrew, "Task: {name}"), &[("name", "בדיקה ראשונה")]), "ראשונה בדיקה :משימה");
+        assert_eq!(
+            fmt_for(Lang::Hebrew, t_for(Lang::Hebrew, "Opened {path}"), &[("path", "/tmp/demo.projectcraft")]),
+            "/tmp/demo.projectcraft :נפתח"
+        );
+        assert_eq!(fmt_for(Lang::Hebrew, t_for(Lang::Hebrew, "Opened {path}"), &[("path", ".env")]), ".env :נפתח");
         assert_eq!(visual_rtl("פרויקט ProjectCraft (100%)"), "ProjectCraft (100%) פרויקט");
         assert_eq!(visual_rtl("שמור (Ctrl+O)"), "(Ctrl+O) שמור");
         assert_eq!(visual_rtl("הכול הושלם (100%)"), "(100%) הושלם הכול");
         assert_eq!(t_for(Lang::Hebrew, ""), "");
+    }
+
+    #[test]
+    fn hebrew_wrapping_reorders_after_line_breaks() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, egui::ThemePreference::Light);
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        let logical = "המרת משכים בין שעות, ימים, שבועות וחודשים; המטבע של כל סכום; אופן הצגת היחידות";
+        let font = egui::FontId::proportional(14.0);
+        let wrapped = wrapped_visual_lines(&ctx, Lang::Hebrew, logical, font, 160.0);
+        let lines: Vec<&str> = wrapped.lines().collect();
+        assert!(lines.len() >= 2, "expected wrapped lines, got {wrapped:?}");
+        assert!(lines[0].contains("המרת"), "first wrapped row should begin with opening words: {lines:?}");
+        assert!(!lines[0].contains("היחידות"), "first wrapped row should not start with paragraph end: {lines:?}");
+        assert!(lines.last().unwrap().contains("היחידות"), "last wrapped row should contain closing words: {lines:?}");
     }
 }

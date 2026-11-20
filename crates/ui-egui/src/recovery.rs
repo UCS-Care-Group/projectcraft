@@ -224,11 +224,12 @@ impl App {
         egui::Modal::new(egui::Id::new("recovery-copy")).show(ctx, |ui| {
             ui.set_max_width(420.0);
             ui.heading(tl!("Recover unsaved changes?"));
-            ui.label(i18n::fmt(
+            let notice = i18n::fmt_logical(
                 tl!("ProjectCraft closed before changes to {name} were saved. A recovery copy of them was kept."),
                 &[("name", &name)],
-            ));
-            ui.label(tl!("Restore opens them as unsaved changes. Discard deletes the recovery copy."));
+            );
+            i18n::wrapped_label(ui, &notice, |r| r);
+            i18n::wrapped_label(ui, tl!("Restore opens them as unsaved changes. Discard deletes the recovery copy."), |r| r);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 if ui.button(tl!("Restore")).clicked() {

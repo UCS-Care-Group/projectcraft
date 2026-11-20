@@ -988,7 +988,7 @@ impl App {
                     .labelled_by(label.id);
             });
             if form.resource.is_some() {
-                ui.label(RichText::new(tl!("Based on the project calendar: only what differs is its own.")).color(t.text_dim));
+                i18n::wrapped_label(ui, tl!("Based on the project calendar: only what differs is its own."), |r| r.color(t.text_dim));
             }
             ui.add_space(10.0);
 
@@ -1061,7 +1061,9 @@ impl App {
             // A resource lists its own; the project calendar's apply to it too. Only the rows in
             // view are drawn.
             if own.is_some() {
-                ui.label(RichText::new(tl!("The project calendar's exceptions apply too, except on a day with one of its own.")).color(t.text_dim));
+                i18n::wrapped_label(ui, tl!("The project calendar's exceptions apply too, except on a day with one of its own."), |r| {
+                    r.color(t.text_dim)
+                });
             }
             let count = own.map_or(base.exceptions.len(), |c| c.exceptions.len());
             if count == 0 {
