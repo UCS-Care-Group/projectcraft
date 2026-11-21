@@ -145,7 +145,29 @@ fn logical_of_for(lang: Lang, s: &str) -> &str {
 }
 
 fn is_combining_cluster_continuation(ch: char) -> bool {
-    matches!(u32::from(ch), 0x0300..=0x036F | 0x0591..=0x05C7 | 0x200C..=0x200D | 0xFE00..=0xFE0F)
+    matches!(
+        u32::from(ch),
+        0x0300..=0x036F
+            | 0x0591..=0x05C7
+            | 0x0610..=0x061A
+            | 0x064B..=0x065F
+            | 0x0670
+            | 0x06D6..=0x06DC
+            | 0x06DF..=0x06E4
+            | 0x06E7..=0x06E8
+            | 0x06EA..=0x06ED
+            | 0x0711
+            | 0x0730..=0x074A
+            | 0x07A6..=0x07B0
+            | 0x07EB..=0x07F3
+            | 0x07FD
+            | 0x1AB0..=0x1AFF
+            | 0x1DC0..=0x1DFF
+            | 0x200C..=0x200D
+            | 0xFE00..=0xFE0F
+            | 0xFE20..=0xFE2F
+            | 0x1_E944..=0x1_E94A
+    )
 }
 
 fn measure_no_wrap(ctx: &egui::Context, text: &str, font_id: &egui::FontId) -> f32 {
@@ -657,8 +679,8 @@ mod tests {
         assert_eq!(visual_rtl("(*.projectcraft), וכן"), "וכן ,(*.projectcraft)");
         assert_eq!(visual_rtl("(*.projectcraft),"), "(*.projectcraft),");
         // Visual-to-logical recovery must never collide between two distinct logical translations,
-        // and duplicate Hebrew translations (e.g. Cancel/Undo -> ביטול) must keep their Hebrew
-        // logical string rather than colliding on English keys.
+        // and any duplicate Hebrew translations must preserve their shared Hebrew logical string
+        // rather than colliding on English keys.
         let mut seen_visual: HashMap<String, String> = HashMap::new();
         for (k, logical) in parsed_hebrew_rows() {
             let vis = visual_rtl(&logical);
@@ -667,10 +689,14 @@ mod tests {
             }
         }
         assert_eq!(t_logical_for(Lang::Hebrew, "Cancel"), "ביטול");
-        assert_eq!(t_logical_for(Lang::Hebrew, "Undo"), "ביטול");
+        assert_eq!(t_logical_for(Lang::Hebrew, "Undo"), "ביטול פעולה");
         assert_eq!(logical_of_for(Lang::Hebrew, t_for(Lang::Hebrew, "Cancel")), "ביטול");
+        assert_eq!(logical_of_for(Lang::Hebrew, t_for(Lang::Hebrew, "Undo")), "ביטול פעולה");
         assert_eq!(fmt_for(Lang::Hebrew, t_for(Lang::Hebrew, "Cancel"), &[]), "ביטול");
         assert_eq!(t_for(Lang::Hebrew, ""), "");
+        for ch in ['\u{05BC}', '\u{064E}', '\u{0730}', '\u{07A6}', '\u{07EB}', '\u{1E944}'] {
+            assert!(is_combining_cluster_continuation(ch), "expected combining mark U+{:04X}", u32::from(ch));
+        }
     }
 
     #[test]

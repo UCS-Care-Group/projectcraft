@@ -221,7 +221,7 @@ Type	סוג
 Type Fixed Units, Fixed Duration or Fixed Work.	הקלד יחידות קבועות, משך קבוע או עבודה קבועה (או Fixed Units / Fixed Duration / Fixed Work).
 Type Yes or No.	הקלד כן או לא (Yes / No).
 Type a priority from 0 to 1000.	הקלד עדיפות בין 0 ל-1000.
-Undo	ביטול
+Undo	ביטול פעולה
 Units	יחידות
 Units and work shown are for {name}.	היחידות והעבודה המוצגות הן עבור {name}.
 Units: a decimal for people and equipment (0.5, or 50%); for materials a quantity (5 tons) or a rate (2 tons/d).	יחידות: מספר עשרוני לאנשים ולציוד (0.5 או 50%); לחומרים כמות (5 tons) או קצב (2 tons/d).

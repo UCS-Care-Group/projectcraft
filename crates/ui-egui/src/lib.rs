@@ -145,16 +145,26 @@ fn shown_cell(sheet: &SheetText, row: usize, field: Field) -> (String, bool) {
     }
 }
 
-/// Typed Effort Driven text: yes or no (or the start of either, or true, false, 1, 0), any case.
+/// Typed Effort Driven text: yes or no (or the start of either, or true, false, 1, 0, כן, לא), any case.
 fn typed_yes_no(text: &str) -> Option<bool> {
     let t = text.trim().to_lowercase();
     match t.as_str() {
         "" => None,
-        "true" | "1" => Some(true),
-        "false" | "0" => Some(false),
+        "true" | "1" | "כן" => Some(true),
+        "false" | "0" | "לא" => Some(false),
         _ if "yes".starts_with(&t) => Some(true),
         _ if "no".starts_with(&t) => Some(false),
         _ => None,
+    }
+}
+
+/// Typed task type text: English names/prefixes (`TaskType::from_name`) or Hebrew labels.
+fn typed_task_type(text: &str) -> Option<TaskType> {
+    match text.trim() {
+        "יחידות קבועות" => Some(TaskType::FixedUnits),
+        "משך קבוע" => Some(TaskType::FixedDuration),
+        "עבודה קבועה" => Some(TaskType::FixedWork),
+        _ => TaskType::from_name(text).ok(),
     }
 }
 
@@ -781,11 +791,11 @@ impl App {
             Field::Work => {
                 self.run("task.setWork", json!({"id": id.0, "work": text.trim()}));
             }
-            Field::Type => match TaskType::from_name(&text) {
-                Ok(ty) => {
+            Field::Type => match typed_task_type(&text) {
+                Some(ty) => {
                     self.run("task.setType", json!({"id": id.0, "type": ty.name()}));
                 }
-                Err(_) => self.status = tl!("Type Fixed Units, Fixed Duration or Fixed Work.").to_owned(),
+                None => self.status = tl!("Type Fixed Units, Fixed Duration or Fixed Work.").to_owned(),
             },
             Field::EffortDriven => match typed_yes_no(&text) {
                 Some(on) => {
@@ -2296,5 +2306,22 @@ mod tests {
         assert_eq!(app.take_language_changed(), None);
         app.set_language(i18n::Lang::English);
         assert_eq!(app.take_language_changed(), Some(i18n::Lang::English));
+    }
+
+    #[test]
+    fn typed_yes_no_and_task_type_accept_hebrew_and_english_inputs() {
+        assert_eq!(typed_yes_no("כן"), Some(true));
+        assert_eq!(typed_yes_no("לא"), Some(false));
+        assert_eq!(typed_yes_no("yes"), Some(true));
+        assert_eq!(typed_yes_no("no"), Some(false));
+        assert_eq!(typed_yes_no("1"), Some(true));
+        assert_eq!(typed_yes_no("0"), Some(false));
+        assert_eq!(typed_yes_no("maybe"), None);
+
+        assert_eq!(typed_task_type("יחידות קבועות"), Some(TaskType::FixedUnits));
+        assert_eq!(typed_task_type("משך קבוע"), Some(TaskType::FixedDuration));
+        assert_eq!(typed_task_type("עבודה קבועה"), Some(TaskType::FixedWork));
+        assert_eq!(typed_task_type("Fixed Work"), Some(TaskType::FixedWork));
+        assert_eq!(typed_task_type("Fixed Cost"), None);
     }
 }
