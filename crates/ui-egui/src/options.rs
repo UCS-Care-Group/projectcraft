@@ -152,9 +152,10 @@ impl App {
         let modal = egui::Modal::new(egui::Id::new("project_options")).show(ctx, |ui| {
             ui.set_width(400.0);
             ui.heading(tl!("Project Options"));
-            ui.label(
-                RichText::new(tl!("Converting durations between hours, days, weeks and months; the currency of every amount; how units show"))
-                    .color(t.text_dim),
+            crate::i18n::wrapped_label(
+                ui,
+                tl_logical!("Converting durations between hours, days, weeks and months; the currency of every amount; how units show"),
+                |r| r.color(t.text_dim),
             );
             ui.add_space(10.0);
             egui::Grid::new("project_options_rows").num_columns(3).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -206,13 +207,13 @@ impl App {
                 ui.end_row();
             });
             let example = match form.units_format {
-                UnitsFormat::Percentage => tl!("Half time shows as 50%, full time as 100%."),
-                UnitsFormat::Decimal => tl!("Half time shows as 0.5, full time as 1. Typing 50% still works."),
+                UnitsFormat::Percentage => tl_logical!("Half time shows as 50%, full time as 100%."),
+                UnitsFormat::Decimal => tl_logical!("Half time shows as 0.5, full time as 1. Typing 50% still works."),
             };
-            ui.label(RichText::new(example).color(t.text_dim));
+            crate::i18n::wrapped_label(ui, example, |r| r.color(t.text_dim));
             if !error.is_empty() {
                 ui.add_space(6.0);
-                ui.label(RichText::new(error.as_str()).color(t.warning));
+                crate::i18n::wrapped_label(ui, error.as_str(), |r| r.color(t.warning));
             }
             ui.add_space(10.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

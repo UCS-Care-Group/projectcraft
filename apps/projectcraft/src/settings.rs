@@ -1,8 +1,10 @@
 //! The app's settings folder and what's kept in it: the recent-files list (`recent-files.txt`, one
-//! path a line), the autosave switch (`autosave.txt`, `off` when turned off) and an untitled
-//! project's recovery copy (`recovery/`).
+//! path a line), the autosave switch (`autosave.txt`, `off` when turned off), the interface
+//! language (`language.txt`, BCP 47 tag), and an untitled project's recovery copy (`recovery/`).
 
 use std::path::PathBuf;
+
+use projectcraft_ui_egui::i18n::Lang;
 
 /// The settings folder: macOS `~/Library/Application Support/ProjectCraft`, Windows
 /// `%APPDATA%\ProjectCraft`, otherwise `$XDG_CONFIG_HOME/projectcraft` or `~/.config/projectcraft`.
@@ -82,5 +84,97 @@ pub fn save_autosave(on: bool) {
         .and_then(|()| projectcraft_engine::write_private(&file, if on { "on\n" } else { "off\n" }.as_bytes()));
     if let Err(e) = result {
         eprintln!("couldn't save the autosave setting to {}: {e}", file.display());
+    }
+}
+
+fn language_file() -> Option<PathBuf> {
+    settings_dir().map(|d| d.join("language.txt"))
+}
+
+fn resolve_language_from_str(saved: Option<&str>, env_tags: &[Option<String>]) -> Lang {
+    if let Some(tag) = saved.and_then(Lang::from_tag) {
+        return tag;
+    }
+    if let Some(lang) = env_tags.first().and_then(|v| v.as_deref()).and_then(Lang::from_tag) {
+        return lang;
+    }
+    let effective_posix = env_tags.get(1..).unwrap_or(&[]).iter().flatten().map(|s| s.trim()).find(|s| !s.is_empty());
+    effective_posix.and_then(Lang::from_tag).unwrap_or(Lang::English)
+}
+
+/// The interface language: `language.txt` if valid, otherwise `PROJECTCRAFT_LANG` / locale env vars.
+pub fn load_language() -> Lang {
+    let env_tags = ["PROJECTCRAFT_LANG", "LC_ALL", "LC_MESSAGES", "LANG"].map(|k| std::env::var(k).ok());
+    load_language_from(language_file().as_deref(), &env_tags)
+}
+
+fn load_language_from(file: Option<&std::path::Path>, env_tags: &[Option<String>]) -> Lang {
+    let mut bytes = Vec::new();
+    let saved = if let Some(Ok(f)) = file.map(std::fs::File::open) {
+        let _ = std::io::Read::read_to_end(&mut std::io::Read::take(f, 64), &mut bytes);
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    } else {
+        None
+    };
+    resolve_language_from_str(saved.as_deref(), env_tags)
+}
+
+/// Writes the interface language tag. A failure only loses the setting, so it's reported and otherwise ignored.
+pub fn save_language(lang: Lang) {
+    let Some(file) = language_file() else {
+        return;
+    };
+    save_language_to(&file, lang);
+}
+
+fn save_language_to(file: &std::path::Path, lang: Lang) {
+    let body = format!("{}\n", lang.code());
+    let result = file
+        .parent()
+        .map_or(Ok(()), projectcraft_engine::create_private_dir_all)
+        .and_then(|()| projectcraft_engine::write_private(file, body.as_bytes()));
+    if let Err(e) = result {
+        eprintln!("couldn't save the language setting to {}: {e}", file.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn language_resolution_normalizes_hebrew_and_legacy_iw_tags() {
+        assert_eq!(resolve_language_from_str(Some("he\n"), &[]), Lang::Hebrew);
+        assert_eq!(resolve_language_from_str(Some("iw_IL.UTF-8"), &[]), Lang::Hebrew);
+        assert_eq!(resolve_language_from_str(None, &[None, Some("he_IL.UTF-8".to_owned())]), Lang::Hebrew);
+        assert_eq!(resolve_language_from_str(Some("xx"), &[Some("iw".to_owned())]), Lang::Hebrew);
+        assert_eq!(resolve_language_from_str(None, &[None, Some("fr_FR.UTF-8".to_owned())]), Lang::English);
+        // Non-empty LC_ALL overrides lower-priority LANG even when unsupported.
+        assert_eq!(resolve_language_from_str(None, &[None, Some("C".to_owned()), None, Some("he_IL.UTF-8".to_owned())]), Lang::English);
+        // Empty LC_ALL / LC_MESSAGES fall through to LANG.
+        assert_eq!(
+            resolve_language_from_str(None, &[None, Some(String::new()), Some("  ".to_owned()), Some("he_IL.UTF-8".to_owned())]),
+            Lang::Hebrew
+        );
+        // PROJECTCRAFT_LANG keeps precedence over POSIX locale vars.
+        assert_eq!(
+            resolve_language_from_str(None, &[Some("iw".to_owned()), Some("C".to_owned()), None, Some("en_US.UTF-8".to_owned())]),
+            Lang::Hebrew
+        );
+    }
+
+    #[test]
+    fn language_file_round_trips_hebrew_and_back_to_english() {
+        let dir = std::env::temp_dir().join(format!("projectcraft-lang-test-{}", std::process::id()));
+        let file = dir.join("language.txt");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        save_language_to(&file, Lang::Hebrew);
+        assert_eq!(load_language_from(Some(&file), &[]), Lang::Hebrew);
+
+        save_language_to(&file, Lang::English);
+        assert_eq!(load_language_from(Some(&file), &[]), Lang::English);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

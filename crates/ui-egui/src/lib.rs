@@ -25,6 +25,15 @@ macro_rules! tl {
     };
 }
 
+/// An English UI string in the current interface language in logical text order
+/// ([`i18n::t_logical`]), for [`i18n::wrapped_label`] and [`i18n::fmt_logical`].
+#[macro_export]
+macro_rules! tl_logical {
+    ($s:expr) => {
+        $crate::i18n::t_logical($s)
+    };
+}
+
 pub mod i18n;
 pub mod theme;
 pub mod timescale;
@@ -278,6 +287,7 @@ pub struct App {
     /// Recently opened or saved files, newest first (the shell loads and persists it).
     pub recent: Vec<std::path::PathBuf>,
     recent_changed: bool,
+    language_changed: bool,
     /// A dialog for the shell to show.
     file_request: Option<FileRequest>,
     /// The unsaved-changes prompt, and what follows it.
@@ -343,6 +353,7 @@ impl App {
             saved,
             recent: Vec::new(),
             recent_changed: false,
+            language_changed: false,
             file_request: None,
             prompt: None,
             after_save: None,
@@ -367,6 +378,17 @@ impl App {
     /// The status bar's message, if any (the last error, or what Open or Save did).
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    /// Switches the active interface language and marks it for the shell to persist.
+    pub fn set_language(&mut self, lang: i18n::Lang) {
+        i18n::set_current(lang);
+        self.language_changed = true;
+    }
+
+    /// Returns the newly chosen language if the user changed it since the last call.
+    pub fn take_language_changed(&mut self) -> Option<i18n::Lang> {
+        std::mem::take(&mut self.language_changed).then(i18n::current)
     }
 
     /// Runs a command; an error goes to the status bar. True when it ran.
@@ -426,6 +448,10 @@ impl App {
         if self.themed != Some(self.appearance) {
             theme::apply(&ctx, self.appearance);
             self.themed = Some(self.appearance);
+        }
+        if i18n::current() == i18n::Lang::Hebrew && !theme::hebrew_font_available(&ctx) {
+            i18n::set_current(i18n::Lang::English);
+            self.language_changed = true;
         }
         self.file_keys(&ctx);
         let (undo, redo) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::COMMAND, Key::Z), i.consume_key(egui::Modifiers::COMMAND, Key::Y)));
@@ -849,6 +875,20 @@ impl App {
             if ui.add_enabled(timed && w > timescale::MIN_DAY_W, egui::Button::new(tl!("Zoom Out")).shortcut_text(out_keys)).clicked() {
                 self.zoom(false);
             }
+            ui.separator();
+            ui.menu_button(tl!("Language"), |ui| {
+                let active = i18n::current();
+                let hebrew_ok = theme::hebrew_font_available(ui.ctx());
+                for lang in i18n::Lang::ALL {
+                    if lang == i18n::Lang::Hebrew && !hebrew_ok {
+                        continue;
+                    }
+                    if ui.radio(active == lang, lang.name()).clicked() {
+                        self.set_language(lang);
+                        ui.close();
+                    }
+                }
+            });
         });
     }
 
@@ -988,7 +1028,7 @@ impl App {
                     .labelled_by(label.id);
             });
             if form.resource.is_some() {
-                ui.label(RichText::new(tl!("Based on the project calendar: only what differs is its own.")).color(t.text_dim));
+                i18n::wrapped_label(ui, tl_logical!("Based on the project calendar: only what differs is its own."), |r| r.color(t.text_dim));
             }
             ui.add_space(10.0);
 
@@ -1061,7 +1101,9 @@ impl App {
             // A resource lists its own; the project calendar's apply to it too. Only the rows in
             // view are drawn.
             if own.is_some() {
-                ui.label(RichText::new(tl!("The project calendar's exceptions apply too, except on a day with one of its own.")).color(t.text_dim));
+                i18n::wrapped_label(ui, tl_logical!("The project calendar's exceptions apply too, except on a day with one of its own."), |r| {
+                    r.color(t.text_dim)
+                });
             }
             let count = own.map_or(base.exceptions.len(), |c| c.exceptions.len());
             if count == 0 {
@@ -2246,5 +2288,13 @@ mod tests {
         assert_eq!(h.state().cell_text(TaskId(5), Field::LevelingDelay).as_deref(), Some("2d"));
         h.state_mut().commit(TaskId(5), Field::LevelingDelay, "".into());
         assert_eq!(h.state().session.project.task(TaskId(5)).unwrap().leveling_delay, 0);
+    }
+
+    #[test]
+    fn explicit_english_selection_marks_language_for_persistence() {
+        let mut app = App::new(projectcraft_engine::sample(), None);
+        assert_eq!(app.take_language_changed(), None);
+        app.set_language(i18n::Lang::English);
+        assert_eq!(app.take_language_changed(), Some(i18n::Lang::English));
     }
 }

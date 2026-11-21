@@ -38,6 +38,9 @@ impl eframe::App for Shell {
         if let Some(on) = self.app.take_autosave_changed() {
             settings::save_autosave(on);
         }
+        if let Some(lang) = self.app.take_language_changed() {
+            settings::save_language(lang);
+        }
     }
 
     /// Runs before `ui`, and also while the window is minimized or hidden, when `ui` does not:
@@ -68,6 +71,7 @@ fn main() -> eframe::Result {
         },
         _ => Session::new(projectcraft_engine::model::Project::new("New project", today())),
     };
+    projectcraft_ui_egui::i18n::set_current(settings::load_language());
     let mut app = App::new(session, if sample { None } else { path.clone() });
     app.recent = settings::load_recent();
     // `--sample` keeps nothing: no autosave, no recovery copy.

@@ -272,14 +272,16 @@ impl App {
             ui.add_space(6.0);
             let decimal = p.options.units_format == UnitsFormat::Decimal;
             let hint = match (p.resources.iter().any(|r| r.kind == ResourceType::Material), decimal) {
-                (true, false) => tl!("Units: a percentage for people and equipment (50%); for materials a quantity (5 tons) or a rate (2 tons/d)."),
-                (true, true) => {
-                    tl!("Units: a decimal for people and equipment (0.5, or 50%); for materials a quantity (5 tons) or a rate (2 tons/d).")
+                (true, false) => {
+                    tl_logical!("Units: a percentage for people and equipment (50%); for materials a quantity (5 tons) or a rate (2 tons/d).")
                 }
-                (false, false) => tl!("Units: the share of each resource's working time (50% is half its day)."),
-                (false, true) => tl!("Units: the share of each resource's working time (0.5 is half its day; 50% works too)."),
+                (true, true) => {
+                    tl_logical!("Units: a decimal for people and equipment (0.5, or 50%); for materials a quantity (5 tons) or a rate (2 tons/d).")
+                }
+                (false, false) => tl_logical!("Units: the share of each resource's working time (50% is half its day)."),
+                (false, true) => tl_logical!("Units: the share of each resource's working time (0.5 is half its day; 50% works too)."),
             };
-            ui.label(RichText::new(hint).color(t.text_dim));
+            crate::i18n::wrapped_label(ui, hint, |r| r.color(t.text_dim));
             if !error.is_empty() {
                 ui.add_space(6.0);
                 ui.label(RichText::new(error.as_str()).color(t.warning));
