@@ -13,6 +13,7 @@ fn view_language_menu_selects_hebrew_and_switches_back() {
     h.run_steps(2);
     h.get_by_label("Language ⏵").click();
     h.run_steps(2);
+    assert!(h.query_by_label("Pseudo").is_none(), "test-only Pseudo language must not appear in View -> Language");
     if !theme::hebrew_font_available(&h.ctx) {
         assert!(h.query_by_label("עברית").is_none(), "Hebrew must stay hidden when no Hebrew font is installed");
         return;

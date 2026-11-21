@@ -128,6 +128,9 @@ pub fn save_language(lang: Lang) {
 }
 
 fn save_language_to(file: &std::path::Path, lang: Lang) {
+    if lang == Lang::Pseudo {
+        return;
+    }
     let body = format!("{}\n", lang.code());
     let result = file
         .parent()

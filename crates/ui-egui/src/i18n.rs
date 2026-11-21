@@ -79,7 +79,8 @@ pub fn current() -> Lang {
 /// Whether `code` names a right-to-left language or ISO 15924 script (normalizing legacy `iw` to
 /// `he`, ignoring private-use `x-*` tags, and honoring an explicit script subtag after any
 /// 3-letter extlang subtags).
-pub fn is_rtl_code(code: &str) -> bool {
+#[cfg(test)]
+fn is_rtl_code(code: &str) -> bool {
     let cleaned = code.trim().split(['.', '@']).next().unwrap_or_default().replace('_', "-").to_ascii_lowercase();
     let mut parts = cleaned.split('-').filter(|p| !p.is_empty());
     let Some(base) = parts.next() else {
@@ -138,13 +139,9 @@ fn hebrew_catalog() -> &'static HebrewCatalog {
 }
 
 /// Recover the logical string for a catalog entry when `s` was visually reordered for `lang`.
-pub fn logical_of_for(lang: Lang, s: &str) -> &str {
+#[cfg(test)]
+fn logical_of_for(lang: Lang, s: &str) -> &str {
     if lang.is_rtl() { hebrew_catalog().visual_to_logical.get(s).copied().unwrap_or(s) } else { s }
-}
-
-/// Recover the logical string for a catalog entry when `s` was visually reordered for RTL.
-pub fn logical_of(s: &str) -> &str {
-    logical_of_for(current(), s)
 }
 
 fn is_combining_cluster_continuation(ch: char) -> bool {
@@ -248,7 +245,7 @@ fn wrap_paragraph_logical<'a>(ctx: &egui::Context, paragraph: &'a str, font_id: 
 
 /// Break `logical` text at `max_width` first using original logical substrings, then apply visual
 /// RTL ordering to each display row containing RTL characters.
-pub fn wrapped_visual_lines(ctx: &egui::Context, lang: Lang, logical: &str, font_id: egui::FontId, max_width: f32) -> String {
+fn wrapped_visual_lines(ctx: &egui::Context, lang: Lang, logical: &str, font_id: egui::FontId, max_width: f32) -> String {
     if !lang.is_rtl() || !logical.chars().any(is_rtl_script) {
         return logical.to_owned();
     }
@@ -271,12 +268,12 @@ pub fn wrapped_visual_lines(ctx: &egui::Context, lang: Lang, logical: &str, font
 }
 
 /// Render a **logical-order** wrapping label for an explicit `lang` (for example from
-/// [`t_logical_for`] / [`tl_logical!`] or [`fmt_logical`]), deferring visual RTL reordering until
+/// `t_logical_for` / [`tl_logical!`] or [`fmt_logical`]), deferring visual RTL reordering until
 /// after egui line breaks are measured.
 ///
 /// Callers must pass logical text rather than already-reordered strings from [`t`] / [`fmt`] so
 /// formatted outputs are never double-reordered.
-pub fn wrapped_label_for(ui: &mut egui::Ui, lang: Lang, logical: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
+fn wrapped_label_for(ui: &mut egui::Ui, lang: Lang, logical: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
     let font_id = egui::TextStyle::Body.resolve(ui.style());
     let needs_rtl_wrap = lang.is_rtl() && logical.chars().any(is_rtl_script);
     let shown =
@@ -295,8 +292,8 @@ pub fn wrapped_label(ui: &mut egui::Ui, logical: &str, style: impl FnOnce(egui::
     wrapped_label_for(ui, current(), logical, style)
 }
 
-/// `s` in `lang` in logical text order (for [`wrapped_label_for`] and [`fmt_logical_for`]).
-pub fn t_logical_for(lang: Lang, s: &str) -> &str {
+/// `s` in `lang` in logical text order (for `wrapped_label_for` and `fmt_logical_for`).
+fn t_logical_for(lang: Lang, s: &str) -> &str {
     match lang {
         Lang::English => s,
         Lang::Pseudo => pseudo(s),
@@ -310,7 +307,7 @@ pub fn t_logical(s: &str) -> &str {
 }
 
 /// `s` in `lang` (in visual RTL order for egui 0.36 when [`Lang::Hebrew`] is passed).
-pub fn t_for(lang: Lang, s: &str) -> &str {
+fn t_for(lang: Lang, s: &str) -> &str {
     match lang {
         Lang::English => s,
         Lang::Pseudo => pseudo(s),
@@ -366,7 +363,7 @@ fn pseudo(s: &str) -> &'static str {
 
 /// Fill `{name}` placeholders in `template` for `lang`, keeping logical text order (for
 /// row-aware wrapping in [`wrapped_label`]).
-pub fn fmt_logical_for(lang: Lang, template: &str, args: &[(&str, &str)]) -> String {
+fn fmt_logical_for(lang: Lang, template: &str, args: &[(&str, &str)]) -> String {
     let source = if lang == Lang::Hebrew { hebrew_catalog().visual_to_logical.get(template).copied().unwrap_or(template) } else { template };
     fill_placeholders(source, args)
 }
@@ -378,7 +375,7 @@ pub fn fmt_logical(template: &str, args: &[(&str, &str)]) -> String {
 
 /// Fill `{name}` placeholders in `template` for `lang`. When [`Lang::Hebrew`] is selected,
 /// recovers the logical template before substituting so inserted values reorder cleanly for egui 0.36.
-pub fn fmt_for(lang: Lang, template: &str, args: &[(&str, &str)]) -> String {
+fn fmt_for(lang: Lang, template: &str, args: &[(&str, &str)]) -> String {
     let out = fmt_logical_for(lang, template, args);
     if lang == Lang::Hebrew { visual_rtl(&out) } else { out }
 }
@@ -482,21 +479,39 @@ mod tests {
         assert!(!Lang::English.is_rtl());
     }
 
+    fn collect_rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect_rs_files(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                out.push(path);
+            }
+        }
+    }
+
     #[test]
     fn hebrew_catalog_covers_every_ui_string_and_keeps_placeholders() {
         let catalog = parsed_hebrew_rows();
         let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        collect_rs_files(&src_dir, &mut files);
         let mut required = BTreeSet::new();
-        for entry in std::fs::read_dir(&src_dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-                continue;
-            }
+        for path in files {
             let text = std::fs::read_to_string(&path).unwrap();
-            for prefix in ["tl!(\"", "tl_logical!(\""] {
+            for prefix in ["tl!(", "tl_logical!("] {
                 let mut rest = text.as_str();
                 while let Some(at) = rest.find(prefix) {
+                    let prev = rest[..at].chars().next_back();
                     rest = &rest[at + prefix.len()..];
+                    if matches!(prev, Some(c) if c == '"' || c.is_ascii_alphanumeric() || c == '_') {
+                        continue;
+                    }
+                    rest = rest.trim_start();
+                    if !rest.starts_with('"') {
+                        continue;
+                    }
+                    rest = &rest[1..];
                     let mut lit = String::new();
                     let mut chars = rest.chars();
                     let mut esc = false;

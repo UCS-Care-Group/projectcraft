@@ -880,7 +880,7 @@ impl App {
                 let active = i18n::current();
                 let hebrew_ok = theme::hebrew_font_available(ui.ctx());
                 for lang in i18n::Lang::ALL {
-                    if lang == i18n::Lang::Hebrew && !hebrew_ok {
+                    if lang == i18n::Lang::Pseudo || (lang == i18n::Lang::Hebrew && !hebrew_ok) {
                         continue;
                     }
                     if ui.radio(active == lang, lang.name()).clicked() {
