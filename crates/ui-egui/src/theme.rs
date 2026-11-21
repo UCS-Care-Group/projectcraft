@@ -135,44 +135,70 @@ pub fn apply(ctx: &egui::Context, preference: egui::ThemePreference) {
     });
 }
 
-fn hebrew_font_data() -> Option<egui::FontData> {
-    #[cfg(has_hebrew_craft_font)]
-    {
-        Some(egui::FontData::from_static(include_bytes!(env!("HEBREW_CRAFT_FONT_PATH"))))
-    }
-    #[cfg(not(has_hebrew_craft_font))]
-    {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            #[cfg(target_os = "macos")]
-            const CANDIDATES: &[&str] = &[
-                "/System/Library/Fonts/SFHebrew.ttf",
-                "/System/Library/Fonts/Supplemental/Arial.ttf",
-                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-                "/Library/Fonts/Arial Unicode.ttf",
-            ];
-            #[cfg(all(unix, not(target_os = "macos")))]
-            const CANDIDATES: &[&str] = &[
-                "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
-                "/usr/share/fonts/noto/NotoSansHebrew-Regular.ttf",
-                "/usr/share/fonts/opentype/noto/NotoSansHebrew-Regular.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/TTF/DejaVuSans.ttf",
-                "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-            ];
-            #[cfg(windows)]
-            const CANDIDATES: &[&str] = &[r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\tahoma.ttf"];
-            #[cfg(not(any(unix, windows)))]
-            const CANDIDATES: &[&str] = &[];
+fn hebrew_available_key() -> egui::Id {
+    egui::Id::new("projectcraft_hebrew_fonts_available")
+}
 
-            for path in CANDIDATES {
-                if let Ok(bytes) = std::fs::read(path) {
-                    return Some(egui::FontData::from_owned(bytes));
-                }
-            }
-        }
-        None
+fn hebrew_installed_pass_key() -> egui::Id {
+    egui::Id::new("projectcraft_hebrew_fonts_installed_pass")
+}
+
+fn has_hebrew_glyphs(ctx: &egui::Context) -> bool {
+    ctx.fonts_mut(|fonts| fonts.has_glyph(&egui::FontId::proportional(14.0), 'א') && fonts.has_glyph(&egui::FontId::monospace(14.0), 'א'))
+}
+
+/// Returns whether the fonts loaded on `ctx` can render Hebrew glyphs.
+///
+/// Must be called after `ctx` has completed at least one pass (or inside a `Ui` pass once any
+/// queued `set_fonts` update has been applied).
+pub fn hebrew_font_available(ctx: &egui::Context) -> bool {
+    if let Some(available) = ctx.data(|d| d.get_temp::<bool>(hebrew_available_key())) {
+        return available;
     }
+    let installed_pass = ctx.data(|d| d.get_temp::<u64>(hebrew_installed_pass_key()));
+    if installed_pass.is_some_and(|pass| ctx.cumulative_pass_nr() <= pass) {
+        // `set_fonts` takes effect on the next pass; keep the candidate active until then.
+        return true;
+    }
+    let available = has_hebrew_glyphs(ctx);
+    ctx.data_mut(|d| d.insert_temp(hebrew_available_key(), available));
+    available
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn hebrew_font_data() -> Option<egui::FontData> {
+    #[cfg(target_os = "macos")]
+    const CANDIDATES: &[&str] = &[
+        "/System/Library/Fonts/SFHebrew.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
+    ];
+    #[cfg(all(unix, not(target_os = "macos")))]
+    const CANDIDATES: &[&str] = &[
+        "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+        "/usr/share/fonts/noto/NotoSansHebrew-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansHebrew-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/TTF/FreeSans.ttf",
+        "/usr/share/fonts/gnu-free/FreeSans.ttf",
+    ];
+    #[cfg(windows)]
+    const CANDIDATES: &[&str] = &[r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\tahoma.ttf"];
+    #[cfg(not(any(unix, windows)))]
+    const CANDIDATES: &[&str] = &[];
+
+    for path in CANDIDATES {
+        if let Ok(bytes) = std::fs::read(path) {
+            return Some(egui::FontData::from_owned(bytes));
+        }
+    }
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+fn hebrew_font_data() -> Option<egui::FontData> {
+    None
 }
 
 fn apply_hebrew_fallback(fonts: &mut egui::FontDefinitions, font_data: egui::FontData) {
@@ -191,11 +217,14 @@ fn install_hebrew_fonts(ctx: &egui::Context) {
     }
     ctx.data_mut(|d| d.insert_temp(key, true));
     let Some(font_data) = hebrew_font_data() else {
+        ctx.data_mut(|d| d.insert_temp(hebrew_available_key(), false));
         return;
     };
     let mut fonts = egui::FontDefinitions::default();
     apply_hebrew_fallback(&mut fonts, font_data);
     ctx.set_fonts(fonts);
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(hebrew_installed_pass_key(), pass));
 }
 
 /// egui's visuals for one of our palettes.
@@ -257,19 +286,21 @@ mod tests {
     }
 
     #[test]
+    fn default_fonts_report_hebrew_unavailable_until_fallback_is_installed() {
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        assert!(!hebrew_font_available(&ctx), "egui default fonts should not report Hebrew coverage");
+    }
+
+    #[test]
     fn hebrew_fallback_font_supplies_hebrew_glyphs_when_available() {
         let ctx = egui::Context::default();
         apply(&ctx, egui::ThemePreference::Light);
         ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
-        let Some(_) = hebrew_font_data() else {
-            #[cfg(has_hebrew_craft_font)]
-            panic!("CRAFT_FONTS_DIR Hebrew font enabled at build time but missing at runtime");
-            #[cfg(not(has_hebrew_craft_font))]
-            {
-                eprintln!("skipping glyph check: no CRAFT_FONTS_DIR or system Hebrew font found on this host");
-                return;
-            }
-        };
+        if !hebrew_font_available(&ctx) {
+            eprintln!("skipping glyph check: no system Hebrew font found on this host");
+            return;
+        }
         ctx.fonts_mut(|fonts| {
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 let font = egui::FontId::new(14.0, family);

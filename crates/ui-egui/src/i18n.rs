@@ -101,6 +101,7 @@ pub fn is_rtl() -> bool {
 }
 
 struct HebrewCatalog {
+    en_to_logical: HashMap<&'static str, &'static str>,
     en_to_visual: HashMap<&'static str, &'static str>,
     visual_to_logical: HashMap<&'static str, &'static str>,
 }
@@ -108,6 +109,7 @@ struct HebrewCatalog {
 fn hebrew_catalog() -> &'static HebrewCatalog {
     static CATALOG: OnceLock<HebrewCatalog> = OnceLock::new();
     CATALOG.get_or_init(|| {
+        let mut en_to_logical = HashMap::new();
         let mut en_to_visual = HashMap::new();
         let mut visual_to_logical = HashMap::new();
         for line in HEBREW_TSV.lines() {
@@ -127,10 +129,11 @@ fn hebrew_catalog() -> &'static HebrewCatalog {
                 // Static catalog entries are small and fixed for the lifetime of the process.
                 Box::leak(visual_str.into_boxed_str())
             };
+            en_to_logical.insert(key, logical);
             en_to_visual.insert(key, visual);
             visual_to_logical.insert(visual, logical);
         }
-        HebrewCatalog { en_to_visual, visual_to_logical }
+        HebrewCatalog { en_to_logical, en_to_visual, visual_to_logical }
     })
 }
 
@@ -209,11 +212,14 @@ pub fn wrapped_visual_lines(ctx: &egui::Context, lang: Lang, logical: &str, font
     out
 }
 
-/// Render a wrapping label for an explicit `lang`, deferring RTL visual reordering until after
-/// egui determines line breaks.
-pub fn wrapped_label_for(ui: &mut egui::Ui, lang: Lang, text: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
+/// Render a **logical-order** wrapping label for an explicit `lang` (for example from
+/// [`t_logical_for`] / [`tl_logical!`] or [`fmt_logical`]), deferring visual RTL reordering until
+/// after egui line breaks are measured.
+///
+/// Callers must pass logical text rather than already-reordered strings from [`t`] / [`fmt`] so
+/// formatted outputs are never double-reordered.
+pub fn wrapped_label_for(ui: &mut egui::Ui, lang: Lang, logical: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
     let font_id = egui::TextStyle::Body.resolve(ui.style());
-    let logical = logical_of_for(lang, text);
     let needs_rtl_wrap = lang.is_rtl() && logical.chars().any(is_rtl_script);
     let shown =
         if needs_rtl_wrap { wrapped_visual_lines(ui.ctx(), lang, logical, font_id.clone(), ui.available_width()) } else { logical.to_owned() };
@@ -225,9 +231,24 @@ pub fn wrapped_label_for(ui: &mut egui::Ui, lang: Lang, text: &str, style: impl 
     }
 }
 
-/// Render a wrapping label, deferring RTL visual reordering until after egui determines line breaks.
-pub fn wrapped_label(ui: &mut egui::Ui, text: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
-    wrapped_label_for(ui, current(), text, style)
+/// Render a **logical-order** wrapping label in the active interface language, deferring visual
+/// RTL reordering until after egui line breaks are measured.
+pub fn wrapped_label(ui: &mut egui::Ui, logical: &str, style: impl FnOnce(egui::RichText) -> egui::RichText) -> egui::Response {
+    wrapped_label_for(ui, current(), logical, style)
+}
+
+/// `s` in `lang` in logical text order (for [`wrapped_label_for`] and [`fmt_logical_for`]).
+pub fn t_logical_for(lang: Lang, s: &str) -> &str {
+    match lang {
+        Lang::English => s,
+        Lang::Pseudo => pseudo(s),
+        Lang::Hebrew => hebrew_catalog().en_to_logical.get(s).copied().unwrap_or(s),
+    }
+}
+
+/// `s` in the active interface language in logical text order (the `tl_logical!` macro).
+pub fn t_logical(s: &str) -> &str {
+    t_logical_for(current(), s)
 }
 
 /// `s` in `lang` (in visual RTL order for egui 0.36 when [`Lang::Hebrew`] is passed).
@@ -414,31 +435,33 @@ mod tests {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap();
-            let mut rest = text.as_str();
-            while let Some(at) = rest.find("tl!(\"") {
-                rest = &rest[at + 5..];
-                let mut lit = String::new();
-                let mut chars = rest.chars();
-                let mut esc = false;
-                for ch in &mut chars {
-                    if esc {
-                        match ch {
-                            'n' => lit.push('\n'),
-                            'r' => lit.push('\r'),
-                            't' => lit.push('\t'),
-                            other => lit.push(other),
+            for prefix in ["tl!(\"", "tl_logical!(\""] {
+                let mut rest = text.as_str();
+                while let Some(at) = rest.find(prefix) {
+                    rest = &rest[at + prefix.len()..];
+                    let mut lit = String::new();
+                    let mut chars = rest.chars();
+                    let mut esc = false;
+                    for ch in &mut chars {
+                        if esc {
+                            match ch {
+                                'n' => lit.push('\n'),
+                                'r' => lit.push('\r'),
+                                't' => lit.push('\t'),
+                                other => lit.push(other),
+                            }
+                            esc = false;
+                        } else if ch == '\\' {
+                            esc = true;
+                        } else if ch == '"' {
+                            break;
+                        } else {
+                            lit.push(ch);
                         }
-                        esc = false;
-                    } else if ch == '\\' {
-                        esc = true;
-                    } else if ch == '"' {
-                        break;
-                    } else {
-                        lit.push(ch);
                     }
+                    required.insert(lit);
+                    rest = chars.as_str();
                 }
-                required.insert(lit);
-                rest = chars.as_str();
             }
         }
         // Dynamic table keys routed through `tl!` in ui-egui.
@@ -556,6 +579,20 @@ mod tests {
         assert_eq!(visual_rtl("פרויקט ProjectCraft (100%)"), "ProjectCraft (100%) פרויקט");
         assert_eq!(visual_rtl("שמור (Ctrl+O)"), "(Ctrl+O) שמור");
         assert_eq!(visual_rtl("הכול הושלם (100%)"), "(100%) הושלם הכול");
+        // Visual-to-logical recovery must never collide between two distinct logical translations,
+        // and duplicate Hebrew translations (e.g. Cancel/Undo -> ביטול) must keep their Hebrew
+        // logical string rather than colliding on English keys.
+        let mut seen_visual: HashMap<String, String> = HashMap::new();
+        for (k, logical) in parsed_hebrew_rows() {
+            let vis = visual_rtl(&logical);
+            if let Some(prev) = seen_visual.insert(vis.clone(), logical.clone()) {
+                assert_eq!(prev, logical, "visual_rtl collision for {k:?}: {vis:?} maps to both {prev:?} and {logical:?}");
+            }
+        }
+        assert_eq!(t_logical_for(Lang::Hebrew, "Cancel"), "ביטול");
+        assert_eq!(t_logical_for(Lang::Hebrew, "Undo"), "ביטול");
+        assert_eq!(logical_of_for(Lang::Hebrew, t_for(Lang::Hebrew, "Cancel")), "ביטול");
+        assert_eq!(fmt_for(Lang::Hebrew, t_for(Lang::Hebrew, "Cancel"), &[]), "ביטול");
         assert_eq!(t_for(Lang::Hebrew, ""), "");
     }
 
@@ -589,17 +626,25 @@ mod tests {
         .clear();
         assert!(english_resp_width <= 150.0, "English fallback in Hebrew mode must still wrap, got width {english_resp_width}");
 
-        // Calling wrapped_label_for(Lang::Hebrew, ...) while global current() is English must
-        // recover the logical catalog entry via logical_of_for(lang, ...) and right-align it.
+        // Calling wrapped_label_for(Lang::Hebrew, ...) with a logical catalog string (via
+        // t_logical_for) while global current() is English must wrap and right-align cleanly, and
+        // formatted logical strings must not be double-reordered.
         let catalog_notice =
-            t_for(Lang::Hebrew, "Converting durations between hours, days, weeks and months; the currency of every amount; how units show");
+            t_logical_for(Lang::Hebrew, "Converting durations between hours, days, weeks and months; the currency of every amount; how units show");
+        let formatted_notice = fmt_logical_for(
+            Lang::Hebrew,
+            t_logical_for(Lang::Hebrew, "ProjectCraft closed before changes to {name} were saved. A recovery copy of them was kept."),
+            &[("name", "AlphaPlan")],
+        );
         let mut rtl_rect = egui::Rect::NOTHING;
         let mut container_rect = egui::Rect::NOTHING;
+        let mut formatted_rect = egui::Rect::NOTHING;
         ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.allocate_ui(egui::vec2(220.0, 200.0), |ui| {
                     container_rect = ui.max_rect();
                     rtl_rect = wrapped_label_for(ui, Lang::Hebrew, catalog_notice, |r| r).rect;
+                    formatted_rect = wrapped_label_for(ui, Lang::Hebrew, &formatted_notice, |r| r).rect;
                 });
             });
         })
@@ -610,5 +655,9 @@ mod tests {
             "Hebrew wrapped label should right-align to container edge: rtl={rtl_rect:?} container={container_rect:?}"
         );
         assert!(rtl_rect.height() >= 24.0, "catalog notice should wrap into multiple lines: {rtl_rect:?}");
+        assert!(
+            (formatted_rect.right() - container_rect.right()).abs() <= 2.0,
+            "formatted Hebrew wrapped label should right-align to container edge: formatted={formatted_rect:?} container={container_rect:?}"
+        );
     }
 }

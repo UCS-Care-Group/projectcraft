@@ -25,6 +25,15 @@ macro_rules! tl {
     };
 }
 
+/// An English UI string in the current interface language in logical text order
+/// ([`i18n::t_logical`]), for [`i18n::wrapped_label`] and [`i18n::fmt_logical`].
+#[macro_export]
+macro_rules! tl_logical {
+    ($s:expr) => {
+        $crate::i18n::t_logical($s)
+    };
+}
+
 pub mod i18n;
 pub mod theme;
 pub mod timescale;
@@ -441,6 +450,9 @@ impl App {
         if self.themed != Some(self.appearance) {
             theme::apply(&ctx, self.appearance);
             self.themed = Some(self.appearance);
+        }
+        if i18n::current() == i18n::Lang::Hebrew && !theme::hebrew_font_available(&ctx) {
+            i18n::set_current(i18n::Lang::English);
         }
         self.file_keys(&ctx);
         let (undo, redo) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::COMMAND, Key::Z), i.consume_key(egui::Modifiers::COMMAND, Key::Y)));
@@ -867,7 +879,11 @@ impl App {
             ui.separator();
             ui.menu_button(tl!("Language"), |ui| {
                 let active = i18n::current();
+                let hebrew_ok = theme::hebrew_font_available(ui.ctx());
                 for lang in i18n::Lang::ALL {
+                    if lang == i18n::Lang::Hebrew && !hebrew_ok {
+                        continue;
+                    }
                     if ui.radio(active == lang, lang.name()).clicked() {
                         self.set_language(lang);
                         ui.close();
@@ -1013,7 +1029,7 @@ impl App {
                     .labelled_by(label.id);
             });
             if form.resource.is_some() {
-                i18n::wrapped_label(ui, tl!("Based on the project calendar: only what differs is its own."), |r| r.color(t.text_dim));
+                i18n::wrapped_label(ui, tl_logical!("Based on the project calendar: only what differs is its own."), |r| r.color(t.text_dim));
             }
             ui.add_space(10.0);
 
@@ -1086,7 +1102,7 @@ impl App {
             // A resource lists its own; the project calendar's apply to it too. Only the rows in
             // view are drawn.
             if own.is_some() {
-                i18n::wrapped_label(ui, tl!("The project calendar's exceptions apply too, except on a day with one of its own."), |r| {
+                i18n::wrapped_label(ui, tl_logical!("The project calendar's exceptions apply too, except on a day with one of its own."), |r| {
                     r.color(t.text_dim)
                 });
             }

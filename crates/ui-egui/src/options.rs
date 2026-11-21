@@ -154,7 +154,7 @@ impl App {
             ui.heading(tl!("Project Options"));
             crate::i18n::wrapped_label(
                 ui,
-                tl!("Converting durations between hours, days, weeks and months; the currency of every amount; how units show"),
+                tl_logical!("Converting durations between hours, days, weeks and months; the currency of every amount; how units show"),
                 |r| r.color(t.text_dim),
             );
             ui.add_space(10.0);
@@ -207,8 +207,8 @@ impl App {
                 ui.end_row();
             });
             let example = match form.units_format {
-                UnitsFormat::Percentage => tl!("Half time shows as 50%, full time as 100%."),
-                UnitsFormat::Decimal => tl!("Half time shows as 0.5, full time as 1. Typing 50% still works."),
+                UnitsFormat::Percentage => tl_logical!("Half time shows as 50%, full time as 100%."),
+                UnitsFormat::Decimal => tl_logical!("Half time shows as 0.5, full time as 1. Typing 50% still works."),
             };
             crate::i18n::wrapped_label(ui, example, |r| r.color(t.text_dim));
             if !error.is_empty() {
