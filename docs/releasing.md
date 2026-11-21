@@ -1,11 +1,14 @@
 # Releasing ProjectCraft
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** major (first version) · **Status:** no release workflow exists yet; nothing has been released.
+> **Last reviewed:** 2026-11-21 · **Last updated:** 2026-11-21 · **Change:** minor (document macOS packaging scripts in `packaging/macos/`) · **Status:** macOS packaging scripts added; no release workflow or published builds yet.
 
-ProjectCraft has no release workflow, no packaging and no signing yet. There are no published
-builds: build from source (`README.md`). This file holds the rules the release workflow must
-follow when it is written, so that it starts out safe rather than being made safe later. A
-release workflow that breaks one of them is a security bug.
+ProjectCraft has no release workflow or published builds yet: build from source (`README.md`) or run the macOS packaging scripts (`packaging/macos/package.sh`). This file holds the rules the release workflow must follow when it is written, so that it starts out safe rather than being made safe later. A release workflow that breaks one of them is a security bug.
+
+## macOS packaging (`packaging/macos/`)
+
+- `packaging/env.sh` resolves workspace metadata (`VERSION`, `APP_ID`, `DIST`, `CARGO_TARGET_DIR`) and copies legal/licence files (`LICENSE-MIT`, `LICENSE-APACHE`, `ATTRIBUTION.md`, `NOTICE`, bundled `licenses/egui-default-fonts/`, and optional `CRAFT_FONTS_DIR` `OFL.txt` files).
+- `packaging/macos/package.sh [--arch universal|aarch64|x86_64] [--skip-build | --build-only] [--no-run]` builds `projectcraft` and `projectcraft-cli`, combines universal slices with `lipo`, renders `packaging/macos/Info.plist.in`, signs inside-out with `packaging/macos/entitlements.plist` (falling back to ad-hoc `-` locally when `MACOS_SIGN_IDENTITY` is unset), builds `$DIST/projectcraft-<version>-macos-<arch>.dmg` and `$DIST/projectcraft-cli-<version>-macos-<arch>.zip`, notarizes/staples when `MACOS_NOTARY_PROFILE` (or `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`) is set, and smoke-tests the packaged CLI on matching host architectures.
+- `packaging/macos/import-cert.sh` imports `APPLE_CERTIFICATE` into a temporary keychain for CI signing and fails closed in GitHub Actions unless `MACOS_ALLOW_ADHOC=1`.
 
 The general recipe for a Craft app is [craftrules `release/playbook.md`](https://github.com/storytold/craftrules/blob/main/release/playbook.md).
 
@@ -48,3 +51,4 @@ These are settings, not files, so the workflow can't set them:
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-16 | major | First version: no release workflow yet; the rules it must follow |
+| 2026-11-21 | minor | Document macOS `.app`, `.dmg`, and CLI packaging scripts (`packaging/macos/`) |
