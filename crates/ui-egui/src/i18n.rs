@@ -147,6 +147,60 @@ pub fn logical_of(s: &str) -> &str {
     logical_of_for(current(), s)
 }
 
+fn is_combining_cluster_continuation(ch: char) -> bool {
+    matches!(u32::from(ch), 0x0300..=0x036F | 0x0591..=0x05C7 | 0x200C..=0x200D | 0xFE00..=0xFE0F)
+}
+
+fn measure_no_wrap(ctx: &egui::Context, text: &str, font_id: &egui::FontId) -> f32 {
+    ctx.fonts_mut(|f| f.layout_no_wrap(text.to_owned(), font_id.clone(), Default::default()).rect.width())
+}
+
+fn push_fitted_span(
+    ctx: &egui::Context,
+    paragraph: &str,
+    span_start: usize,
+    span_end: usize,
+    font_id: &egui::FontId,
+    max_w: f32,
+    out: &mut Vec<(usize, usize)>,
+) {
+    let Some(span) = paragraph.get(span_start..span_end) else {
+        return;
+    };
+    if measure_no_wrap(ctx, span, font_id) <= max_w {
+        out.push((span_start, span_end));
+        return;
+    }
+
+    let mut clusters: Vec<(usize, usize)> = Vec::new();
+    for (rel_idx, ch) in span.char_indices() {
+        let abs_idx = span_start.saturating_add(rel_idx);
+        let char_end = abs_idx.saturating_add(ch.len_utf8());
+        if let Some(last) = clusters.last_mut()
+            && is_combining_cluster_continuation(ch)
+        {
+            last.1 = char_end;
+        } else {
+            clusters.push((abs_idx, char_end));
+        }
+    }
+
+    let Some(&(mut piece_start, mut piece_end)) = clusters.first() else {
+        return;
+    };
+    for &(c_start, c_end) in clusters.iter().skip(1) {
+        let candidate = paragraph.get(piece_start..c_end).unwrap_or("");
+        if measure_no_wrap(ctx, candidate, font_id) <= max_w {
+            piece_end = c_end;
+        } else {
+            out.push((piece_start, piece_end));
+            piece_start = c_start;
+            piece_end = c_end;
+        }
+    }
+    out.push((piece_start, piece_end));
+}
+
 fn wrap_paragraph_logical<'a>(ctx: &egui::Context, paragraph: &'a str, font_id: &egui::FontId, max_width: f32) -> Vec<&'a str> {
     if paragraph.is_empty() || !max_width.is_finite() {
         return vec![paragraph];
@@ -158,7 +212,7 @@ fn wrap_paragraph_logical<'a>(ctx: &egui::Context, paragraph: &'a str, font_id: 
     for (idx, ch) in paragraph.char_indices() {
         if ch.is_whitespace() {
             if in_word {
-                spans.push((word_start, idx));
+                push_fitted_span(ctx, paragraph, word_start, idx, font_id, max_w, &mut spans);
                 in_word = false;
             }
         } else if !in_word {
@@ -167,24 +221,28 @@ fn wrap_paragraph_logical<'a>(ctx: &egui::Context, paragraph: &'a str, font_id: 
         }
     }
     if in_word {
-        spans.push((word_start, paragraph.len()));
+        push_fitted_span(ctx, paragraph, word_start, paragraph.len(), font_id, max_w, &mut spans);
     }
     let Some(&(mut line_start, mut line_end)) = spans.first() else {
         return vec![paragraph];
     };
     let mut rows = Vec::new();
     for &(span_start, span_end) in spans.iter().skip(1) {
-        let candidate = &paragraph[line_start..span_end];
-        let width = ctx.fonts_mut(|f| f.layout_no_wrap(candidate.to_owned(), font_id.clone(), Default::default()).rect.width());
+        let candidate = paragraph.get(line_start..span_end).unwrap_or("");
+        let width = measure_no_wrap(ctx, candidate, font_id);
         if width <= max_w {
             line_end = span_end;
         } else {
-            rows.push(&paragraph[line_start..line_end]);
+            if let Some(row) = paragraph.get(line_start..line_end) {
+                rows.push(row);
+            }
             line_start = span_start;
             line_end = span_end;
         }
     }
-    rows.push(&paragraph[line_start..line_end]);
+    if let Some(row) = paragraph.get(line_start..line_end) {
+        rows.push(row);
+    }
     rows
 }
 
@@ -579,6 +637,10 @@ mod tests {
         assert_eq!(visual_rtl("פרויקט ProjectCraft (100%)"), "ProjectCraft (100%) פרויקט");
         assert_eq!(visual_rtl("שמור (Ctrl+O)"), "(Ctrl+O) שמור");
         assert_eq!(visual_rtl("הכול הושלם (100%)"), "(100%) הושלם הכול");
+        assert_eq!(visual_rtl("(*.projectcraft), המיובאים"), "המיובאים ,(*.projectcraft)");
+        assert_eq!(visual_rtl("פרויקטים (*.projectcraft)"), "(*.projectcraft) פרויקטים");
+        assert_eq!(visual_rtl("(*.projectcraft), וכן"), "וכן ,(*.projectcraft)");
+        assert_eq!(visual_rtl("(*.projectcraft),"), "(*.projectcraft),");
         // Visual-to-logical recovery must never collide between two distinct logical translations,
         // and duplicate Hebrew translations (e.g. Cancel/Undo -> ביטול) must keep their Hebrew
         // logical string rather than colliding on English keys.
@@ -659,5 +721,25 @@ mod tests {
             (formatted_rect.right() - container_rect.right()).abs() <= 2.0,
             "formatted Hebrew wrapped label should right-align to container edge: formatted={formatted_rect:?} container={container_rect:?}"
         );
+
+        // Oversized unbroken words inside a Hebrew notice must split before rendering so
+        // Label::extend() never widens a fixed-width dialog.
+        let long_name = "a".repeat(200);
+        let oversized = fmt_logical_for(
+            Lang::Hebrew,
+            t_logical_for(Lang::Hebrew, "ProjectCraft closed before changes to {name} were saved. A recovery copy of them was kept."),
+            &[("name", &long_name)],
+        );
+        let mut oversized_rect = egui::Rect::NOTHING;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.allocate_ui(egui::vec2(220.0, 400.0), |ui| {
+                    oversized_rect = wrapped_label_for(ui, Lang::Hebrew, &oversized, |r| r).rect;
+                });
+            });
+        })
+        .textures_delta
+        .clear();
+        assert!(oversized_rect.width() <= 225.0, "oversized word must split within dialog width, got {oversized_rect:?}");
     }
 }

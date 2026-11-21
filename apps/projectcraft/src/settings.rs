@@ -95,12 +95,11 @@ fn resolve_language_from_str(saved: Option<&str>, env_tags: &[Option<String>]) -
     if let Some(tag) = saved.and_then(Lang::from_tag) {
         return tag;
     }
-    for env_val in env_tags.iter().flatten() {
-        if let Some(lang) = Lang::from_tag(env_val) {
-            return lang;
-        }
+    if let Some(lang) = env_tags.first().and_then(|v| v.as_deref()).and_then(Lang::from_tag) {
+        return lang;
     }
-    Lang::English
+    let effective_posix = env_tags.get(1..).unwrap_or(&[]).iter().flatten().map(|s| s.trim()).find(|s| !s.is_empty());
+    effective_posix.and_then(Lang::from_tag).unwrap_or(Lang::English)
 }
 
 /// The interface language: `language.txt` if valid, otherwise `PROJECTCRAFT_LANG` / locale env vars.
@@ -150,6 +149,18 @@ mod tests {
         assert_eq!(resolve_language_from_str(None, &[None, Some("he_IL.UTF-8".to_owned())]), Lang::Hebrew);
         assert_eq!(resolve_language_from_str(Some("xx"), &[Some("iw".to_owned())]), Lang::Hebrew);
         assert_eq!(resolve_language_from_str(None, &[None, Some("fr_FR.UTF-8".to_owned())]), Lang::English);
+        // Non-empty LC_ALL overrides lower-priority LANG even when unsupported.
+        assert_eq!(resolve_language_from_str(None, &[None, Some("C".to_owned()), None, Some("he_IL.UTF-8".to_owned())]), Lang::English);
+        // Empty LC_ALL / LC_MESSAGES fall through to LANG.
+        assert_eq!(
+            resolve_language_from_str(None, &[None, Some(String::new()), Some("  ".to_owned()), Some("he_IL.UTF-8".to_owned())]),
+            Lang::Hebrew
+        );
+        // PROJECTCRAFT_LANG keeps precedence over POSIX locale vars.
+        assert_eq!(
+            resolve_language_from_str(None, &[Some("iw".to_owned()), Some("C".to_owned()), None, Some("en_US.UTF-8".to_owned())]),
+            Lang::Hebrew
+        );
     }
 
     #[test]

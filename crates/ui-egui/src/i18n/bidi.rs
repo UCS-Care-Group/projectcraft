@@ -168,10 +168,13 @@ pub(super) fn push_visual_rtl_line(line: &str, out: &mut String) {
         }
     }
 
-    // Keep leading path/dot prefixes (e.g. `/tmp/...`, `.env`) attached to following LTR/numeric runs.
+    // Keep leading path/dot/wildcard prefixes (e.g. `/tmp/...`, `.env`, `*.projectcraft`)
+    // attached to following LTR/numeric runs.
     for i in (0..len.saturating_sub(1)).rev() {
+        let is_path_prefix = chars.get(i).is_some_and(|c| matches!(c, '/' | '.' | '~' | '\\'));
+        let is_glob_prefix = chars.get(i) == Some(&'*') && chars.get(i + 1) == Some(&'.') && cls.get(i + 1) == Some(&BidiClass::L);
         if cls.get(i) == Some(&BidiClass::N)
-            && chars.get(i).is_some_and(|c| matches!(c, '/' | '.' | '~' | '\\'))
+            && (is_path_prefix || is_glob_prefix)
             && matches!(cls.get(i + 1), Some(BidiClass::L | BidiClass::En))
             && (i == 0 || cls.get(i - 1) != Some(&BidiClass::R))
             && let Some(slot) = cls.get_mut(i)

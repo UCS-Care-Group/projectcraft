@@ -167,6 +167,18 @@ pub fn hebrew_font_available(ctx: &egui::Context) -> bool {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn hebrew_font_data() -> Option<egui::FontData> {
+    for env_var in ["PROJECTCRAFT_FONT_DIR", "CRAFT_FONTS_DIR"] {
+        if let Ok(dir) = std::env::var(env_var) {
+            let trimmed = dir.trim();
+            if !trimmed.is_empty() {
+                let candidate = std::path::Path::new(trimmed).join("NotoSansHebrew-Regular.ttf");
+                if let Ok(bytes) = std::fs::read(candidate) {
+                    return Some(egui::FontData::from_owned(bytes));
+                }
+            }
+        }
+    }
+
     #[cfg(target_os = "macos")]
     const CANDIDATES: &[&str] = &[
         "/System/Library/Fonts/SFHebrew.ttf",
@@ -179,9 +191,13 @@ fn hebrew_font_data() -> Option<egui::FontData> {
         "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
         "/usr/share/fonts/noto/NotoSansHebrew-Regular.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansHebrew-Regular.ttf",
+        "/usr/local/share/fonts/noto/NotoSansHebrew-Regular.ttf",
+        "/run/current-system/sw/share/fonts/truetype/NotoSansHebrew-Regular.ttf",
+        "/run/current-system/sw/share/fonts/noto/NotoSansHebrew-Regular.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
         "/usr/share/fonts/TTF/FreeSans.ttf",
         "/usr/share/fonts/gnu-free/FreeSans.ttf",
+        "/usr/local/share/fonts/freefont-ttf/FreeSans.ttf",
     ];
     #[cfg(windows)]
     const CANDIDATES: &[&str] = &[r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\tahoma.ttf"];
@@ -217,12 +233,21 @@ fn install_hebrew_fonts(ctx: &egui::Context) {
     }
     ctx.data_mut(|d| d.insert_temp(key, true));
     let Some(font_data) = hebrew_font_data() else {
-        ctx.data_mut(|d| d.insert_temp(hebrew_available_key(), false));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| {
+                eprintln!(
+                    "note: no Hebrew fallback font found (checked PROJECTCRAFT_FONT_DIR, CRAFT_FONTS_DIR, and system font paths); Hebrew UI disabled"
+                );
+            });
+        }
         return;
     };
     let mut fonts = egui::FontDefinitions::default();
     apply_hebrew_fallback(&mut fonts, font_data);
     ctx.set_fonts(fonts);
+    ctx.data_mut(|d| d.remove::<bool>(hebrew_available_key()));
     let pass = ctx.cumulative_pass_nr();
     ctx.data_mut(|d| d.insert_temp(hebrew_installed_pass_key(), pass));
 }
@@ -309,5 +334,17 @@ mod tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn early_hebrew_availability_cache_clears_when_fonts_are_applied() {
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        assert!(!hebrew_font_available(&ctx));
+        apply(&ctx, egui::ThemePreference::Light);
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        if hebrew_font_data().is_some() {
+            assert!(hebrew_font_available(&ctx), "cached false must clear once fallback font is applied");
+        }
     }
 }

@@ -382,10 +382,8 @@ impl App {
 
     /// Switches the active interface language and marks it for the shell to persist.
     pub fn set_language(&mut self, lang: i18n::Lang) {
-        if i18n::current() != lang {
-            i18n::set_current(lang);
-            self.language_changed = true;
-        }
+        i18n::set_current(lang);
+        self.language_changed = true;
     }
 
     /// Returns the newly chosen language if the user changed it since the last call.
@@ -453,6 +451,7 @@ impl App {
         }
         if i18n::current() == i18n::Lang::Hebrew && !theme::hebrew_font_available(&ctx) {
             i18n::set_current(i18n::Lang::English);
+            self.language_changed = true;
         }
         self.file_keys(&ctx);
         let (undo, redo) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::COMMAND, Key::Z), i.consume_key(egui::Modifiers::COMMAND, Key::Y)));
@@ -2289,5 +2288,13 @@ mod tests {
         assert_eq!(h.state().cell_text(TaskId(5), Field::LevelingDelay).as_deref(), Some("2d"));
         h.state_mut().commit(TaskId(5), Field::LevelingDelay, "".into());
         assert_eq!(h.state().session.project.task(TaskId(5)).unwrap().leveling_delay, 0);
+    }
+
+    #[test]
+    fn explicit_english_selection_marks_language_for_persistence() {
+        let mut app = App::new(projectcraft_engine::sample(), None);
+        assert_eq!(app.take_language_changed(), None);
+        app.set_language(i18n::Lang::English);
+        assert_eq!(app.take_language_changed(), Some(i18n::Lang::English));
     }
 }
