@@ -457,8 +457,9 @@ impl App {
             self.themed = Some(self.appearance);
         }
         if i18n::current() == i18n::Lang::Hebrew && !theme::hebrew_font_available(&ctx) {
+            // Fall back to English for this session without marking `language_changed` so the
+            // user's saved or locale-derived Hebrew preference is not overwritten.
             i18n::set_current(i18n::Lang::English);
-            self.language_changed = true;
         }
         self.file_keys(&ctx);
         let (undo, redo) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::COMMAND, Key::Z), i.consume_key(egui::Modifiers::COMMAND, Key::Y)));

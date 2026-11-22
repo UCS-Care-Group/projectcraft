@@ -79,8 +79,7 @@ pub fn current() -> Lang {
 /// Whether `code` names a right-to-left language or ISO 15924 script (normalizing legacy `iw` to
 /// `he`, ignoring private-use `x-*` tags, and honoring an explicit script subtag after any
 /// 3-letter extlang subtags).
-#[cfg(test)]
-fn is_rtl_code(code: &str) -> bool {
+pub fn is_rtl_code(code: &str) -> bool {
     let cleaned = code.trim().split(['.', '@']).next().unwrap_or_default().replace('_', "-").to_ascii_lowercase();
     let mut parts = cleaned.split('-').filter(|p| !p.is_empty());
     let Some(base) = parts.next() else {

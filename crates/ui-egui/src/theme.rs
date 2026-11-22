@@ -139,8 +139,22 @@ fn hebrew_available_key() -> egui::Id {
     egui::Id::new("projectcraft_hebrew_fonts_available")
 }
 
+fn hebrew_installed_key() -> egui::Id {
+    egui::Id::new("projectcraft_hebrew_fonts_installed")
+}
+
 fn hebrew_installed_pass_key() -> egui::Id {
     egui::Id::new("projectcraft_hebrew_fonts_installed_pass")
+}
+
+/// Simulates an environment with no Hebrew-capable fallback font for integration tests without
+/// duplicating internal cache keys.
+#[doc(hidden)]
+pub fn disable_hebrew_font_for_test(ctx: &egui::Context) {
+    ctx.data_mut(|d| {
+        d.insert_temp(hebrew_installed_key(), true);
+        d.insert_temp(hebrew_available_key(), false);
+    });
 }
 
 fn has_hebrew_glyphs(ctx: &egui::Context) -> bool {
@@ -166,8 +180,95 @@ pub fn hebrew_font_available(ctx: &egui::Context) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn read_be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let slice = bytes.get(offset..offset + 2)?;
+    Some(u16::from_be_bytes([slice[0], slice[1]]))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let slice = bytes.get(offset..offset + 4)?;
+    Some(u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn has_valid_sfnt_at(bytes: &[u8], offset: usize) -> bool {
+    let Some(magic) = bytes.get(offset..offset + 4) else {
+        return false;
+    };
+    if !matches!(magic, [0x00, 0x01, 0x00, 0x00] | b"OTTO" | b"true") {
+        return false;
+    }
+    let Some(num_tables) = read_be_u16(bytes, offset + 4).map(usize::from) else {
+        return false;
+    };
+    if num_tables == 0 {
+        return false;
+    }
+    let Some(dir_end) = offset.checked_add(12).and_then(|s| s.checked_add(num_tables * 16)) else {
+        return false;
+    };
+    if dir_end > bytes.len() {
+        return false;
+    }
+    let mut has_valid_head = false;
+    for i in 0..num_tables {
+        let rec = offset + 12 + i * 16;
+        let Some(tag) = bytes.get(rec..rec + 4) else {
+            return false;
+        };
+        let Some(tbl_off) = read_be_u32(bytes, rec + 8).and_then(|v| usize::try_from(v).ok()) else {
+            return false;
+        };
+        let Some(tbl_len) = read_be_u32(bytes, rec + 12).and_then(|v| usize::try_from(v).ok()) else {
+            return false;
+        };
+        let Some(tbl_end) = tbl_off.checked_add(tbl_len) else {
+            return false;
+        };
+        if tbl_end > bytes.len() {
+            return false;
+        }
+        if tag == b"head" {
+            if tbl_len < 54 || read_be_u32(bytes, tbl_off + 12) != Some(0x5F0F_3CF5) {
+                return false;
+            }
+            has_valid_head = true;
+        }
+    }
+    has_valid_head
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn has_valid_sfnt_structure(bytes: &[u8]) -> bool {
+    if bytes.get(..4) == Some(b"ttcf") {
+        let Some(num_fonts) = read_be_u32(bytes, 8).and_then(|v| usize::try_from(v).ok()) else {
+            return false;
+        };
+        if num_fonts == 0 {
+            return false;
+        }
+        let Some(first_offset) = read_be_u32(bytes, 12).and_then(|v| usize::try_from(v).ok()) else {
+            return false;
+        };
+        return has_valid_sfnt_at(bytes, first_offset);
+    }
+    has_valid_sfnt_at(bytes, 0)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn is_valid_font_bytes(bytes: &[u8]) -> bool {
-    matches!(bytes.get(..4), Some([0x00, 0x01, 0x00, 0x00] | b"OTTO" | b"true" | b"ttcf"))
+    if !has_valid_sfnt_structure(bytes) {
+        return false;
+    }
+    let mut defs = egui::FontDefinitions::empty();
+    defs.font_data.insert("hebrew-probe".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes.to_vec())));
+    // Parse through epaint's loader so truncated/corrupt faces are skipped rather than panicking
+    // during FontDefinitions initialization.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = egui::epaint::text::FontsImpl::new(egui::epaint::text::TextOptions::default(), defs);
+    }))
+    .is_ok()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -240,7 +341,7 @@ fn apply_hebrew_fallback(fonts: &mut egui::FontDefinitions, font_data: egui::Fon
 }
 
 fn install_hebrew_fonts(ctx: &egui::Context) {
-    let key = egui::Id::new("projectcraft_hebrew_fonts_installed");
+    let key = hebrew_installed_key();
     if ctx.data(|d| d.get_temp::<bool>(key)) == Some(true) {
         return;
     }
@@ -364,20 +465,31 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn corrupt_font_candidate_is_skipped_and_falls_through() {
+        let valid_data = egui::FontDefinitions::default().font_data.into_values().next().expect("default egui font data present");
+        let valid_bytes = valid_data.font.as_ref();
+        assert!(is_valid_font_bytes(valid_bytes));
         assert!(!is_valid_font_bytes(b""));
         assert!(!is_valid_font_bytes(b"not a font"));
-        assert!(is_valid_font_bytes(&[0x00, 0x01, 0x00, 0x00, 0x00]));
-        assert!(is_valid_font_bytes(b"OTTO\0\0"));
-        assert!(is_valid_font_bytes(b"ttcf\0\0"));
+        // Truncated header or truncated real font bytes must fail validation.
+        assert!(!is_valid_font_bytes(&[0x00, 0x01, 0x00, 0x00, 0x00, 0x01]));
+        assert!(!is_valid_font_bytes(&valid_bytes[..valid_bytes.len() / 2]));
+        // Structurally valid SFNT directory pointing at a corrupt `head` table must fail too.
+        let mut corrupt_sfnt = vec![0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00];
+        corrupt_sfnt.extend_from_slice(b"head");
+        corrupt_sfnt.extend_from_slice(&[0u8; 4]);
+        corrupt_sfnt.extend_from_slice(&28u32.to_be_bytes());
+        corrupt_sfnt.extend_from_slice(&4u32.to_be_bytes());
+        corrupt_sfnt.extend_from_slice(&[0xFF; 4]);
+        assert!(!is_valid_font_bytes(&corrupt_sfnt));
 
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
         let dir = std::env::temp_dir().join(format!("projectcraft-bogus-font-dir-{nanos}"));
         std::fs::create_dir_all(&dir).expect("create temp font dir");
         std::fs::write(dir.join("NotoSansHebrew-Regular.ttf"), b"truncated").expect("write bogus env font");
         let bad_candidate = dir.join("bad.ttf");
-        std::fs::write(&bad_candidate, b"html-not-a-font").expect("write bogus candidate");
+        std::fs::write(&bad_candidate, &valid_bytes[..valid_bytes.len() / 2]).expect("write truncated candidate");
         let good_candidate = dir.join("good.ttf");
-        std::fs::write(&good_candidate, [0x00, 0x01, 0x00, 0x00, 0x00, 0x0C]).expect("write sfnt header");
+        std::fs::write(&good_candidate, valid_bytes).expect("write valid font");
 
         let env_dir = dir.to_string_lossy().into_owned();
         let bad_str = bad_candidate.to_string_lossy().into_owned();
