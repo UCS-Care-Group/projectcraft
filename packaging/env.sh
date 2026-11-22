@@ -7,7 +7,6 @@
 #   VERSION                 [workspace.package] version from Cargo.toml (override: PROJECTCRAFT_VERSION)
 #   DIST                    output directory for release artifacts (default: $ROOT/dist/release)
 #   PROJECTCRAFT_BUILD_SHA      git commit recorded in the macOS Info.plist
-#   PROJECTCRAFT_BUILD_DATE     UTC build date, YYYY-MM-DD
 #   CARGO_TARGET_DIR        absolute cargo target dir (default: $ROOT/target)
 #   APP_ID                  reverse-DNS macOS bundle identifier
 
@@ -46,8 +45,6 @@ export DIST
 
 PROJECTCRAFT_BUILD_SHA="${PROJECTCRAFT_BUILD_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
 export PROJECTCRAFT_BUILD_SHA
-PROJECTCRAFT_BUILD_DATE="${PROJECTCRAFT_BUILD_DATE:-$(date -u +%Y-%m-%d)}"
-export PROJECTCRAFT_BUILD_DATE
 
 # Resolve any relative CARGO_TARGET_DIR override against the caller's working directory
 # before subshells cd into $ROOT for cargo build.
