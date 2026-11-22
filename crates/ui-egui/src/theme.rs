@@ -166,19 +166,36 @@ pub fn hebrew_font_available(ctx: &egui::Context) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn hebrew_font_data() -> Option<egui::FontData> {
-    for env_var in ["PROJECTCRAFT_FONT_DIR", "CRAFT_FONTS_DIR"] {
-        if let Ok(dir) = std::env::var(env_var) {
-            let trimmed = dir.trim();
-            if !trimmed.is_empty() {
-                let candidate = std::path::Path::new(trimmed).join("NotoSansHebrew-Regular.ttf");
-                if let Ok(bytes) = std::fs::read(candidate) {
-                    return Some(egui::FontData::from_owned(bytes));
-                }
+fn is_valid_font_bytes(bytes: &[u8]) -> bool {
+    matches!(bytes.get(..4), Some([0x00, 0x01, 0x00, 0x00] | b"OTTO" | b"true" | b"ttcf"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_valid_font(path: &std::path::Path) -> Option<egui::FontData> {
+    let bytes = std::fs::read(path).ok()?;
+    if !is_valid_font_bytes(&bytes) {
+        eprintln!("note: skipping invalid Hebrew fallback font file: {}", path.display());
+        return None;
+    }
+    Some(egui::FontData::from_owned(bytes))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn hebrew_font_data_from(env_dirs: &[Option<String>], candidates: &[&str]) -> Option<egui::FontData> {
+    for dir in env_dirs.iter().flatten() {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            let candidate = std::path::Path::new(trimmed).join("NotoSansHebrew-Regular.ttf");
+            if let Some(data) = read_valid_font(&candidate) {
+                return Some(data);
             }
         }
     }
+    candidates.iter().find_map(|path| read_valid_font(std::path::Path::new(path)))
+}
 
+#[cfg(not(target_arch = "wasm32"))]
+fn hebrew_font_data() -> Option<egui::FontData> {
     #[cfg(target_os = "macos")]
     const CANDIDATES: &[&str] = &[
         "/System/Library/Fonts/SFHebrew.ttf",
@@ -204,12 +221,8 @@ fn hebrew_font_data() -> Option<egui::FontData> {
     #[cfg(not(any(unix, windows)))]
     const CANDIDATES: &[&str] = &[];
 
-    for path in CANDIDATES {
-        if let Ok(bytes) = std::fs::read(path) {
-            return Some(egui::FontData::from_owned(bytes));
-        }
-    }
-    None
+    let env_dirs = [std::env::var("PROJECTCRAFT_FONT_DIR").ok(), std::env::var("CRAFT_FONTS_DIR").ok()];
+    hebrew_font_data_from(&env_dirs, CANDIDATES)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -346,5 +359,32 @@ mod tests {
         if hebrew_font_data().is_some() {
             assert!(hebrew_font_available(&ctx), "cached false must clear once fallback font is applied");
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn corrupt_font_candidate_is_skipped_and_falls_through() {
+        assert!(!is_valid_font_bytes(b""));
+        assert!(!is_valid_font_bytes(b"not a font"));
+        assert!(is_valid_font_bytes(&[0x00, 0x01, 0x00, 0x00, 0x00]));
+        assert!(is_valid_font_bytes(b"OTTO\0\0"));
+        assert!(is_valid_font_bytes(b"ttcf\0\0"));
+
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let dir = std::env::temp_dir().join(format!("projectcraft-bogus-font-dir-{nanos}"));
+        std::fs::create_dir_all(&dir).expect("create temp font dir");
+        std::fs::write(dir.join("NotoSansHebrew-Regular.ttf"), b"truncated").expect("write bogus env font");
+        let bad_candidate = dir.join("bad.ttf");
+        std::fs::write(&bad_candidate, b"html-not-a-font").expect("write bogus candidate");
+        let good_candidate = dir.join("good.ttf");
+        std::fs::write(&good_candidate, [0x00, 0x01, 0x00, 0x00, 0x00, 0x0C]).expect("write sfnt header");
+
+        let env_dir = dir.to_string_lossy().into_owned();
+        let bad_str = bad_candidate.to_string_lossy().into_owned();
+        let good_str = good_candidate.to_string_lossy().into_owned();
+        assert!(hebrew_font_data_from(&[Some(env_dir.clone())], &[&bad_str]).is_none());
+        let fell_through = hebrew_font_data_from(&[Some(env_dir)], &[&bad_str, &good_str]);
+        assert!(fell_through.is_some(), "valid candidate after invalid env/candidate files should be selected");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

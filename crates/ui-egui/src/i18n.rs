@@ -139,7 +139,7 @@ fn hebrew_catalog() -> &'static HebrewCatalog {
 }
 
 /// Recover the logical string for a catalog entry when `s` was visually reordered for `lang`.
-fn logical_of_for(lang: Lang, s: &str) -> &str {
+pub fn logical_of_for(lang: Lang, s: &str) -> &str {
     if lang.is_rtl() { hebrew_catalog().visual_to_logical.get(s).copied().unwrap_or(s) } else { s }
 }
 
@@ -333,7 +333,7 @@ pub fn t_logical(s: &str) -> &str {
 }
 
 /// `s` in `lang` (in visual RTL order for egui 0.36 when [`Lang::Hebrew`] is passed).
-fn t_for(lang: Lang, s: &str) -> &str {
+pub fn t_for(lang: Lang, s: &str) -> &str {
     match lang {
         Lang::English => s,
         Lang::Pseudo => pseudo(s),

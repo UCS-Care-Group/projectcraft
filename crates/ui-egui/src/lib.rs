@@ -158,10 +158,11 @@ fn typed_yes_no(text: &str) -> Option<bool> {
     }
 }
 
-/// Typed task type text: English names/prefixes (`TaskType::from_name`) or Hebrew catalog labels.
+/// Typed task type text: English names/prefixes (`TaskType::from_name`), Hebrew logical catalog
+/// labels, or visually reordered Hebrew labels pre-filled from [`shown_cell`].
 fn typed_task_type(text: &str) -> Option<TaskType> {
-    let trimmed = text.trim();
-    TaskType::ALL.into_iter().find(|ty| i18n::t_logical_for(i18n::Lang::Hebrew, ty.name()) == trimmed).or_else(|| TaskType::from_name(text).ok())
+    let logical = i18n::logical_of_for(i18n::Lang::Hebrew, text.trim());
+    TaskType::ALL.into_iter().find(|ty| i18n::t_logical_for(i18n::Lang::Hebrew, ty.name()) == logical).or_else(|| TaskType::from_name(text).ok())
 }
 
 /// The command a typed Start or Finish issues: Start No Earlier Than or Finish No Earlier Than
@@ -2317,6 +2318,9 @@ mod tests {
         assert_eq!(typed_task_type("יחידות קבועות"), Some(TaskType::FixedUnits));
         assert_eq!(typed_task_type("משך קבוע"), Some(TaskType::FixedDuration));
         assert_eq!(typed_task_type("עבודה קבועה"), Some(TaskType::FixedWork));
+        assert_eq!(typed_task_type(i18n::t_for(i18n::Lang::Hebrew, "Fixed Units")), Some(TaskType::FixedUnits));
+        assert_eq!(typed_task_type(i18n::t_for(i18n::Lang::Hebrew, "Fixed Duration")), Some(TaskType::FixedDuration));
+        assert_eq!(typed_task_type(i18n::t_for(i18n::Lang::Hebrew, "Fixed Work")), Some(TaskType::FixedWork));
         assert_eq!(typed_task_type("Fixed Work"), Some(TaskType::FixedWork));
         assert_eq!(typed_task_type("Fixed Cost"), None);
     }
