@@ -158,14 +158,10 @@ fn typed_yes_no(text: &str) -> Option<bool> {
     }
 }
 
-/// Typed task type text: English names/prefixes (`TaskType::from_name`) or Hebrew labels.
+/// Typed task type text: English names/prefixes (`TaskType::from_name`) or Hebrew catalog labels.
 fn typed_task_type(text: &str) -> Option<TaskType> {
-    match text.trim() {
-        "יחידות קבועות" => Some(TaskType::FixedUnits),
-        "משך קבוע" => Some(TaskType::FixedDuration),
-        "עבודה קבועה" => Some(TaskType::FixedWork),
-        _ => TaskType::from_name(text).ok(),
-    }
+    let trimmed = text.trim();
+    TaskType::ALL.into_iter().find(|ty| i18n::t_logical_for(i18n::Lang::Hebrew, ty.name()) == trimmed).or_else(|| TaskType::from_name(text).ok())
 }
 
 /// The command a typed Start or Finish issues: Start No Earlier Than or Finish No Earlier Than

@@ -139,9 +139,13 @@ fn hebrew_catalog() -> &'static HebrewCatalog {
 }
 
 /// Recover the logical string for a catalog entry when `s` was visually reordered for `lang`.
-#[cfg(test)]
 fn logical_of_for(lang: Lang, s: &str) -> &str {
     if lang.is_rtl() { hebrew_catalog().visual_to_logical.get(s).copied().unwrap_or(s) } else { s }
+}
+
+/// Recover the logical string for a catalog entry when `s` was visually reordered for the active language.
+pub fn logical_of(s: &str) -> &str {
+    logical_of_for(current(), s)
 }
 
 fn is_combining_cluster_continuation(ch: char) -> bool {
@@ -315,7 +319,7 @@ pub fn wrapped_label(ui: &mut egui::Ui, logical: &str, style: impl FnOnce(egui::
 }
 
 /// `s` in `lang` in logical text order (for `wrapped_label_for` and `fmt_logical_for`).
-fn t_logical_for(lang: Lang, s: &str) -> &str {
+pub fn t_logical_for(lang: Lang, s: &str) -> &str {
     match lang {
         Lang::English => s,
         Lang::Pseudo => pseudo(s),
@@ -782,5 +786,15 @@ mod tests {
         .textures_delta
         .clear();
         assert!(oversized_rect.width() <= 225.0, "oversized word must split within dialog width, got {oversized_rect:?}");
+
+        // Validation errors stored via `tl!` must recover logical order before `wrapped_label`
+        // wraps and reorders each line.
+        let stored_err = t_for(Lang::Hebrew, "Hours per day must be 1 to 24, in whole minutes (such as 7.5).");
+        let recovered_err = logical_of_for(Lang::Hebrew, stored_err);
+        let wrapped_err = wrapped_visual_lines(&ctx, Lang::Hebrew, recovered_err, egui::FontId::proportional(14.0), 180.0);
+        let err_lines: Vec<&str> = wrapped_err.lines().collect();
+        assert!(err_lines.len() >= 2, "expected wrapped validation error, got {wrapped_err:?}");
+        assert!(err_lines[0].contains("מספר"), "first row should start with opening word: {err_lines:?}");
+        assert!(err_lines.last().unwrap().contains("7.5)."), "last row should keep closing example: {err_lines:?}");
     }
 }

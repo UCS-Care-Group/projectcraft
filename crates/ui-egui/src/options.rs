@@ -213,7 +213,7 @@ impl App {
             crate::i18n::wrapped_label(ui, example, |r| r.color(t.text_dim));
             if !error.is_empty() {
                 ui.add_space(6.0);
-                crate::i18n::wrapped_label(ui, error.as_str(), |r| r.color(t.warning));
+                crate::i18n::wrapped_label(ui, crate::i18n::logical_of(error.as_str()), |r| r.color(t.warning));
             }
             ui.add_space(10.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
