@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
     --skip-build) SKIP_BUILD=1; shift ;;
     --build-only) BUILD_ONLY=1; shift ;;
     --no-run) NO_RUN=1; shift ;;
-    -h | --help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -75,7 +75,7 @@ escape_sed_repl() {
   printf '%s' "$1" | sed -e 's/[\\/&]/\\&/g'
 }
 
-WORK="$CARGO_TARGET_DIR/macos-package"
+WORK="$CARGO_TARGET_DIR/macos-package-$ARCH"
 APP="$WORK/ProjectCraft.app"
 DMG="$DIST/projectcraft-$VERSION-macos-$ARCH.dmg"
 CLI_ZIP="$DIST/projectcraft-cli-$VERSION-macos-$ARCH.zip"
@@ -84,6 +84,15 @@ echo "==> ProjectCraft $VERSION for macOS ($ARCH)"
 
 # ---- build -------------------------------------------------------------------------------------
 if [ "$SKIP_BUILD" = 0 ]; then
+  if command -v rustup >/dev/null 2>&1; then
+    installed_targets="$(rustup target list --installed)"
+    for t in "${TARGETS[@]}"; do
+      if ! printf '%s\n' "$installed_targets" | grep -qx "$t"; then
+        echo "error: Rust target '$t' is not installed; run: rustup target add $t" >&2
+        exit 1
+      fi
+    done
+  fi
   for t in "${TARGETS[@]}"; do
     if ! (cd "$ROOT" && cargo build --release --locked -p projectcraft -p projectcraft-cli --target "$t"); then
       echo "error: cargo build failed for $t; aborting packaging" >&2
@@ -265,6 +274,9 @@ elif printf '%s\n' "${WANT[@]}" | grep -qx "$host_arch"; then
 else
   echo "==> skipping projectcraft-cli smoke test: built ${WANT[*]} on a $host_arch host"
 fi
+for artifact in "$DMG" "$CLI_ZIP"; do
+  printf '%s  %s\n' "$(sha256 "$artifact")" "$(basename "$artifact")" >"$artifact.sha256"
+done
 if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "signing=$SIGNING" >>"$GITHUB_OUTPUT"; fi
 echo "==> done (signing: $SIGNING)"
-ls -lh "$DMG" "$CLI_ZIP"
+ls -lh "$DMG" "$DMG.sha256" "$CLI_ZIP" "$CLI_ZIP.sha256"
