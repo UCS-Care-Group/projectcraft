@@ -7,7 +7,7 @@ version = "0.0.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
-repository = "https://github.com/UCS-Care-Group/projectcraft"
+repository = "https://github.com/UCSLabs/projectcraft"
 
 [workspace.dependencies]
 # internal

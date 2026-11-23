@@ -7,7 +7,7 @@ feature work. What ProjectCraft protects, from whom, and how is in
 ## Reporting a vulnerability
 
 **Please don't open a public issue.** Report it privately through GitHub:
-[Report a vulnerability](https://github.com/UCS-Care-Group/projectcraft/security/advisories/new)
+[Report a vulnerability](https://github.com/UCSLabs/projectcraft/security/advisories/new)
 (the repository's Security tab, "Report a vulnerability"). Only the reporter and the maintainers
 see the report; we reply inside it.
 

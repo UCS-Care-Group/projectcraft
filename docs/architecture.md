@@ -2,7 +2,7 @@
 
 > **Status:** current · **Written:** 2026-10-17 · **Change:** minor (CSV export)
 
-ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCS-Care-Group/mailcraft/blob/main/docs/architecture.md).
+ProjectCraft is a Cargo workspace of layered crates, as in [MailCraft](https://github.com/UCSLabs/mailcraft/blob/main/docs/architecture.md).
 
 | Layer | Crate | Depends on | Job |
 |---|---|---|---|
