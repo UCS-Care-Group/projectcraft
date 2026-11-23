@@ -84,7 +84,14 @@ echo "==> ProjectCraft $VERSION for macOS ($ARCH)"
 
 # ---- build -------------------------------------------------------------------------------------
 if [ "$SKIP_BUILD" = 0 ]; then
-  if command -v rustup >/dev/null 2>&1; then
+  if active_sysroot="$(rustc --print sysroot 2>/dev/null)" && [ -d "$active_sysroot/lib/rustlib" ]; then
+    for t in "${TARGETS[@]}"; do
+      if [ ! -d "$active_sysroot/lib/rustlib/$t" ]; then
+        echo "error: Rust target '$t' is not installed in active sysroot '$active_sysroot'; run 'rustup target add $t' (or put rustup ahead of Homebrew Rust on PATH)" >&2
+        exit 1
+      fi
+    done
+  elif command -v rustup >/dev/null 2>&1; then
     installed_targets="$(rustup target list --installed)"
     for t in "${TARGETS[@]}"; do
       if ! printf '%s\n' "$installed_targets" | grep -qx "$t"; then
