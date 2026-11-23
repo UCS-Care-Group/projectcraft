@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change list:** minor (fix: resource-calendar late start before start, #124) · **Target:** Microsoft Project (desktop)
+> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-11-23 · **Change list:** minor (M3: status date and file format 3, part of #125) · **Target:** Microsoft Project (desktop)
 
 ProjectCraft aims for parity with Microsoft Project's scheduling, as its documentation describes it. Each roadmap milestone has a pass/fail checklist; it is reached when every item passes.
 
@@ -144,6 +144,7 @@ Import gaps, until later work closes them (each is a line in the import report):
 | 2026-10-17 | M2 reached: every item on its checklist passes, levelling (the stretch) included; 11 / 11 tickets |
 | 2026-10-17 | M4: As Late As Possible constraint: `task.setConstraint` type `ALAP` (no date), saved in the project file as `"ALAP"` (files without it load as before). The scheduler holds such a task at its late start, as Microsoft's definition has it (ES = calculated LS): as late as it can without delaying its successors, its deadline or the project finish; its successors follow it and lose their slack too, and summaries roll up where it ends up. A subtask is also held to the start its summary's start-to-start and start-to-finish successors allow, the holds are worked out again when moving a subtask changes its summary's span (a few rounds at most), and holds that would still make the project finish later give way (the plan is then scheduled as soon as possible). Plans without it make the same single pass each way. Microsoft Project XML (`ConstraintType` 1) and CSV (`As Late As Possible` or `ALAP`) import it exactly, the Converted report line gone, and Microsoft Project XML export writes it; the orchard parity fixture's As Late As Possible task now matches (its successor's hand-worked dates corrected to follow it, and a task added to set the finish so the branch doesn't run on from another conversion). Worked examples with links, a lag, a start-to-start link, a chain, a milestone, a deadline, a summary and a resource calendar; a property test that it never finishes the project later or moves a task earlier (#122) |
 | 2026-10-17 | Fix: a task or milestone with no slack never shows a late start before its start when a resource works outside the project calendar's time. Slack counts on the project calendar, so a late start earlier only by time outside it (a Saturday morning one resource works) is no slack: the late start is then the start, and the late finish never before the finish; before, a summary over a milestone could show a Friday late start beside a Monday start, and a task on that resource's calendar a Saturday one. Plans on the project calendar alone schedule as before. Found by the resource-calendar property test; worked-example regression tests, the shrunk case kept (#124) |
+| 2026-11-23 | M3: status date, first part: `project.setStatusDate` sets the date progress is reported as of, or clears it with no `date` (one undo step; it moves no task, and the project never reads the clock for it). Saved in the project file, which goes to format 3 so a build that reads only format 2 refuses a file with tracking data instead of dropping it on save; format 2 files open unchanged with no status date, and a file newer than 3 is still refused. Worked examples and a hostile-params baseline. The Gantt status-date line, Microsoft Project XML `StatusDate` and the Entry / Tracking / Variance tables follow (#125) |
 
 ## Revision history
 | Date | Change | Summary |
@@ -192,3 +193,4 @@ Import gaps, until later work closes them (each is a line in the import report):
 | 2026-10-17 | minor | M2 reached |
 | 2026-10-17 | minor | As Late As Possible constraint (#122); M4 import gap closed |
 | 2026-10-17 | minor | Fix: resource-calendar late start before start (#124) |
+| 2026-11-23 | minor | M3: status date and file format 3 (part of #125) |

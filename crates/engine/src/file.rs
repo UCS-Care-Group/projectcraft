@@ -3,7 +3,9 @@
 //! The file is the project's fields plus `format_version`, a whole number that goes up only
 //! when old readers can't read new files. A newer version is refused; an older one is migrated
 //! on load ([`migrate`]). M0 files have no `format_version` and count as version 0. Version 2
-//! counts durations and lags in working minutes; version 1 counted whole working days.
+//! counts durations and lags in working minutes; version 1 counted whole working days. Version 3
+//! carries tracking data (the status date first), so a build that reads only up to version 2
+//! refuses the file instead of dropping that data on its next save.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -18,7 +20,7 @@ use crate::{CmdError, Session};
 /// The extension of a ProjectCraft project file.
 pub(crate) const EXTENSION: &str = "projectcraft";
 /// The version this build writes and the newest it reads.
-pub const FORMAT_VERSION: u64 = 2;
+pub const FORMAT_VERSION: u64 = 3;
 /// Largest file read, so a hostile file can't exhaust memory. ponytail: about 1,000 bytes a task at `MAX_TASKS`.
 const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -94,6 +96,7 @@ fn migrate(v: &mut Value, version: u64) -> Result<(), CmdError> {
     if version < 2 {
         days_to_minutes(v)?;
     }
+    // 2 → 3: same fields; a version-2 file has no tracking data, so it reads with no status date.
     Ok(())
 }
 
@@ -471,6 +474,7 @@ mod tests {
         p.next_resource_id = 6;
         p.currency = model::Currency::new("BHD", Some("BD"), None).unwrap();
         p.assignments = vec![model::Assignment { task: TaskId(7), resource: ResourceId(3), units: model::Units::Work(5_050), work: 2, duration: 4 }];
+        p.status_date = Some(Date::from_ymd(2026, 3, 20).unwrap());
         p
     }
 
@@ -488,7 +492,45 @@ mod tests {
         assert_eq!(v["resources"][1]["type"], json!("Material"));
         assert!(v["resources"][2].get("max_units").is_none(), "100% is not written");
         assert_eq!(v["next_resource_id"], json!(6));
+        assert_eq!(v["status_date"], json!("2026-03-20"));
         assert_eq!(Session::load_json(&text).unwrap().project, full());
+    }
+
+    /// File format 3 is the first with tracking data. A version-2 file opens unchanged with no
+    /// status date and saves as version 3; a project without a status date writes none; a
+    /// version-3 file reads its status date back; a bad one is refused.
+    #[test]
+    fn a_version_2_file_opens_unchanged_and_saves_as_version_3() {
+        assert_eq!(FORMAT_VERSION, 3);
+        let v2 = json!({"name": "Old", "start": "2026-01-05", "format_version": 2,
+            "tasks": [{"id": 1, "name": "A", "duration": 960}, {"id": 2, "name": "B", "duration": 480, "preds": [{"pred": 1, "kind": "FS", "lag": 480}]}],
+            "next_id": 3});
+        let s = Session::load_json(&v2.to_string()).unwrap();
+        assert_eq!(s.project.status_date, None);
+        let t = &s.project.tasks;
+        assert_eq!((t[0].duration, t[1].duration, t[1].preds[0].lag), (960, 480, 480), "minutes are not migrated again");
+        // A Mon 5 – Tue 6 (two 8-hour days); B after a day's lag, Thu 8.
+        let sch = s.schedule.as_ref().unwrap();
+        let d = |s: &str| s.parse::<Date>().unwrap();
+        assert_eq!((sch.tasks[&TaskId(1)].start, sch.tasks[&TaskId(1)].finish), (d("2026-01-05"), d("2026-01-06")));
+        assert_eq!((sch.tasks[&TaskId(2)].start, sch.tasks[&TaskId(2)].finish), (d("2026-01-08"), d("2026-01-08")));
+        let text = s.save_json().unwrap();
+        let saved = serde_json::from_str::<Value>(&text).unwrap();
+        assert_eq!(saved["format_version"], json!(3));
+        assert!(saved.get("status_date").is_none(), "no status date, none written");
+        assert_eq!(Session::load_json(&text).unwrap().project, s.project);
+
+        let mut v3 = v2.clone();
+        v3["format_version"] = json!(3);
+        v3["status_date"] = json!("2026-01-07");
+        let s = Session::load_json(&v3.to_string()).unwrap();
+        assert_eq!(s.project.status_date, Some(d("2026-01-07")));
+        let again = Session::load_json(&s.save_json().unwrap()).unwrap();
+        assert_eq!(again.project.status_date, Some(d("2026-01-07")));
+        for bad in [json!("2026-02-30"), json!("07/01/2026"), json!(20260107), json!("10000-01-01")] {
+            v3["status_date"] = bad.clone();
+            assert!(Session::load_json(&v3.to_string()).is_err(), "{bad}");
+        }
     }
 
     #[test]
@@ -554,8 +596,8 @@ mod tests {
     }
 
     /// A version-1 file counted whole working days. It opens with the same dates, its durations
-    /// and lags in working minutes at its own hours per day, and saves as version 2 that reads
-    /// back the same.
+    /// and lags in working minutes at its own hours per day, and saves as the current version that
+    /// reads back the same.
     #[test]
     fn a_version_1_file_migrates_to_minutes_with_the_same_dates() {
         let v1 = |options: Value| {
@@ -581,9 +623,9 @@ mod tests {
                 assert_eq!(shown(3), (d("2026-01-09"), d("2026-01-09")));
             }
             let text = s.save_json().unwrap();
-            assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["format_version"], json!(2));
+            assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["format_version"], json!(FORMAT_VERSION));
             let again = Session::load_json(&text).unwrap();
-            assert_eq!(again.project, s.project, "version 2 is not migrated again");
+            assert_eq!(again.project, s.project, "a saved file is not migrated again");
             assert_eq!(again.schedule.as_ref().unwrap(), sch);
         }
         // A day count version 1 refused is still refused, not let through as minutes.
