@@ -139,7 +139,14 @@ rm -rf "$WORK"
 mkdir -p "$WORK/bin"
 for bin in projectcraft projectcraft-cli; do
   inputs=()
-  for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/$bin"); done
+  for t in "${TARGETS[@]}"; do
+    input="$CARGO_TARGET_DIR/$t/release/$bin"
+    if [ ! -x "$input" ]; then
+      echo "error: $input is missing; build it first or drop --skip-build" >&2
+      exit 1
+    fi
+    inputs+=("$input")
+  done
   lipo -create -output "$WORK/bin/$bin" "${inputs[@]}"
   lipo -info "$WORK/bin/$bin"
   for arch in "${WANT[@]}"; do lipo "$WORK/bin/$bin" -verify_arch "$arch"; done
