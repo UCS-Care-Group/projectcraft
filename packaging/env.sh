@@ -43,7 +43,12 @@ mkdir -p "$DIST"
 DIST="$(cd "$DIST" && pwd)"
 export DIST
 
-PROJECTCRAFT_BUILD_SHA="${PROJECTCRAFT_BUILD_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
+if [ -z "${PROJECTCRAFT_BUILD_SHA:-}" ]; then
+  PROJECTCRAFT_BUILD_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  if [ "$PROJECTCRAFT_BUILD_SHA" != "unknown" ] && ! git -C "$ROOT" diff-index --quiet HEAD -- 2>/dev/null; then
+    PROJECTCRAFT_BUILD_SHA="${PROJECTCRAFT_BUILD_SHA}-dirty"
+  fi
+fi
 export PROJECTCRAFT_BUILD_SHA
 
 # Resolve any relative CARGO_TARGET_DIR override against the caller's working directory

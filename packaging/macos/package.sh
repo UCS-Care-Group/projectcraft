@@ -21,6 +21,7 @@
 #   MACOS_NOTARY_PROFILE  notarytool keychain profile (preferred)
 #   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
 set -euo pipefail
+EXPLICIT_BUILD_SHA="${PROJECTCRAFT_BUILD_SHA:-}"
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 HERE="$ROOT/packaging/macos"
@@ -105,7 +106,35 @@ if [ "$SKIP_BUILD" = 0 ]; then
       echo "error: cargo build failed for $t; aborting packaging" >&2
       exit 1
     fi
+    printf '%s\n' "$PROJECTCRAFT_BUILD_SHA" >"$CARGO_TARGET_DIR/$t/release/.projectcraft-build-sha"
   done
+elif [ -z "$EXPLICIT_BUILD_SHA" ]; then
+  recorded_sha=""
+  for t in "${TARGETS[@]}"; do
+    stamp_file="$CARGO_TARGET_DIR/$t/release/.projectcraft-build-sha"
+    if [ -f "$stamp_file" ]; then
+      stamp_sha="$(tr -d '[:space:]' <"$stamp_file")"
+      if [ -n "$recorded_sha" ] && [ "$stamp_sha" != "$recorded_sha" ]; then
+        echo "error: target binaries have mismatched build SHAs ('$recorded_sha' vs '$stamp_sha'); rebuild without --skip-build" >&2
+        exit 1
+      fi
+      recorded_sha="$stamp_sha"
+    elif [ -n "${GITHUB_ACTIONS:-}" ]; then
+      echo "error: --skip-build requires $stamp_file or explicit PROJECTCRAFT_BUILD_SHA in GitHub Actions" >&2
+      exit 1
+    else
+      warn "--skip-build: missing $stamp_file; stamping checkout SHA $PROJECTCRAFT_BUILD_SHA"
+    fi
+  done
+  if [ -n "$recorded_sha" ]; then
+    PROJECTCRAFT_BUILD_SHA="$recorded_sha"
+    case "$PROJECTCRAFT_BUILD_SHA" in
+      *[!0-9A-Za-z._+-]*)
+        echo "error: Info.plist substitution values may contain only letters, digits, '.', '_', '+' and '-': $PROJECTCRAFT_BUILD_SHA" >&2
+        exit 2
+        ;;
+    esac
+  fi
 fi
 
 if [ "$BUILD_ONLY" = 1 ]; then
@@ -187,11 +216,12 @@ notarize() {
 
 # hdiutil attaches a device while working, which can briefly fail with "Resource busy" in CI.
 hdiutil_retry() {
-  local what="$1" attempt
+  local label="$1" attempt
+  shift
   for attempt in 1 2 3 4 5; do
     if hdiutil "$@"; then return 0; fi
-    [ "$attempt" = 5 ] && { echo "hdiutil $what failed 5 times" >&2; return 1; }
-    echo "hdiutil $what failed (attempt $attempt of 5); retrying in $((attempt * 5))s" >&2
+    [ "$attempt" = 5 ] && { echo "hdiutil $label failed 5 times" >&2; return 1; }
+    echo "hdiutil $label failed (attempt $attempt of 5); retrying in $((attempt * 5))s" >&2
     sleep $((attempt * 5))
   done
 }
@@ -251,8 +281,9 @@ if [ -f "$HERE/dmg/background.tiff" ] && [ -f "$HERE/dmg/dmg-layout.DS_Store" ];
   cp "$HERE/dmg/background.tiff" "$STAGE/.background/background.tiff"
   cp "$HERE/dmg/dmg-layout.DS_Store" "$STAGE/.DS_Store"
 fi
-rm -f "$DMG"
-hdiutil_retry create -volname "ProjectCraft" -srcfolder "$STAGE" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$DMG"
+rm -f "$DIST"/projectcraft-*-macos-"$ARCH".dmg "$DIST"/projectcraft-*-macos-"$ARCH".dmg.sha256 \
+  "$DIST"/projectcraft-cli-*-macos-"$ARCH".zip "$DIST"/projectcraft-cli-*-macos-"$ARCH".zip.sha256
+hdiutil_retry create create -volname "ProjectCraft" -srcfolder "$STAGE" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$DMG"
 sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
 if [ "$NOTARIZE" = 1 ]; then
