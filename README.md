@@ -6,7 +6,7 @@ ProjectCraft is a clean-room reimplementation of the project planner people alre
 
 > **Status: pre-alpha (0.0.1).** The foundations are in place: the scheduler, the command engine and a first Gantt Chart view. See [ROADMAP.md](ROADMAP.md).
 
-ProjectCraft follows the architecture and conventions of [MailCraft](https://github.com/UCS-Care-Group/mailcraft), [WordCraft](https://github.com/storytold/wordcraft) and the other Craft apps: the same layered crates, the same "everything is a command" engine, the same egui front end, tooling and quality gates.
+ProjectCraft follows the architecture and conventions of [MailCraft](https://github.com/UCSLabs/mailcraft), [WordCraft](https://github.com/storytold/wordcraft) and the other Craft apps: the same layered crates, the same "everything is a command" engine, the same egui front end, tooling and quality gates.
 
 ## What works today
 - **Tasks:** add, insert, move, rename, change duration, delete (a summary moves or deletes with its subtasks); milestones (duration 0).
@@ -18,7 +18,7 @@ ProjectCraft follows the architecture and conventions of [MailCraft](https://git
 
 ## Build and run
 ```
-git clone https://github.com/UCS-Care-Group/projectcraft
+git clone https://github.com/UCSLabs/projectcraft
 cd projectcraft
 cargo run --release -p projectcraft -- --sample
 ```
