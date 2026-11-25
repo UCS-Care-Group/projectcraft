@@ -627,6 +627,24 @@ const COMMANDS: &[CommandSpec] = &[
         },
     },
     CommandSpec {
+        id: "project.setStatusDate",
+        label: "Status Date",
+        effect: Effect::Edit,
+        schema: || {
+            object(
+                json!({"date": {"type": "string", "format": "date", "description": "YYYY-MM-DD, the date progress is reported as of; leave out to clear"}}),
+                &[],
+            )
+        },
+        run: |p, v| {
+            p.status_date = match v.get("date") {
+                Some(_) => Some(date_param(v, "date")?),
+                None => None,
+            };
+            Ok(())
+        },
+    },
+    CommandSpec {
         id: "project.setOptions",
         label: "Project Options",
         effect: Effect::Edit,
@@ -1779,6 +1797,7 @@ mod tests {
                 "defaultTaskType": "Fixed Work", "newTasksEffortDriven": true, "assignmentUnitsAs": "Decimal"}),
             ],
             "project.setStart" => vec![json!({"date": "2026-11-09"})],
+            "project.setStatusDate" => vec![json!({"date": "2026-11-09"})],
             "task.setPredecessors" => vec![json!({"id": 5, "text": "1FS+2d, 2SS-4h"})],
             "task.indent" => vec![json!({"ids": [5]})],
             "task.outdent" => vec![json!({"ids": [3]})],

@@ -573,6 +573,10 @@ pub struct Project {
     /// The task sheet's columns after ID and Task Name. A file without them shows every column.
     #[serde(default, skip_serializing_if = "Columns::is_default")]
     pub columns: Columns,
+    /// The date progress is reported as of, as Microsoft Project's Status Date. Set by the owner,
+    /// never read from the clock. A file without one has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_date: Option<Date>,
 }
 
 fn is_first_id(n: &u32) -> bool {
@@ -593,6 +597,7 @@ impl Project {
             options: Options::default(),
             currency: Currency::default(),
             columns: Columns::default(),
+            status_date: None,
         }
     }
 
