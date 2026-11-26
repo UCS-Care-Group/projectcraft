@@ -60,7 +60,7 @@ case "${CARGO_TARGET_DIR:-}" in
 esac
 export CARGO_TARGET_DIR
 
-APP_ID="io.github.ucscaregroup.projectcraft"
+APP_ID="io.github.ucslabs.projectcraft"
 export APP_ID
 
 # Emit a GitHub Actions warning (plain stderr outside Actions).
