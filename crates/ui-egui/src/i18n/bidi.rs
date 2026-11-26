@@ -22,7 +22,14 @@ enum BidiClass {
 pub(super) fn is_rtl_script(c: char) -> bool {
     matches!(
         u32::from(c),
-        0x0590..=0x05FF | 0x0600..=0x065F | 0x066E..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFC | 0x1_0800..=0x1_0FFF | 0x1_E800..=0x1_EFFF
+        0x0590..=0x05FF
+            | 0x0600..=0x065F
+            | 0x066E..=0x06EF
+            | 0x06FA..=0x08FF
+            | 0xFB1D..=0xFDFF
+            | 0xFE70..=0xFEFC
+            | 0x1_0800..=0x1_0FFF
+            | 0x1_E800..=0x1_EFFF
     )
 }
 
@@ -120,10 +127,10 @@ pub(super) fn push_visual_rtl_line(line: &str, out: &mut String) {
         .iter()
         .map(|&c| {
             let is_placeholder = (PLACEHOLDER_BASE..PLACEHOLDER_BASE.saturating_add(MAX_PLACEHOLDERS as u32)).contains(&u32::from(c));
-            if is_rtl_script(c) {
-                BidiClass::R
-            } else if is_bidi_digit(c) {
+            if is_bidi_digit(c) {
                 BidiClass::En
+            } else if is_rtl_script(c) {
+                BidiClass::R
             } else if is_placeholder || c.is_alphabetic() || matches!(c, '\u{2318}' | '\u{21E7}' | '\u{2325}' | '\u{2303}') {
                 BidiClass::L
             } else {

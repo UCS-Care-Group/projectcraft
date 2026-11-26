@@ -677,6 +677,9 @@ mod tests {
         assert_eq!(visual_rtl("פרויקט ProjectCraft (100%)"), "ProjectCraft (100%) פרויקט");
         assert_eq!(visual_rtl("שמור (Ctrl+O)"), "(Ctrl+O) שמור");
         assert_eq!(visual_rtl("הכול הושלם (100%)"), "(100%) הושלם הכול");
+        assert_eq!(visual_rtl("הושלם 123%"), "123% הושלם");
+        assert_eq!(visual_rtl("הושלם ۱۲۳%"), "۱۲۳% הושלם");
+        assert_eq!(visual_rtl("۱۲۳%"), "۱۲۳%");
         assert_eq!(visual_rtl("(*.projectcraft), המיובאים"), "המיובאים ,(*.projectcraft)");
         assert_eq!(visual_rtl("פרויקטים (*.projectcraft)"), "(*.projectcraft) פרויקטים");
         assert_eq!(visual_rtl("(*.projectcraft), וכן"), "וכן ,(*.projectcraft)");

@@ -286,9 +286,11 @@ fn hebrew_font_data_from(env_dirs: &[Option<String>], candidates: &[&str]) -> Op
     for dir in env_dirs.iter().flatten() {
         let trimmed = dir.trim();
         if !trimmed.is_empty() {
-            let candidate = std::path::Path::new(trimmed).join("NotoSansHebrew-Regular.ttf");
-            if let Some(data) = read_valid_font(&candidate) {
-                return Some(data);
+            for filename in ["NotoSansHebrew-Regular.ttf", "NotoSansHebrew[wdth,wght].ttf"] {
+                let candidate = std::path::Path::new(trimmed).join(filename);
+                if let Some(data) = read_valid_font(&candidate) {
+                    return Some(data);
+                }
             }
         }
     }

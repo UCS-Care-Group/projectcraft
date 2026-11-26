@@ -72,13 +72,13 @@ Delete these working times	מחיקת זמני עבודה אלה
 Discard	ביטול השינויים
 Do you want to save the changes you made to {name}?	האם לשמור את השינויים שביצעת ב-{name}?
 Doesn't apply to a {type} resource	אינו חל על משאב מסוג {type}
-Don't Save	אל תשמור
+Don't Save	לא לשמור
 Dropped	הושמט
 Duration	משך
 Each working time must end after it starts.	כל טווח עבודה חייב להסתיים לאחר שהוא מתחיל.
 Effort Driven	מונחה מאמץ
 End	סיום
-Enter times as H:MM, such as 8:00 or 17:30.	הזן שעות בתבנית H:MM, כגון 8:00 או 17:30.
+Enter times as H:MM, such as 8:00 or 17:30.	יש להזין שעות בתבנית H:MM, כגון 8:00 או 17:30.
 Everything in the file was imported.	הכול בקובץ יובא בהצלחה.
 Exception hours	שעות חריגה
 Exceptions	חריגות
@@ -139,11 +139,11 @@ No	לא
 No costs	ללא עלויות
 No folders or projects here.	אין תיקיות או פרויקטים כאן.
 No resources assigned	אין משאבים מוקצים
-No resources yet. Add them in the Resource Sheet, or type a name in the Resource Names column.	עדיין אין משאבים. הוסף אותם בגיליון המשאבים, או הקלד שם בעמודת שמות המשאבים.
-No resources yet. Add them in the Resource Sheet.	עדיין אין משאבים. הוסף אותם בגיליון המשאבים.
-No resources yet. Press Insert or New Resource to add one.	עדיין אין משאבים. לחץ Insert או על משאב חדש כדי להוסיף.
+No resources yet. Add them in the Resource Sheet, or type a name in the Resource Names column.	עדיין אין משאבים. יש להוסיף אותם בגיליון המשאבים, או להקליד שם בעמודת שמות המשאבים.
+No resources yet. Add them in the Resource Sheet.	עדיין אין משאבים. יש להוסיף אותם בגיליון המשאבים.
+No resources yet. Press Insert or New Resource to add one.	עדיין אין משאבים. יש ללחוץ על Insert או על "משאב חדש" כדי להוסיף.
 Non-working	יום חופשי
-Non-working: add working times to work this day.	לא עובדים: הוסף שעות עבודה כדי לעבוד ביום זה.
+Non-working: add working times to work this day.	יום חופשי: יש להוסיף זמני עבודה כדי לעבוד ביום זה.
 None: every day follows its weekday.	ללא: כל יום פועל לפי יום השבוע שלו.
 Not yet imported	טרם יובא
 Nov	נוב׳
@@ -154,7 +154,7 @@ Opened {path}	נפתח: {path}
 Open…	פתיחה…
 Options…	אפשרויות…
 Overallocated: a resource on this task has more work than its Max Units allow on a day it works on it.	עומס יתר: למשאב במשימה זו יש יותר עבודה מהמותר לפי היחידות המרביות שלו ביום עבודה עליה.
-Overallocated: more work on some days than Max Units allow on this resource's calendar (see Resource Usage)	עומס יתר: בימים מסוימים יש יותר עבודה מהמותר לפי היחידות המרביות בלוח המשאב (ראה שימוש במשאבים)
+Overallocated: more work on some days than Max Units allow on this resource's calendar (see Resource Usage)	עומס יתר: בימים מסוימים יש יותר עבודה מהמותר לפי היחידות המרביות בלוח המשאב (ר׳ שימוש במשאבים)
 Overallocated: red days have more work than Max Units allow on this resource's calendar	עומס יתר: בימים אדומים יש יותר עבודה מהמותר לפי היחידות המרביות בלוח המשאב
 Ovt. Rate	תעריף שעות נוספות
 Parts of the file converted, dropped or not imported yet, and tasks whose dates differ from the file's:	חלקים בקובץ שהומרו, הושמטו או טרם יובאו, ומשימות שתאריכיהן שונים מהקובץ:
@@ -188,11 +188,11 @@ Save As…	שמירה בשם…
 Save changes?	לשמור שינויים?
 Save the file every 2 minutes while it has unsaved changes	שמירת הקובץ כל 2 דקות כשיש שינויים שלא נשמרו
 Saved {path}	נשמר: {path}
-Select a task to assign resources to.	בחר משימה כדי להקצות לה משאבים.
+Select a task to assign resources to.	יש לבחור משימה כדי להקצות לה משאבים.
 Sep	ספט׳
-Show All	הצג הכול
-Show assignment units as a	הצג יחידות הקצאה בתור
-Show or hide the task sheet's columns	הצג או הסתר את עמודות גיליון המשימות
+Show All	הצגת הכול
+Show assignment units as a	הצגת יחידות הקצאה בתור
+Show or hide the task sheet's columns	הצגה או הסתרה של עמודות גיליון המשימות
 Showing the first {count} items.	מציג את {count} הפריטים הראשונים.
 Standard rate: {rate}	תעריף רגיל: {rate}
 Start	התחלה
@@ -205,7 +205,7 @@ Take away every levelling delay	הסרת כל עיכובי האיזון
 Task Name	שם משימה
 Task: {name}	משימה: {name}
 The project calendar's exceptions apply too, except on a day with one of its own.	חריגות לוח הפרויקט חלות אף הן, למעט ביום שבו יש חריגה משלו.
-The system file dialog isn't available, so ProjectCraft shows its own. To get the system dialog, install a file chooser portal (such as xdg-desktop-portal-gtk) or zenity.	חלונית הקבצים של המערכת אינה זמינה, ולכן ProjectCraft מציגה חלונית משלה. כדי לקבל את חלונית המערכת, התקן שער בחירת קבצים (כגון xdg-desktop-portal-gtk) או zenity.
+The system file dialog isn't available, so ProjectCraft shows its own. To get the system dialog, install a file chooser portal (such as xdg-desktop-portal-gtk) or zenity.	חלונית הקבצים של המערכת אינה זמינה, ולכן ProjectCraft מציגה חלונית משלה. כדי לקבל את חלונית המערכת, יש להתקין שער בחירת קבצים (כגון xdg-desktop-portal-gtk) או zenity.
 The task sheet's columns; saved with the project	עמודות גיליון המשימות; נשמר עם הפרויקט
 The {n} resources selected are assigned to {count} task(s). Deleting them removes those assignments.	{n} המשאבים שנבחרו מוקצים ל-{count} משימות. מחיקתם תסיר הקצאות אלה.
 This folder can't be read: {error}	לא ניתן לקרוא תיקייה זו: {error}
@@ -218,9 +218,9 @@ Total	סה״כ
 Tue	ג׳
 Tuesday	יום שלישי
 Type	סוג
-Type Fixed Units, Fixed Duration or Fixed Work.	הקלד יחידות קבועות, משך קבוע או עבודה קבועה (או Fixed Units / Fixed Duration / Fixed Work).
-Type Yes or No.	הקלד כן או לא (Yes / No).
-Type a priority from 0 to 1000.	הקלד עדיפות בין 0 ל-1000.
+Type Fixed Units, Fixed Duration or Fixed Work.	יש להקליד יחידות קבועות, משך קבוע או עבודה קבועה (או Fixed Units / Fixed Duration / Fixed Work).
+Type Yes or No.	יש להקליד כן או לא (Yes / No).
+Type a priority from 0 to 1000.	יש להקליד עדיפות בין 0 ל-1000.
 Undo	ביטול פעולה
 Units	יחידות
 Units and work shown are for {name}.	היחידות והעבודה המוצגות הן עבור {name}.
@@ -261,7 +261,7 @@ work	עבודה
 {file}: {tasks} tasks imported as a new, untitled project. ProjectCraft worked out every date; none were taken from the file.	{file}: {tasks} משימות יובאו כפרויקט חדש וללא שם. ProjectCraft חישבה כל תאריך; אף תאריך לא נלקח מהקובץ.
 {format}…	{format}…
 {name} - ProjectCraft	{name} - ProjectCraft
-{name} already exists. Choose Save again to replace it.	{name} כבר קיים. בחר שמירה שוב כדי להחליף אותו.
+{name} already exists. Choose Save again to replace it.	{name} כבר קיים. יש לבחור שמירה שוב כדי להחליף אותו.
 {name} is assigned to {count} task(s). Deleting it removes those assignments.	{name} מוקצה ל-{count} משימות. מחיקתו תסיר הקצאות אלה.
 {name} is assigned to {count} task(s). Making it a {type} resource removes those assignments.	{name} מוקצה ל-{count} משימות. הפיכתו למשאב מסוג {type} תסיר הקצאות אלה.
 {name} wasn't found.	{name} לא נמצא.
