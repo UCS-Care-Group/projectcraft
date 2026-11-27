@@ -69,8 +69,8 @@ Delay tasks until no resource is overallocated, day by day	דחיית משימו
 Delete	מחיקה
 Delete Resource	מחיקת משאב
 Delete these working times	מחיקת זמני עבודה אלה
-Discard	ביטול השינויים
-Do you want to save the changes you made to {name}?	האם לשמור את השינויים שביצעת ב-{name}?
+Discard	ביטול
+Do you want to save the changes you made to {name}?	האם לשמור את השינויים שבוצעו ב-{name}?
 Doesn't apply to a {type} resource	אינו חל על משאב מסוג {type}
 Don't Save	לא לשמור
 Dropped	הושמט
@@ -177,7 +177,7 @@ Resource Names	שמות משאבים
 Resource Sheet	גיליון משאבים
 Resource Usage	שימוש במשאבים
 Restore	שחזור
-Restore opens them as unsaved changes. Discard deletes the recovery copy.	שחזור יפתח אותם כשינויים שלא נשמרו. ביטול השינויים ימחק את עותק השחזור.
+Restore opens them as unsaved changes. Discard deletes the recovery copy.	שחזור יפתח אותם כשינויים שלא נשמרו. ביטול ימחק את עותק השחזור.
 Restored unsaved changes	שוחזרו שינויים שלא נשמרו
 Result	תוצאה
 Sat	ש׳
