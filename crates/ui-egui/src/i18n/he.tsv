@@ -1,0 +1,268 @@
+# he: Hebrew UI translations (עברית). Licensed MIT OR Apache-2.0.
+# UTF-8: English source<TAB>translation. Keep {placeholders} and ellipsis intact.
+/hr	(לשעה)
+A summary task is scheduled as Fixed Duration and is never effort-driven	משימת סיכום מתוזמנת כמשך קבוע ואינה מונחית-מאמץ לעולם
+A summary task's duration is rolled up from its subtasks	משך של משימת סיכום מסוכם מתוך תת-המשימות שלה
+Accrue At	זקיפה ב
+Add Exception	הוספת חריגה
+Add Times	הוספת שעות
+Added {name} to the Resource Sheet as a work resource (100% Max Units).	{name} נוסף לגיליון המשאבים כמשאב עבודה (100% יחידות מרביות).
+Added {names} to the Resource Sheet as work resources (100% Max Units).	{names} נוספו לגיליון המשאבים כמשאבי עבודה (100% יחידות מרביות).
+Always shown	מוצג תמיד
+Apply	החלה
+Apr	אפר׳
+Assign	הקצאה
+Assign Resources	הקצאת משאבים
+Assign Resources…	הקצאת משאבים…
+Assign resources to the selected tasks (Alt+F10)	הקצאת משאבים למשימות שנבחרו (Alt+F10)
+Assigned to {count} of the {total} selected tasks	מוקצה ל-{count} מתוך {total} משימות שנבחרו
+Assignment units	יחידות הקצאה
+Aug	אוג׳
+Autosave	שמירה אוטומטית
+Autosaved {path}	נשמר אוטומטית: {path}
+Based on the project calendar: only what differs is its own.	מבוסס על לוח הפרויקט: רק מה ששונה הוא שלו.
+Blank: the default hours	ריק: שעות ברירת המחדל
+CSV (*.csv): a copy; the project stays as it is	CSV (*.csv): עותק; הפרויקט נשאר כפי שהוא
+Can't schedule: {error}	לא ניתן לתזמן: {error}
+Cancel	ביטול
+Change Resource Type	שינוי סוג משאב
+Change Type	שינוי סוג
+Change Working Time	שינוי זמן עבודה
+Change Working Time…	שינוי זמן עבודה…
+Clear Leveling	ניקוי איזון
+Close	סגירה
+Columns	עמודות
+Columns…	עמודות…
+Constraint conflict: a link can't be honoured, so this task keeps its constraint date and has negative slack.	התנגשות אילוצים: לא ניתן לכבד קישור, ולכן משימה זו שומרת על תאריך האילוץ ויש לה מרווח שלילי.
+Converted	הומר
+Converting durations between hours, days, weeks and months; the currency of every amount; how units show	המרת משכים בין שעות, ימים, שבועות וחודשים; המטבע של כל סכום; אופן הצגת היחידות
+Copy Report	העתקת דוח
+Copy the report as text	העתקת הדוח כטקסט
+Cost	עלות
+Cost/Use	עלות לשימוש
+Couldn't autosave: {error}	שמירה אוטומטית נכשלה: {error}
+Couldn't delete the recovery copy: {error}	מחיקת עותק השחזור נכשלה: {error}
+Couldn't export: {error}	הייצוא נכשל: {error}
+Couldn't export: {path} is the project's own file	לא ניתן לייצא: {path} הוא הקובץ של הפרויקט עצמו
+Couldn't import: {error}	הייבוא נכשל: {error}
+Couldn't open: {error}	הפתיחה נכשלה: {error}
+Couldn't remove a temporary file left by an unfinished save	לא ניתן להסיר קובץ זמני שנותר משמירה שלא הסתיימה
+Couldn't restore: {error}	השחזור נכשל: {error}
+Couldn't save: {error}	השמירה נכשלה: {error}
+Couldn't save: {path} is a Microsoft Project XML or CSV name; ProjectCraft saves .projectcraft files	לא ניתן לשמור: {path} הוא שם מסוג Microsoft Project XML או CSV; ProjectCraft שומר קובצי .projectcraft
+Couldn't write the recovery copy: {error}	כתיבת עותק השחזור נכשלה: {error}
+Currency	מטבע
+Currency must be a three-letter ISO code, such as GBP, EUR or USD.	המטבע חייב להיות קוד ISO בן שלוש אותיות, כגון GBP, EUR או USD.
+Currency symbol	סמל מטבע
+Date	תאריך
+Dates differ	תאריכים שונים
+Days	ימים
+Days per month	ימים בחודש
+Days per month must be a whole number from 1 to 31.	מספר הימים בחודש חייב להיות מספר שלם בין 1 ל-31.
+Deadline	תאריך יעד
+Dec	דצמ׳
+Decimal	עשרוני
+Decimal places	ספרות עשרוניות
+Decimal places must be a whole number from 0 to 4.	מספר הספרות העשרוניות חייב להיות מספר שלם בין 0 ל-4.
+Default task type	סוג משימה כברירת מחדל
+Delay tasks until no resource is overallocated, day by day	דחיית משימות עד שאף משאב אינו בעומס יתר, יום אחר יום
+Delete	מחיקה
+Delete Resource	מחיקת משאב
+Delete these working times	מחיקת זמני עבודה אלה
+Discard	ביטול
+Do you want to save the changes you made to {name}?	האם לשמור את השינויים שבוצעו ב-{name}?
+Doesn't apply to a {type} resource	אינו חל על משאב מסוג {type}
+Don't Save	לא לשמור
+Dropped	הושמט
+Duration	משך
+Each working time must end after it starts.	כל טווח עבודה חייב להסתיים לאחר שהוא מתחיל.
+Effort Driven	מונחה מאמץ
+End	סיום
+Enter times as H:MM, such as 8:00 or 17:30.	יש להזין שעות בתבנית H:MM, כגון 8:00 או 17:30.
+Everything in the file was imported.	הכול בקובץ יובא בהצלחה.
+Exception hours	שעות חריגה
+Exceptions	חריגות
+Export	ייצוא
+Export as {format}	ייצוא בתור {format}
+Exported a copy as {format}: {path}	יוצא עותק בתור {format}: {path}
+Feature	תכונה
+Feb	פבר׳
+File	קובץ
+File name:	שם קובץ:
+Finish	סיום
+Fixed Cost	עלות קבועה
+Fixed Duration	משך קבוע
+Fixed Units	יחידות קבועות
+Fixed Work	עבודה קבועה
+Fixed Work tasks are always effort driven	משימות מסוג עבודה קבועה הן תמיד מונחות מאמץ
+Fixed cost	עלות קבועה
+For calendar	עבור לוח שנה
+Fri	ו׳
+Friday	יום שישי
+From	מ-
+Gantt Chart	תרשים גאנט
+Group	קבוצה
+Half time shows as 0.5, full time as 1. Typing 50% still works.	חצי משרה מוצגת כ-0.5, משרה מלאה כ-1. הקלדת 50% עדיין עובדת.
+Half time shows as 50%, full time as 100%.	חצי משרה מוצגת כ-50%, משרה מלאה כ-100%.
+Home	בית
+Home folder	תיקיית הבית
+Hours per day	שעות ביום
+Hours per day must be 1 to 24, in whole minutes (such as 7.5).	מספר השעות ביום חייב להיות בין 1 ל-24, בדקות שלמות (כגון 7.5).
+Hours per week	שעות בשבוע
+Hours per week must be 1 to 168, in whole minutes (such as 37.5).	מספר השעות בשבוע חייב להיות בין 1 ל-168, בדקות שלמות (כגון 37.5).
+ID	מזהה
+ISO code	קוד ISO
+Import Report	דוח ייבוא
+Imported {path} as a new project; Save keeps it as a ProjectCraft project	{path} יובא כפרויקט חדש; שמירה תשמור אותו כפרויקט ProjectCraft
+Initials	ראשי תיבות
+Jan	ינו׳
+Jul	יול׳
+Jun	יונ׳
+Language	שפה
+Level All	איזון הכול
+Leveling Delay	עיכוב איזון
+Levelling delays a summary task's subtasks, never the summary	איזון מעכב את תת-המשימות של משימת הסיכום, לעולם לא את הסיכום עצמו
+Mar	מרץ
+Material	חומר
+Max. Units	יחידות מרביות
+May	מאי
+Microsoft Project XML (*.xml): a copy; the project stays as it is	Microsoft Project XML (*.xml): עותק; הפרויקט נשאר כפי שהוא
+Missed deadline: this task finishes after its deadline, so it has negative slack.	תאריך יעד הוחמץ: משימה זו מסתיימת לאחר תאריך היעד שלה, ולכן יש לה מרווח שלילי.
+Mon	ב׳
+Monday	יום שני
+Months	חודשים
+New Resource	משאב חדש
+New Task	משימה חדשה
+New tasks	משימות חדשות
+New tasks are effort driven	משימות חדשות מונחות מאמץ
+No	לא
+No costs	ללא עלויות
+No folders or projects here.	אין תיקיות או פרויקטים כאן.
+No resources assigned	אין משאבים מוקצים
+No resources yet. Add them in the Resource Sheet, or type a name in the Resource Names column.	עדיין אין משאבים. יש להוסיף אותם בגיליון המשאבים, או להקליד שם בעמודת שמות המשאבים.
+No resources yet. Add them in the Resource Sheet.	עדיין אין משאבים. יש להוסיף אותם בגיליון המשאבים.
+No resources yet. Press Insert or New Resource to add one.	עדיין אין משאבים. יש ללחוץ על Insert או על "משאב חדש" כדי להוסיף.
+Non-working	יום חופשי
+Non-working: add working times to work this day.	יום חופשי: יש להוסיף זמני עבודה כדי לעבוד ביום זה.
+None: every day follows its weekday.	ללא: כל יום פועל לפי יום השבוע שלו.
+Not yet imported	טרם יובא
+Nov	נוב׳
+Oct	אוק׳
+Open	פתיחה
+Open Recent	פתיחת קובץ אחרון
+Opened {path}	נפתח: {path}
+Open…	פתיחה…
+Options…	אפשרויות…
+Overallocated: a resource on this task has more work than its Max Units allow on a day it works on it.	עומס יתר: למשאב במשימה זו יש יותר עבודה מהמותר לפי היחידות המרביות שלו ביום עבודה עליה.
+Overallocated: more work on some days than Max Units allow on this resource's calendar (see Resource Usage)	עומס יתר: בימים מסוימים יש יותר עבודה מהמותר לפי היחידות המרביות בלוח המשאב (ר׳ שימוש במשאבים)
+Overallocated: red days have more work than Max Units allow on this resource's calendar	עומס יתר: בימים אדומים יש יותר עבודה מהמותר לפי היחידות המרביות בלוח המשאב
+Ovt. Rate	תעריף שעות נוספות
+Parts of the file converted, dropped or not imported yet, and tasks whose dates differ from the file's:	חלקים בקובץ שהומרו, הושמטו או טרם יובאו, ומשימות שתאריכיהן שונים מהקובץ:
+Percentage	אחוזים
+Predecessors	פעילויות קודמות
+Priority	עדיפות
+Project	פרויקט
+Project Options	אפשרויות פרויקט
+Project calendar	לוח הפרויקט
+ProjectCraft closed before changes to {name} were saved. A recovery copy of them was kept.	ProjectCraft נסגרה לפני ששינויים ב-{name} נשמרו. נשמר עותק שחזור שלהם.
+ProjectCraft projects (*.projectcraft)	פרויקטים של ProjectCraft (*.projectcraft)
+ProjectCraft projects (*.projectcraft), and Microsoft Project XML (*.xml) and CSV (*.csv), imported as a new project	פרויקטים של ProjectCraft (*.projectcraft), וכן Microsoft Project XML (*.xml) ו-CSV (*.csv), המיובאים כפרויקט חדש
+Prorated	יחסי
+Recover unsaved changes?	לשחזר שינויים שלא נשמרו?
+Redo	ביצוע חוזר
+Remove	הסרה
+Resource	משאב
+Resource Name	שם משאב
+Resource Names	שמות משאבים
+Resource Sheet	גיליון משאבים
+Resource Usage	שימוש במשאבים
+Restore	שחזור
+Restore opens them as unsaved changes. Discard deletes the recovery copy.	שחזור יפתח אותם כשינויים שלא נשמרו. ביטול ימחק את עותק השחזור.
+Restored unsaved changes	שוחזרו שינויים שלא נשמרו
+Result	תוצאה
+Sat	ש׳
+Saturday	יום שבת
+Save	שמירה
+Save As	שמירה בשם
+Save As…	שמירה בשם…
+Save changes?	לשמור שינויים?
+Save the file every 2 minutes while it has unsaved changes	שמירת הקובץ כל 2 דקות כשיש שינויים שלא נשמרו
+Saved {path}	נשמר: {path}
+Select a task to assign resources to.	יש לבחור משימה כדי להקצות לה משאבים.
+Sep	ספט׳
+Show All	הצגת הכול
+Show assignment units as a	הצגת יחידות הקצאה בתור
+Show or hide the task sheet's columns	הצגה או הסתרה של עמודות גיליון המשימות
+Showing the first {count} items.	מציג את {count} הפריטים הראשונים.
+Standard rate: {rate}	תעריף רגיל: {rate}
+Start	התחלה
+Start {start} · Finish {finish} · Cost {cost}	התחלה {start} · סיום {finish} · עלות {cost}
+Std. Rate	תעריף רגיל
+Subtasks	תת-משימות
+Sun	א׳
+Sunday	יום ראשון
+Take away every levelling delay	הסרת כל עיכובי האיזון
+Task Name	שם משימה
+Task: {name}	משימה: {name}
+The project calendar's exceptions apply too, except on a day with one of its own.	חריגות לוח הפרויקט חלות אף הן, למעט ביום שבו יש חריגה משלו.
+The system file dialog isn't available, so ProjectCraft shows its own. To get the system dialog, install a file chooser portal (such as xdg-desktop-portal-gtk) or zenity.	חלונית הקבצים של המערכת אינה זמינה, ולכן ProjectCraft מציגה חלונית משלה. כדי לקבל את חלונית המערכת, יש להתקין שער בחירת קבצים (כגון xdg-desktop-portal-gtk) או zenity.
+The task sheet's columns; saved with the project	עמודות גיליון המשימות; נשמר עם הפרויקט
+The {n} resources selected are assigned to {count} task(s). Deleting them removes those assignments.	{n} המשאבים שנבחרו מוקצים ל-{count} משימות. מחיקתם תסיר הקצאות אלה.
+This folder can't be read: {error}	לא ניתן לקרוא תיקייה זו: {error}
+This weekday follows the project calendar again	יום שבוע זה חוזר לפעול לפי לוח הפרויקט
+Thu	ה׳
+Thursday	יום חמישי
+Timescale	ציר זמן
+To	עד
+Total	סה״כ
+Tue	ג׳
+Tuesday	יום שלישי
+Type	סוג
+Type Fixed Units, Fixed Duration or Fixed Work.	יש להקליד יחידות קבועות, משך קבוע או עבודה קבועה (או Fixed Units / Fixed Duration / Fixed Work).
+Type Yes or No.	יש להקליד כן או לא (Yes / No).
+Type a priority from 0 to 1000.	יש להקליד עדיפות בין 0 ל-1000.
+Undo	ביטול פעולה
+Units	יחידות
+Units and work shown are for {name}.	היחידות והעבודה המוצגות הן עבור {name}.
+Units: a decimal for people and equipment (0.5, or 50%); for materials a quantity (5 tons) or a rate (2 tons/d).	יחידות: מספר עשרוני לאנשים ולציוד (0.5 או 50%); לחומרים כמות (5 tons) או קצב (2 tons/d).
+Units: a percentage for people and equipment (50%); for materials a quantity (5 tons) or a rate (2 tons/d).	יחידות: אחוזים לאנשים ולציוד (50%); לחומרים כמות (5 tons) או קצב (2 tons/d).
+Units: the share of each resource's working time (0.5 is half its day; 50% works too).	יחידות: החלק מזמן העבודה של כל משאב (0.5 הוא חצי יום; גם 50% עובד).
+Units: the share of each resource's working time (50% is half its day).	יחידות: החלק מזמן העבודה של כל משאב (50% הוא חצי יום).
+Untitled	ללא שם
+Up	למעלה
+Up one level	רמה אחת למעלה
+Use Project Times	שימוש בשעות הפרויקט
+View	תצוגה
+Wed	ד׳
+Wednesday	יום רביעי
+Weeks	שבועות
+Where	מיקום
+Why	סיבה
+Work	עבודה
+Working	יום עבודה
+Working days	ימי עבודה
+Working times for	זמני עבודה עבור
+Working times must be in order and must not overlap.	זמני העבודה חייבים להיות לפי הסדר וללא חפיפה.
+Write a copy for another program; the project stays as it is	כתיבת עותק לתוכנה אחרת; הפרויקט נשאר כפי שהוא
+YYYY-MM-DD	YYYY-MM-DD
+Yes	כן
+You can undo this.	ניתן לבטל פעולה זו.
+Zoom In	הגדלת תצוגה
+Zoom Out	הקטנת תצוגה
+as the project calendar	כמו בלוח הפרויקט
+cost	עלות
+days	ימים
+hours	שעות
+in amounts	בסכומים
+its own	שלו עצמו
+material	חומר
+work	עבודה
+{count} tasks selected: Assign and Remove act on all of them.	נבחרו {count} משימות: הקצאה והסרה חלות על כולן.
+{file}: {tasks} tasks imported as a new, untitled project. ProjectCraft worked out every date; none were taken from the file.	{file}: {tasks} משימות יובאו כפרויקט חדש וללא שם. ProjectCraft חישבה כל תאריך; אף תאריך לא נלקח מהקובץ.
+{format}…	{format}…
+{name} - ProjectCraft	{name} - ProjectCraft
+{name} already exists. Choose Save again to replace it.	{name} כבר קיים. יש לבחור שמירה שוב כדי להחליף אותו.
+{name} is assigned to {count} task(s). Deleting it removes those assignments.	{name} מוקצה ל-{count} משימות. מחיקתו תסיר הקצאות אלה.
+{name} is assigned to {count} task(s). Making it a {type} resource removes those assignments.	{name} מוקצה ל-{count} משימות. הפיכתו למשאב מסוג {type} תסיר הקצאות אלה.
+{name} wasn't found.	{name} לא נמצא.
+{names}: no working weekday on their own calendar, so scheduled on the project calendar	{names}: אין יום עבודה בשבוע בלוח שלהם, ולכן תוזמנו לפי לוח הפרויקט

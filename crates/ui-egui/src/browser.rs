@@ -289,11 +289,12 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
         FileRequest::Export(f) => i18n::fmt(tl!("Export as {format}"), &[("format", f.name())]),
     });
     if b.unavailable {
-        ui.label(
-            RichText::new(tl!(
+        crate::i18n::wrapped_label(
+            ui,
+            tl_logical!(
                 "The system file dialog isn't available, so ProjectCraft shows its own. To get the system dialog, install a file chooser portal (such as xdg-desktop-portal-gtk) or zenity."
-            ))
-            .color(t.text_dim),
+            ),
+            |r| r.color(t.text_dim),
         );
     }
     ui.add_space(6.0);
@@ -392,13 +393,13 @@ fn body(ui: &mut Ui, b: &mut FileBrowser, t: &Tokens) -> Option<Option<PathBuf>>
     });
     let kinds = match b.request {
         FileRequest::Open => {
-            tl!("ProjectCraft projects (*.projectcraft), and Microsoft Project XML (*.xml) and CSV (*.csv), imported as a new project")
+            tl_logical!("ProjectCraft projects (*.projectcraft), and Microsoft Project XML (*.xml) and CSV (*.csv), imported as a new project")
         }
-        FileRequest::SaveAs => tl!("ProjectCraft projects (*.projectcraft)"),
-        FileRequest::Export(Format::Mspdi) => tl!("Microsoft Project XML (*.xml): a copy; the project stays as it is"),
-        FileRequest::Export(Format::Csv) => tl!("CSV (*.csv): a copy; the project stays as it is"),
+        FileRequest::SaveAs => tl_logical!("ProjectCraft projects (*.projectcraft)"),
+        FileRequest::Export(Format::Mspdi) => tl_logical!("Microsoft Project XML (*.xml): a copy; the project stays as it is"),
+        FileRequest::Export(Format::Csv) => tl_logical!("CSV (*.csv): a copy; the project stays as it is"),
     };
-    ui.label(RichText::new(kinds).color(t.text_dim));
+    crate::i18n::wrapped_label(ui, kinds, |r| r.color(t.text_dim));
     ui.add_space(8.0);
     let mut cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
     let enter = !location_done && ui.input(|i| i.key_pressed(egui::Key::Enter));

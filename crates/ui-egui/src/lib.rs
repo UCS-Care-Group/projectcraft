@@ -25,6 +25,15 @@ macro_rules! tl {
     };
 }
 
+/// An English UI string in the current interface language in logical text order
+/// ([`i18n::t_logical`]), for [`i18n::wrapped_label`] and [`i18n::fmt_logical`].
+#[macro_export]
+macro_rules! tl_logical {
+    ($s:expr) => {
+        $crate::i18n::t_logical($s)
+    };
+}
+
 pub mod i18n;
 pub mod theme;
 pub mod timescale;
@@ -136,17 +145,24 @@ fn shown_cell(sheet: &SheetText, row: usize, field: Field) -> (String, bool) {
     }
 }
 
-/// Typed Effort Driven text: yes or no (or the start of either, or true, false, 1, 0), any case.
+/// Typed Effort Driven text: yes or no (or the start of either, or true, false, 1, 0, כן, לא), any case.
 fn typed_yes_no(text: &str) -> Option<bool> {
     let t = text.trim().to_lowercase();
     match t.as_str() {
         "" => None,
-        "true" | "1" => Some(true),
-        "false" | "0" => Some(false),
+        "true" | "1" | "כן" => Some(true),
+        "false" | "0" | "לא" => Some(false),
         _ if "yes".starts_with(&t) => Some(true),
         _ if "no".starts_with(&t) => Some(false),
         _ => None,
     }
+}
+
+/// Typed task type text: English names/prefixes (`TaskType::from_name`), Hebrew logical catalog
+/// labels, or visually reordered Hebrew labels pre-filled from [`shown_cell`].
+fn typed_task_type(text: &str) -> Option<TaskType> {
+    let logical = i18n::logical_of_for(i18n::Lang::Hebrew, text.trim());
+    TaskType::ALL.into_iter().find(|ty| i18n::t_logical_for(i18n::Lang::Hebrew, ty.name()) == logical).or_else(|| TaskType::from_name(text).ok())
 }
 
 /// The command a typed Start or Finish issues: Start No Earlier Than or Finish No Earlier Than
@@ -278,6 +294,7 @@ pub struct App {
     /// Recently opened or saved files, newest first (the shell loads and persists it).
     pub recent: Vec<std::path::PathBuf>,
     recent_changed: bool,
+    language_changed: bool,
     /// A dialog for the shell to show.
     file_request: Option<FileRequest>,
     /// The unsaved-changes prompt, and what follows it.
@@ -343,6 +360,7 @@ impl App {
             saved,
             recent: Vec::new(),
             recent_changed: false,
+            language_changed: false,
             file_request: None,
             prompt: None,
             after_save: None,
@@ -367,6 +385,17 @@ impl App {
     /// The status bar's message, if any (the last error, or what Open or Save did).
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    /// Switches the active interface language and marks it for the shell to persist.
+    pub fn set_language(&mut self, lang: i18n::Lang) {
+        i18n::set_current(lang);
+        self.language_changed = true;
+    }
+
+    /// Returns the newly chosen language if the user changed it since the last call.
+    pub fn take_language_changed(&mut self) -> Option<i18n::Lang> {
+        std::mem::take(&mut self.language_changed).then(i18n::current)
     }
 
     /// Runs a command; an error goes to the status bar. True when it ran.
@@ -426,6 +455,11 @@ impl App {
         if self.themed != Some(self.appearance) {
             theme::apply(&ctx, self.appearance);
             self.themed = Some(self.appearance);
+        }
+        if i18n::current() == i18n::Lang::Hebrew && !theme::hebrew_font_available(&ctx) {
+            // Fall back to English for this session without marking `language_changed` so the
+            // user's saved or locale-derived Hebrew preference is not overwritten.
+            i18n::set_current(i18n::Lang::English);
         }
         self.file_keys(&ctx);
         let (undo, redo) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::COMMAND, Key::Z), i.consume_key(egui::Modifiers::COMMAND, Key::Y)));
@@ -755,11 +789,11 @@ impl App {
             Field::Work => {
                 self.run("task.setWork", json!({"id": id.0, "work": text.trim()}));
             }
-            Field::Type => match TaskType::from_name(&text) {
-                Ok(ty) => {
+            Field::Type => match typed_task_type(&text) {
+                Some(ty) => {
                     self.run("task.setType", json!({"id": id.0, "type": ty.name()}));
                 }
-                Err(_) => self.status = tl!("Type Fixed Units, Fixed Duration or Fixed Work.").to_owned(),
+                None => self.status = tl!("Type Fixed Units, Fixed Duration or Fixed Work.").to_owned(),
             },
             Field::EffortDriven => match typed_yes_no(&text) {
                 Some(on) => {
@@ -849,6 +883,20 @@ impl App {
             if ui.add_enabled(timed && w > timescale::MIN_DAY_W, egui::Button::new(tl!("Zoom Out")).shortcut_text(out_keys)).clicked() {
                 self.zoom(false);
             }
+            ui.separator();
+            ui.menu_button(tl!("Language"), |ui| {
+                let active = i18n::current();
+                let hebrew_ok = theme::hebrew_font_available(ui.ctx());
+                for lang in i18n::Lang::ALL {
+                    if lang == i18n::Lang::Pseudo || (lang == i18n::Lang::Hebrew && !hebrew_ok) {
+                        continue;
+                    }
+                    if ui.radio(active == lang, lang.name()).clicked() {
+                        self.set_language(lang);
+                        ui.close();
+                    }
+                }
+            });
         });
     }
 
@@ -988,7 +1036,7 @@ impl App {
                     .labelled_by(label.id);
             });
             if form.resource.is_some() {
-                ui.label(RichText::new(tl!("Based on the project calendar: only what differs is its own.")).color(t.text_dim));
+                i18n::wrapped_label(ui, tl_logical!("Based on the project calendar: only what differs is its own."), |r| r.color(t.text_dim));
             }
             ui.add_space(10.0);
 
@@ -1061,7 +1109,9 @@ impl App {
             // A resource lists its own; the project calendar's apply to it too. Only the rows in
             // view are drawn.
             if own.is_some() {
-                ui.label(RichText::new(tl!("The project calendar's exceptions apply too, except on a day with one of its own.")).color(t.text_dim));
+                i18n::wrapped_label(ui, tl_logical!("The project calendar's exceptions apply too, except on a day with one of its own."), |r| {
+                    r.color(t.text_dim)
+                });
             }
             let count = own.map_or(base.exceptions.len(), |c| c.exceptions.len());
             if count == 0 {
@@ -2246,5 +2296,33 @@ mod tests {
         assert_eq!(h.state().cell_text(TaskId(5), Field::LevelingDelay).as_deref(), Some("2d"));
         h.state_mut().commit(TaskId(5), Field::LevelingDelay, "".into());
         assert_eq!(h.state().session.project.task(TaskId(5)).unwrap().leveling_delay, 0);
+    }
+
+    #[test]
+    fn explicit_english_selection_marks_language_for_persistence() {
+        let mut app = App::new(projectcraft_engine::sample(), None);
+        assert_eq!(app.take_language_changed(), None);
+        app.set_language(i18n::Lang::English);
+        assert_eq!(app.take_language_changed(), Some(i18n::Lang::English));
+    }
+
+    #[test]
+    fn typed_yes_no_and_task_type_accept_hebrew_and_english_inputs() {
+        assert_eq!(typed_yes_no("כן"), Some(true));
+        assert_eq!(typed_yes_no("לא"), Some(false));
+        assert_eq!(typed_yes_no("yes"), Some(true));
+        assert_eq!(typed_yes_no("no"), Some(false));
+        assert_eq!(typed_yes_no("1"), Some(true));
+        assert_eq!(typed_yes_no("0"), Some(false));
+        assert_eq!(typed_yes_no("maybe"), None);
+
+        assert_eq!(typed_task_type("יחידות קבועות"), Some(TaskType::FixedUnits));
+        assert_eq!(typed_task_type("משך קבוע"), Some(TaskType::FixedDuration));
+        assert_eq!(typed_task_type("עבודה קבועה"), Some(TaskType::FixedWork));
+        assert_eq!(typed_task_type(i18n::t_for(i18n::Lang::Hebrew, "Fixed Units")), Some(TaskType::FixedUnits));
+        assert_eq!(typed_task_type(i18n::t_for(i18n::Lang::Hebrew, "Fixed Duration")), Some(TaskType::FixedDuration));
+        assert_eq!(typed_task_type(i18n::t_for(i18n::Lang::Hebrew, "Fixed Work")), Some(TaskType::FixedWork));
+        assert_eq!(typed_task_type("Fixed Work"), Some(TaskType::FixedWork));
+        assert_eq!(typed_task_type("Fixed Cost"), None);
     }
 }
